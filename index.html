@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Despacho · Labs Nutrition</title>
+<title>Fullminet · Despacho</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
@@ -134,7 +134,7 @@
 <div id="toasts"></div>
 <div class="login-screen" id="login">
   <div class="login-card">
-    <h2>Despacho</h2>
+    <h2>Fullminet</h2>
     <div class="sub">Ingresá con tu cuenta</div>
     <input type="email" id="li-email" placeholder="Email" autocomplete="username">
     <input type="password" id="li-pass" placeholder="Contraseña" autocomplete="current-password">
@@ -143,7 +143,7 @@
   </div>
 </div>
 <header>
-  <div class="htop"><div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px"><div><h1>Despacho</h1><p>Labs Nutrition · CABA</p></div><div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;margin-top:4px"><span id="live" style="font-size:11px;font-weight:600;white-space:nowrap">Local</span><div id="userbox" style="display:none;align-items:center;gap:8px"><span id="useremail" style="font-size:12px;color:var(--text-2)"></span><button class="btn ghost sm" id="logout" style="padding:5px 12px;font-size:12px">Salir</button></div></div></div></div>
+  <div class="htop"><div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px"><div><h1>Fullminet</h1><p>Despacho · CABA</p></div><div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;margin-top:4px"><span id="live" style="font-size:11px;font-weight:600;white-space:nowrap">Local</span><div id="userbox" style="display:none;align-items:center;gap:8px"><span id="useremail" style="font-size:12px;color:var(--text-2)"></span><button class="btn ghost sm" id="logout" style="padding:5px 12px;font-size:12px">Salir</button></div></div></div></div>
   <div class="tabs" id="tabs">
     <button class="tab on" data-pane="panel">Panel</button>
     <button class="tab" data-pane="pedidos">Pedidos <span class="cnt" id="c-pedidos">0</span></button>
@@ -712,7 +712,10 @@ function renderPrep(){
     const all=o.items.every(i=>i.checked);
     const items=o.items.map((i,idx)=>`<div class="item"><div class="chk ${i.checked?'on':''}" onclick="toggleItem('${o.id}',${idx})"></div><span>${i.prod}${i.kit?` <span style="color:var(--accent);font-size:12px">· ${i.kit}</span>`:''}</span><span class="q">×${i.q}</span></div>`).join("");
     return `<div class="order">${orderHead(o)}<div class="items">${items}
-      <button class="btn ${all?'':'ghost'}" style="margin-top:12px" ${all?'':'disabled'} onclick="confirmarPrep('${o.id}')">Confirmar preparación y descontar stock</button>
+      <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+        <button class="btn ghost sm" onclick="abrirEtiqueta('${o.id}')">Imprimir etiqueta</button>
+        <button class="btn sm ${all?'':'ghost'}" style="flex:1;min-width:180px" ${all?'':'disabled'} onclick="confirmarPrep('${o.id}')">Confirmar preparación</button>
+      </div>
     </div></div>`;
   }).join("");
 }
