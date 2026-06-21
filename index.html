@@ -88,7 +88,7 @@
   /* modal etiqueta */
   .overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:50;display:none;align-items:center;justify-content:center;padding:20px}
   .overlay.on{display:flex}
-  .modal{background:var(--bg);border-radius:18px;padding:0;max-width:420px;width:100%;overflow:hidden}
+  .modal{background:var(--bg);border-radius:18px;padding:0;max-width:560px;width:100%;overflow:hidden;max-height:90vh;overflow-y:auto}
   .modal .mhead{display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border-bottom:.5px solid var(--border)}
   .modal .mhead b{font-size:16px}
   .x{cursor:pointer;font-size:22px;color:var(--text-2);line-height:1}
@@ -99,6 +99,13 @@
   .lbl .ad{font-size:14px;margin-top:4px}
   .lbl .ze{font-size:13px;color:#555;margin-top:2px}
   .lbl .ba{margin-top:14px;font-family:monospace;letter-spacing:2px;font-size:13px;border-top:1px dashed #999;padding-top:8px}
+  .hoja{padding:4px;color:#000;background:#fff}
+  .hoja h3{font-size:18px;margin-bottom:4px}
+  .hoja .meta{font-size:12px;color:#444;margin-bottom:12px}
+  .hoja table{width:100%;border-collapse:collapse;font-size:12px}
+  .hoja th,.hoja td{border:1px solid #999;padding:6px 7px;text-align:left;vertical-align:top}
+  .hoja th{background:#eee}
+  .hoja .firma-col{min-width:90px}
   canvas{width:100%;height:160px;background:var(--bg);border:.5px solid var(--border-h);border-radius:12px;touch-action:none}
   @media print{ body *{visibility:hidden} #label-area,#label-area *{visibility:visible} #label-area{position:absolute;left:0;top:0;width:100%} }
   .login-screen{position:fixed;inset:0;z-index:100;background:var(--bg);display:none;align-items:center;justify-content:center;padding:24px}
@@ -236,7 +243,7 @@
 <!-- modal etiqueta -->
 <div class="overlay" id="overlay">
   <div class="modal">
-    <div class="mhead"><b>Etiqueta de envío</b><span class="x" onclick="closeLabel()">✕</span></div>
+    <div class="mhead"><b id="modal-title">Etiqueta de envío</b><span class="x" onclick="closeLabel()">✕</span></div>
     <div id="label-area"></div>
     <div style="padding:0 18px 18px"><button class="btn" onclick="window.print()">Imprimir</button></div>
   </div>
@@ -248,10 +255,12 @@ const norm = s => (s||"").toString().toLowerCase().normalize("NFD").replace(/[\u
 
 /* ===== Estructura tipo Openship: 3 listas ===== */
 const EMPRESAS = [
-  {id:"labs", nombre:"Labs Nutrition"},
-  {id:"nutrivibe", nombre:"Nutrivibe"},
-  {id:"natural", nombre:"Natural Market"}
+  {id:"labs", nombre:"Labs Nutrition", color:"#0071e3"},
+  {id:"nutrivibe", nombre:"Nutrivibe", color:"#8e44ec"},
+  {id:"natural", nombre:"Natural Market", color:"#e8870a"}
 ];
+const empNombre = id => EMPRESAS.find(e=>e.id===id)?.nombre || id || "";
+const empColor  = id => EMPRESAS.find(e=>e.id===id)?.color || "#8e8e93";
 const METODOS  = [{id:"cadete_caba", nombre:"Cadete CABA", detalle:"Mismo día"}];
 const REGLAS   = [{empresa:"*", zona:"CABA", metodo:"cadete_caba"}];
 const metodoPara = (emp,zona) => { const r=REGLAS.find(r=>(r.empresa==="*"||r.empresa===emp)&&r.zona===zona); return r?METODOS.find(m=>m.id===r.metodo)||null:null; };
@@ -312,7 +321,7 @@ const ROL_TABS = {
   cadete: ["ruta","entrega"]
 };
 const skey = s => btoa(unescape(encodeURIComponent(s))).replace(/\//g,"_").replace(/\+/g,"-");
-function serializeOrder(o){return {id:String(o.id),customer:o.customer||"",dest:o.dest||"",prov:o.prov||"",city:o.city||"",empresa:o.empresa||"",metodoId:o.metodo?o.metodo.id:null,estado:o.estado,items:o.items||[],firma:o.firma||null,creado:o.creado||null,entregadoTs:o.entregadoTs||null};}
+function serializeOrder(o){return {id:String(o.id),customer:o.customer||"",dest:o.dest||"",prov:o.prov||"",city:o.city||"",addr:o.addr||"",phone:o.phone||"",empresa:o.empresa||"",metodoId:o.metodo?o.metodo.id:null,estado:o.estado,items:o.items||[],firma:o.firma||null,creado:o.creado||null,entregadoTs:o.entregadoTs||null};}
 function persistOrder(o){ if(LIVE) db.collection("pedidos").doc(String(o.id)).set(serializeOrder(o)).catch(console.error); }
 function persistStock(k){ if(LIVE && stock[k]) db.collection("stock").doc(skey(k)).set({nombre:stock[k].nombre,stock:stock[k].stock}).catch(console.error); }
 function setLivePill(){ const p=$("#live"); if(!p)return; p.textContent=LIVE?"● En la nube":"○ Local (sin guardar)"; p.style.color=LIVE?"var(--ok)":"var(--text-3)"; }
@@ -405,6 +414,7 @@ const FIELDS=[
   {key:"address",name:"Dirección",req:false,guess:["direccion","dirección","domicilio","address","dirección de envío"]},
   {key:"city",name:"Localidad",req:false,guess:["localidad","ciudad","city"]},
   {key:"province",name:"Provincia",req:false,guess:["provincia","estado","province"]},
+  {key:"phone",name:"Teléfono",req:false,guess:["telefono","teléfono","celular","whatsapp","tel","phone","movil","móvil"]},
 ];
 const guessFor=f=>{for(const g of f.guess){const h=headers.find(h=>norm(h)===norm(g));if(h)return h;}for(const g of f.guess){const h=headers.find(h=>norm(h).includes(norm(g)));if(h)return h;}return"";};
 
@@ -444,12 +454,14 @@ $("#import").onclick=()=>{
   const by=new Map(); let last="";
   rows.forEach(rw=>{
     let id=(rw[map.order]||"").toString().trim(); if(!id)id=last; if(!id)return; last=id;
-    if(!by.has(id))by.set(id,{id,customer:"",dest:"",prov:"",city:"",items:[]});
+    if(!by.has(id))by.set(id,{id,customer:"",dest:"",prov:"",city:"",addr:"",phone:"",items:[]});
     const o=by.get(id);
     if(map.customer&&(rw[map.customer]||"").trim()&&!o.customer)o.customer=rw[map.customer].trim();
+    if(map.phone&&(rw[map.phone]||"").trim()&&!o.phone)o.phone=rw[map.phone].trim();
+    if(map.address&&(rw[map.address]||"").trim()&&!o.addr)o.addr=rw[map.address].trim();
     const loc=map.city?(rw[map.city]||"").trim():""; const prov=map.province?(rw[map.province]||"").trim():"";
     if(loc&&!o.city)o.city=loc; if(prov&&!o.prov)o.prov=prov;
-    if(!o.dest&&(loc||prov))o.dest=[loc,prov].filter(Boolean).join(", ");
+    if(!o.dest&&(loc||prov))o.dest=[o.addr,loc,prov].filter(Boolean).join(", ");
     const prod=(rw[map.product]||"").toString().trim(); let q=parseFloat((rw[map.qty]||"").toString().replace(",",".")); q=isNaN(q)?1:q;
     if(prod){
       const kit=explotarKit(prod);
@@ -488,14 +500,50 @@ function abrirEtiqueta(oid){
   const o=orders.find(x=>x.id===oid);
   const m=o.metodo?o.metodo.nombre:"—";
   $("#label-area").innerHTML=`<div class="lbl">
-    <div class="co">Labs Nutrition · ${m}</div>
+    <div class="co">${empNombre(o.empresa)} · ${m}</div>
     <div class="to">${o.customer||"Cliente"}</div>
     <div class="ad">${o.dest||"CABA"}</div>
     <div class="ze">Pedido #${o.id}</div>
     <div class="ba">*${o.id}*</div></div>`;
+  $("#modal-title").textContent="Etiqueta de envío";
   $("#overlay").classList.add("on");
 }
 function closeLabel(){$("#overlay").classList.remove("on");}
+
+/* WhatsApp: normaliza a formato internacional AR (mejor esfuerzo) */
+function waNumero(tel){
+  let n=(tel||"").replace(/\D/g,"");
+  if(!n) return "";
+  n=n.replace(/^0+/,"");
+  if(n.startsWith("54")) n=n.slice(2);
+  if(n.startsWith("9")) n=n.slice(1);
+  return "549"+n;
+}
+function waLink(o){
+  const num=waNumero(o.phone); if(!num) return "";
+  const msg=encodeURIComponent(`Hola ${o.customer||""}, tu pedido de ${empNombre(o.empresa)} (#${o.id}) está en camino. ¡Gracias!`);
+  return `https://wa.me/${num}?text=${msg}`;
+}
+/* Hoja de ruta imprimible con todas las paradas del reparto */
+function abrirHojaRuta(){
+  const calle=orders.filter(o=>o.estado==="verificado"||o.estado==="en_ruta");
+  const fecha=new Date().toLocaleDateString('es-AR');
+  const filas=calle.map((o,i)=>`<tr>
+    <td>${i+1}</td>
+    <td>${empNombre(o.empresa)}</td>
+    <td>${o.customer||"—"}</td>
+    <td>${o.addr||o.dest||"—"}</td>
+    <td>${o.phone||"—"}</td>
+    <td class="firma-col"></td></tr>`).join("");
+  $("#label-area").innerHTML=`<div class="hoja">
+    <h3>Hoja de ruta · ${fecha}</h3>
+    <div class="meta">Cadete: ________________   ·   ${calle.length} parada(s)</div>
+    <table><thead><tr><th>#</th><th>Empresa</th><th>Cliente</th><th>Dirección</th><th>Tel.</th><th>Firma</th></tr></thead>
+    <tbody>${filas||'<tr><td colspan="6">Sin paradas</td></tr>'}</tbody></table>
+  </div>`;
+  $("#modal-title").textContent="Hoja de ruta";
+  $("#overlay").classList.add("on");
+}
 
 /* ===== firma ===== */
 function initCanvas(cv,oid){
@@ -518,7 +566,7 @@ function orderHead(o){return `<div class="top"><div>
   <div class="num">Pedido #${o.id}</div>
   ${o.customer?`<div class="cust">${o.customer}</div>`:''}
   ${o.dest?`<div class="dest">${o.dest}</div>`:''}
- </div><div class="badges">${badgeEstado(o.estado)}${o.metodo?`<span class="badge metodo">${o.metodo.nombre}</span>`:''}</div></div>`;}
+ </div><div class="badges"><span class="badge" style="background:${empColor(o.empresa)};color:#fff">${empNombre(o.empresa)}</span>${badgeEstado(o.estado)}${o.metodo?`<span class="badge metodo">${o.metodo.nombre}</span>`:''}</div></div>`;}
 
 function renderAll(){renderPanel();renderPedidos();renderPrep();renderStock();renderRuta();renderEntrega();renderInformes();renderCounts();}
 
@@ -685,15 +733,36 @@ function renderStock(){
 
 function renderRuta(){
   const ver=orders.filter(o=>o.estado==="verificado");
-  $("#ruta-head").innerHTML = ver.length
-    ? `<div class="card"><div class="label">Ruta del día · ${ver.length} parada(s)</div>
-        <p class="hint" style="margin-top:0">Todas en CABA, salida desde Puerto Madero. Imprimí las etiquetas y salí a ruta.</p>
-        <button class="btn" style="margin-top:12px" onclick="salirRuta()">Salir a ruta con ${ver.length} pedido(s)</button></div>`
+  const calle=orders.filter(o=>o.estado==="en_ruta");
+  const total=ver.length+calle.length;
+  $("#ruta-head").innerHTML = total
+    ? `<div class="card"><div class="label">Reparto del día · ${total} parada(s)</div>
+        <p class="hint" style="margin-top:0">Todas en CABA. Imprimí la hoja de ruta para el cadete y mandales el WhatsApp a los clientes.</p>
+        <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+          <button class="btn ghost sm" onclick="abrirHojaRuta()">Imprimir hoja de ruta</button>
+          ${ver.length?`<button class="btn sm" style="flex:1;min-width:160px" onclick="salirRuta()">Salir a ruta (${ver.length})</button>`:''}
+        </div></div>`
     : "";
   const l=$("#ruta-list");
-  if(!ver.length){l.innerHTML='<div class="empty">No hay pedidos verificados esperando ruta.</div>';return;}
-  l.innerHTML=ver.map(o=>`<div class="order">${orderHead(o)}
-    <div class="items"><button class="btn ghost sm" onclick="abrirEtiqueta('${o.id}')">Imprimir etiqueta</button></div></div>`).join("");
+  if(!total){l.innerHTML='<div class="empty">No hay pedidos para repartir.</div>';return;}
+  const waBtn=o=>{ const link=waLink(o); return link?`<a class="btn sm" style="background:#25d366;color:#fff;text-decoration:none;text-align:center" href="${link}" target="_blank" rel="noopener">WhatsApp</a>`:`<span class="hint" style="margin:0">sin teléfono</span>`; };
+  let html="";
+  if(ver.length){
+    html+='<div class="label" style="margin-bottom:10px">Por salir</div>';
+    html+=ver.map(o=>`<div class="order">${orderHead(o)}
+      <div class="items" style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn ghost sm" onclick="abrirEtiqueta('${o.id}')">Etiqueta</button>${waBtn(o)}
+      </div></div>`).join("");
+  }
+  if(calle.length){
+    html+='<div class="label" style="margin:18px 0 10px">En la calle</div>';
+    html+=calle.map(o=>`<div class="order">${orderHead(o)}
+      ${o.phone?`<div class="dest">📞 ${o.phone}</div>`:''}
+      <div class="items" style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn ghost sm" onclick="abrirEtiqueta('${o.id}')">Etiqueta</button>${waBtn(o)}
+      </div></div>`).join("");
+  }
+  l.innerHTML=html;
 }
 
 function renderEntrega(){
