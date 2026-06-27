@@ -245,6 +245,7 @@ hr{border:none;border-top:.5px solid var(--border);margin:20px 0}
 <!-- Firebase (solo si completás FIREBASE_CONFIG; en modo demo no molesta) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <!-- pdf.js: para importar el PDF de preparación de Tienda Nube -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 
@@ -464,6 +465,7 @@ function sembrarDemo(write,read){
    5) ESTADO EN MEMORIA + UTILIDADES
    ========================================================================= */
 let PEDIDOS=[], ROL=null, CADETE_ACTIVO=null, FILTRO="todos", OPVIEW="panel", EMPLEADO=false;
+let USER=null, USERROL=null, AUTH_READY=false, SUBSCRITO=false;
 let SIM=null, SIM_STEP=0, SIM_METODO="cadete", SIM_TIMER=null;   // simulación del ciclo
 let LISTA_OP=[];   // último listado mostrado al operador (para imprimir en lote)
 let RUTA_ACTUAL=[];// hoja de ruta calculada (para Maps/impresión)
@@ -592,19 +594,61 @@ function salirReparto(id){ const p=PEDIDOS.find(x=>x.id===id); if(!p)return;
 function render(){
   const q=new URLSearchParams(location.search);
   const pid=q.get("p");
-  if(pid){ ROL="cliente"; return vistaCliente(pid); }
-  if(!ROL){ const r=q.get("rol");
-    if(r==="cadete"){ ROL="cadete"; const c=q.get("cadete"); if(c) CADETE_ACTIVO=decodeURIComponent(c); }
-    else if(r==="operador"||r==="empleado"){ ROL="operador"; EMPLEADO=true; OPVIEW="preparacion"; }
-    else if(r==="admin"){ ROL="admin"; EMPLEADO=false; }
+  if(pid){ ROL="cliente"; return vistaCliente(pid); }   // cliente: SIN login
+
+  if(DB.modo==="firebase"){
+    if(!AUTH_READY) return vistaCargando();
+    if(!USER)       return vistaLogin();
+    if(!USERROL)    return vistaSinAcceso();
+    ROL=USERROL;                                          // rol real, desde la cuenta
+  } else {
+    if(!ROL){ const r=q.get("rol");                       // modo demo: rol por link
+      if(r==="cadete"){ ROL="cadete"; const c=q.get("cadete"); if(c) CADETE_ACTIVO=decodeURIComponent(c); }
+      else if(r==="operador"||r==="empleado"){ ROL="operador"; }
+      else if(r==="admin"){ ROL="admin"; }
+    }
+    if(!ROL) return vistaInicio();
   }
-  if(!ROL) return vistaInicio();
-  $("#roleBtn").style.display=(ROL==="admin"||ROL==="sim")?"inline-block":"none";
+  EMPLEADO=(ROL==="operador");
+  const rb=$("#roleBtn"); if(rb){ rb.style.display=(ROL==="admin"||ROL==="sim"||DB.modo==="firebase")?"inline-block":"none"; rb.textContent=(DB.modo==="firebase"?"Salir":"Cambiar rol"); }
   if(ROL==="sim")      return vistaSimulacion();
   if(ROL==="admin")    return vistaOperador();
   if(ROL==="operador"){ OPVIEW="preparacion"; return vistaPreparacion(); }
   if(ROL==="cadete")   return CADETE_ACTIVO?vistaCadete():vistaElegirCadete();
 }
+function vistaCargando(){ $("#roleBtn").style.display="none";
+  app().innerHTML=`<div class="center" style="margin-top:80px"><div class="subtitle">Cargando…</div></div>`; }
+function vistaLogin(){
+  $("#roleBtn").style.display="none";
+  app().innerHTML=`
+    <div class="center" style="margin-top:40px">
+      <div class="title">Fullminet</div>
+      <div class="subtitle">Ingresá con tu usuario</div>
+    </div>
+    <div class="card" style="max-width:380px;margin:18px auto 0">
+      <div class="field"><span class="label">Email</span><input id="lg_mail" type="email" autocomplete="username" placeholder="tu@email.com"></div>
+      <div class="field"><span class="label">Contraseña</span><input id="lg_pass" type="password" autocomplete="current-password" placeholder="••••••••"></div>
+      <div id="lg_err" class="hint" style="color:var(--red);min-height:18px;margin:4px 2px"></div>
+      <button class="btn block" onclick="entrar()">Entrar</button>
+    </div>`;
+  const go=e=>{ if(e.key==="Enter") entrar(); };
+  const m=$("#lg_mail"), pw=$("#lg_pass"); if(m){m.onkeydown=go;} if(pw){pw.onkeydown=go;}
+}
+async function entrar(){
+  const mail=($("#lg_mail").value||"").trim(), pass=$("#lg_pass").value||"";
+  if(!mail||!pass){ $("#lg_err").textContent="Completá email y contraseña."; return; }
+  $("#lg_err").textContent="Entrando…";
+  try{ await firebase.auth().signInWithEmailAndPassword(mail,pass); }
+  catch(e){ $("#lg_err").textContent="Email o contraseña incorrectos."; }
+}
+function vistaSinAcceso(){
+  $("#roleBtn").style.display="inline-block";
+  app().innerHTML=`<div class="center" style="margin-top:70px">
+    <div class="title">Sin acceso</div>
+    <p class="muted" style="margin-top:10px">Tu cuenta (${esc(USER&&USER.email||"")}) todavía no tiene un rol asignado.<br>Pedile al administrador que te habilite.</p>
+    <button class="btn ghost" style="margin-top:18px" onclick="salir()">Salir</button></div>`;
+}
+async function salir(){ try{ await firebase.auth().signOut(); }catch(e){} }
 
 function vistaInicio(){
   $("#roleBtn").style.display="none";
@@ -638,7 +682,9 @@ function vistaInicio(){
       Modo de datos: <b>${DB.modo==="demo"?"Demo (este navegador)":"Firebase (en vivo)"}</b></p>`;
 }
 function setRol(r){ stopPlay(); ROL=r; CADETE_ACTIVO=null; render(); }
-function goHome(){ stopPlay(); ROL=null; CADETE_ACTIVO=null; history.replaceState({},"",location.pathname); render(); }
+function goHome(){ stopPlay();
+  if(DB.modo==="firebase"){ return salir(); }   // con login, "Cambiar rol" = Salir
+  ROL=null; CADETE_ACTIVO=null; history.replaceState({},"",location.pathname); render(); }
 
 /* ---------- OPERADOR ---------- */
 function segOp(active){
@@ -692,13 +738,21 @@ function vistaPanel(){
       ${tile('pedidos','plus','Importar','Subí CSV o PDF',null)}
     </div>
     ${EMPLEADO?'':`
-    <span class="label" style="margin-top:26px">Accesos · compartir</span>
+    <span class="label" style="margin-top:26px">Accesos del equipo</span>
+    ${DB.modo==="firebase"?`
+    <div class="card">
+      <div class="hint" style="margin:0">Cada persona entra con <b>su email y contraseña</b>, y solo ve lo de su rol:</div>
+      <div class="row" style="justify-content:space-between;padding:10px 0 4px;border-top:.5px solid var(--border);margin-top:10px"><span>Admin <span class="muted">· todo</span></span></div>
+      <div class="row" style="justify-content:space-between;padding:8px 0"><span>Operador <span class="muted">· solo preparación</span></span></div>
+      <div class="row" style="justify-content:space-between;padding:8px 0"><span>Reparto <span class="muted">· sus entregas</span></span></div>
+      <div class="hint" style="margin-top:8px">Para crear o cambiar usuarios se hace desde la consola de Firebase (o pedímelo y lo armamos).</div>
+    </div>`:`
     <div class="card">
       <div class="row" style="justify-content:space-between;padding:4px 0"><span>Reparto <span class="muted">· ve y entrega sus repartos</span></span><button class="btn sm ghost" onclick="copiarAcceso('cadete')">Copiar link</button></div>
       <div class="row" style="justify-content:space-between;padding:10px 0 4px;border-top:.5px solid var(--border);margin-top:8px"><span>Operador <span class="muted">· solo prepara, sin precios ni stock</span></span><button class="btn sm ghost" onclick="copiarAcceso('operador')">Copiar link</button></div>
       <div class="row" style="justify-content:space-between;padding:10px 0 4px;border-top:.5px solid var(--border);margin-top:8px"><span>Vos / Admin <span class="muted">· acceso a todo</span></span><button class="btn sm ghost" onclick="copiarAcceso('admin')">Copiar link</button></div>
     </div>
-    <div class="hint" style="margin-top:10px">Compartí cada link con quien corresponda. Todos ven los mismos pedidos en vivo (Firebase).</div>`}`;
+    <div class="hint" style="margin-top:10px">Modo demo (sin login). Al activar Firebase, cada uno entra con su usuario.</div>`}`}`;
 }
 function vistaOperador(){
   if(OPVIEW==="panel") return vistaPanel();
@@ -1697,8 +1751,27 @@ function vistaSimulacion(){
    ========================================================================= */
 (function start(){
   initDB();
-  DB.subscribe(d=>{ PEDIDOS=d; render(); });
-  render();
+  const q=new URLSearchParams(location.search);
+  const esCliente=!!q.get("p");
+  if(esCliente){
+    if(DB.modo!=="firebase") DB.subscribe(d=>{ PEDIDOS=d; render(); });
+    render();                                  // vistaCliente lee su pedido con DB.get
+  } else if(DB.modo==="firebase"){
+    firebase.auth().onAuthStateChanged(async (user)=>{
+      USER=user; USERROL=null; CADETE_ACTIVO=null;
+      if(user){
+        try{ const d=await firebase.firestore().collection("usuarios").doc(user.email).get();
+          if(d.exists){ USERROL=d.data().rol||null;
+            if(USERROL==="cadete") CADETE_ACTIVO=d.data().cadete||d.data().nombre||null; }
+        }catch(e){ USERROL=null; }
+        if(USERROL && !SUBSCRITO){ SUBSCRITO=true; DB.subscribe(d=>{ PEDIDOS=d; render(); }); }
+      }
+      AUTH_READY=true; render();
+    });
+  } else {
+    DB.subscribe(d=>{ PEDIDOS=d; render(); });
+    render();
+  }
 })();
 </script>
 </body>
