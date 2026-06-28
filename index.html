@@ -2,7 +2,7 @@
 <html lang="es-AR">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Despacho · Río Tercero + Bs As</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -141,8 +141,10 @@ textarea{resize:vertical;min-height:66px;font-size:15px;line-height:1.5}
 .btn.sm .ico{width:15px;height:15px}
 
 /* ---- Segmented control ---- */
-.seg{display:inline-flex;background:var(--bg-3);border-radius:var(--r-pill);padding:3px;gap:2px}
-.seg button{padding:8px 18px;border-radius:var(--r-pill);font-size:14px;font-weight:540;
+.seg{display:flex;background:var(--bg-3);border-radius:var(--r-pill);padding:3px;gap:2px;
+  max-width:100%;min-width:0;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.seg::-webkit-scrollbar{display:none}
+.seg button{padding:8px 18px;border-radius:var(--r-pill);font-size:14px;font-weight:540;flex:0 0 auto;white-space:nowrap;
   color:var(--text-2);transition:.18s;display:inline-flex;align-items:center;gap:6px}
 .seg button.on{background:var(--bg);color:var(--text);box-shadow:var(--sh-sm)}
 @media(prefers-color-scheme:dark){.seg button.on{background:var(--bg-3)}}
