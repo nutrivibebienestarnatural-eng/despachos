@@ -306,6 +306,7 @@ const empresaObj = id => EMPRESAS.find(e=>e.id===id) || EMPRESAS[0];
 const canalObj   = id => CANALES.find(c=>c.id===id) || CANALES[0];
 const canalDe    = p => (p&&p.canal) || empresaObj(p&&p.empresa).canalDefault;
 const costoEnvio = p => canalObj(canalDe(p)).costo;
+const STOCK_DUENO = "labs";   // Labs pone el stock compartido; las demás empresas le pagan lo que sacan
 const fmtAr = n => "$"+Number(n||0).toLocaleString("es-AR");
 /* Geo para la hoja de ruta: salida desde Puerto Madero + centro de cada barrio CABA */
 const ORIGEN_CABA={nombre:"Puerto Madero, CABA",lat:-34.6118,lon:-58.3625};
@@ -465,7 +466,8 @@ function sembrarDemo(write,read){
    5) ESTADO EN MEMORIA + UTILIDADES
    ========================================================================= */
 let PEDIDOS=[], ROL=null, CADETE_ACTIVO=null, FILTRO="todos", OPVIEW="panel", EMPLEADO=false;
-let USER=null, USERROL=null, AUTH_READY=false, SUBSCRITO=false;
+let USER=null, USERROL=null, AUTH_READY=false, SUBSCRITO=false, PREVIEW=null;
+let STOCK_DESDE="", STOCK_HASTA="";
 let SIM=null, SIM_STEP=0, SIM_METODO="cadete", SIM_TIMER=null;   // simulación del ciclo
 let LISTA_OP=[];   // último listado mostrado al operador (para imprimir en lote)
 let RUTA_ACTUAL=[];// hoja de ruta calculada (para Maps/impresión)
@@ -514,6 +516,87 @@ function imputacion(st){
     if(!g[k]) g[k]={empresa:m.empresa,canal:m.canal,unidades:0,prods:{}};
     g[k].unidades+=m.cant; g[k].prods[m.prod]=(g[k].prods[m.prod]||0)+m.cant; });
   return Object.values(g).sort((a,b)=>b.unidades-a.unidades);
+}
+/* Lo que sacó cada empresa del pool, juntando canales (para la cuenta con el dueño del stock) */
+function enRango(ts,desde,hasta){
+  if(desde){ const d=new Date(desde+"T00:00:00").getTime(); if(ts<d) return false; }
+  if(hasta){ const h=new Date(hasta+"T23:59:59").getTime(); if(ts>h) return false; }
+  return true;
+}
+function imputacionEmp(st,desde,hasta){
+  const g={};
+  (st.movs||[]).filter(m=>m.empresa && enRango(m.ts,desde,hasta)).forEach(m=>{
+    const e=m.empresa;
+    if(!g[e]) g[e]={empresa:e,total:0,aporte:0,canales:{},prods:{}};
+    if(m.tipo==="salida"){ g[e].total+=m.cant; const c=m.canal||"?"; g[e].canales[c]=(g[e].canales[c]||0)+m.cant; g[e].prods[m.prod]=(g[e].prods[m.prod]||0)+m.cant; }
+    else if(m.tipo==="entrada"){ g[e].aporte+=m.cant; }
+  });
+  return Object.values(g).map(x=>({...x, saldo:x.total-x.aporte})).sort((a,b)=>b.total-a.total);
+}
+/* Cuenta corriente: retiros (debe) y aportes (haber) de una empresa, con saldo neto en unidades */
+function cuentaCorriente(st,empresa,desde,hasta){
+  const movs=(st.movs||[]).filter(m=>m.empresa===empresa && (m.tipo==="salida"||m.tipo==="entrada") && enRango(m.ts,desde,hasta))
+    .sort((a,b)=>a.ts-b.ts);
+  const retiro=movs.filter(m=>m.tipo==="salida").reduce((s,m)=>s+m.cant,0);
+  const aporte=movs.filter(m=>m.tipo==="entrada").reduce((s,m)=>s+m.cant,0);
+  return { movs, retiro, aporte, saldo:retiro-aporte };
+}
+/* Entradas/salidas de un producto (salidas separadas por empresa) */
+function flujoProducto(prod, st){
+  let ent=0,sal=0; const porEmp={};
+  (st.movs||[]).filter(m=>m.prod===prod).forEach(m=>{
+    if(m.tipo==="entrada") ent+=m.cant;
+    else if(m.tipo==="salida"){ sal+=m.cant; if(m.empresa) porEmp[m.empresa]=(porEmp[m.empresa]||0)+m.cant; }
+  });
+  return {ent,sal,porEmp};
+}
+/* Imprime en A4: planilla de stock (entró/retiró por empresa/quedan) + cuenta corriente por empresa */
+function imprimirStock(){
+  const st=stockState();
+  const w=window.open("","_blank","width=860,height=920");
+  if(!w){ toast("Permití las ventanas emergentes"); return; }
+  const hoy=new Date().toLocaleDateString("es-AR");
+  const fc=ts=>new Date(ts).toLocaleDateString("es-AR");
+  // --- Planilla de stock (estado real, sin filtro de fecha) ---
+  const prods=PRODUCTOS.filter(p=>{ const f=flujoProducto(p.nombre,st); return f.ent||f.sal||nivel(p.nombre,st); });
+  const thEmp=EMPRESAS.map(e=>`<th class="c">Retiró ${esc(e.nombre.split(" ")[0])}</th>`).join("");
+  const filasGen=prods.map(p=>{ const f=flujoProducto(p.nombre,st), q=nivel(p.nombre,st);
+    const tdEmp=EMPRESAS.map(e=>`<td class="c">${f.porEmp[e.id]||0}</td>`).join("");
+    return `<tr><td>${esc(p.nombre)}</td><td class="c">${f.ent}</td>${tdEmp}<td class="c b">${q}</td></tr>`; }).join("")
+    || `<tr><td colspan="${EMPRESAS.length+3}" class="c">Sin movimientos todavía.</td></tr>`;
+  const planilla=`<div class="hoja"><h1>Planilla de stock</h1>
+    <p>Fecha: ${hoy} · Stock compartido (lo pone ${esc(empresaObj(STOCK_DUENO).nombre)})</p>
+    <table><thead><tr><th>Producto</th><th class="c">Entró</th>${thEmp}<th class="c">Quedan</th></tr></thead>
+    <tbody>${filasGen}</tbody></table></div>`;
+  // --- Cuenta corriente por empresa (filtrada por período) ---
+  const periodo=(STOCK_DESDE||STOCK_HASTA)
+    ? `Período: ${STOCK_DESDE?fc(new Date(STOCK_DESDE+"T00:00:00").getTime()):"inicio"} a ${STOCK_HASTA?fc(new Date(STOCK_HASTA+"T00:00:00").getTime()):"hoy"}`
+    : "Período: todo";
+  const cuentas=EMPRESAS.map(e=>{
+    const cc=cuentaCorriente(st,e.id,STOCK_DESDE,STOCK_HASTA);
+    const esDueno=e.id===STOCK_DUENO;
+    const filas=cc.movs.map(m=>`<tr><td>${fc(m.ts)}</td><td>${m.tipo==="entrada"?"Aporte":"Retiro"}</td><td>${esc(m.prod)}</td><td>${esc(m.ref||m.motivo||"—")}</td><td class="c b">${m.tipo==="entrada"?"−":"+"}${m.cant}</td></tr>`).join("")
+      || `<tr><td colspan="5" class="c">Sin movimientos en este período.</td></tr>`;
+    const cab=esDueno?"Stock propio":`A pagar a ${esc(empresaObj(STOCK_DUENO).nombre)}`;
+    const pieRetiro=`<tr><td colspan="4" style="text-align:right">Retiró</td><td class="c">${cc.retiro}</td></tr>`;
+    const pieAporte=cc.aporte?`<tr><td colspan="4" style="text-align:right">Aportó</td><td class="c">−${cc.aporte}</td></tr>`:"";
+    const pieSaldo=esDueno?"":`<tr><td colspan="4" style="text-align:right;font-weight:bold">SALDO A PAGAR A ${esc(empresaObj(STOCK_DUENO).nombre.split(" ")[0]).toUpperCase()}</td><td class="c b">${cc.saldo}</td></tr>`;
+    return `<div class="hoja"><h1>Cuenta corriente — ${esc(e.nombre)}</h1>
+      <p>${periodo} · ${cab}</p>
+      <table><thead><tr><th>Fecha</th><th>Tipo</th><th>Producto</th><th>Pedido / motivo</th><th class="c">Unidades</th></tr></thead>
+      <tbody>${filas}</tbody>
+      <tfoot>${pieRetiro}${pieAporte}${pieSaldo}</tfoot></table></div>`;
+  }).join("");
+  w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Stock</title>'+
+    '<style>body{font-family:Arial,sans-serif;padding:22px;color:#000}h1{font-size:19px;margin:0 0 4px}'+
+    'p{font-size:12px;color:#333;margin:0 0 16px}table{width:100%;border-collapse:collapse;font-size:12px}'+
+    'th,td{border:1px solid #999;padding:6px 9px;text-align:left;vertical-align:top}th{background:#2c3e50;color:#fff}'+
+    'tfoot td{background:#eef1f5}.c{text-align:center}.b{font-weight:bold}small{color:#666}'+
+    'tbody tr:nth-child(even) td{background:#f2f4f7}'+
+    '.hoja{page-break-before:always}.hoja:first-child{page-break-before:auto}@page{size:A4;margin:14mm}</style></head><body>'+
+    planilla+cuentas+
+    '<scr'+'ipt>window.onload=function(){setTimeout(function(){window.print()},300)}<\/scr'+'ipt></body></html>');
+  w.document.close();
 }
 function toast(m){ const t=$("#toast"); t.textContent=m; t.classList.add("show");
   clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove("show"),2600); }
@@ -612,10 +695,25 @@ function render(){
   EMPLEADO=(ROL==="operador");
   const rb=$("#roleBtn"); if(rb){ rb.style.display=(ROL==="admin"||ROL==="sim"||DB.modo==="firebase")?"inline-block":"none"; rb.textContent=(DB.modo==="firebase"?"Salir":"Cambiar rol"); }
   if(ROL==="sim")      return vistaSimulacion();
-  if(ROL==="admin")    return vistaOperador();
+  if(ROL==="admin"){
+    if(PREVIEW==="operador"){ OPVIEW="preparacion"; vistaPreparacion(); return bannerPreview("Operador"); }
+    if(PREVIEW==="cadete"){ if(!CADETE_ACTIVO){ vistaElegirCadete(); } else { vistaCadete(); } return bannerPreview("Reparto"); }
+    return vistaOperador();
+  }
   if(ROL==="operador"){ OPVIEW="preparacion"; return vistaPreparacion(); }
   if(ROL==="cadete")   return CADETE_ACTIVO?vistaCadete():vistaElegirCadete();
 }
+function verComo(r){ PREVIEW=r; CADETE_ACTIVO=null; render(); }
+function salirPreview(){ PREVIEW=null; CADETE_ACTIVO=null; OPVIEW="panel"; render(); }
+function bannerPreview(label){ const a=app();
+  a.innerHTML=`<div style="background:#1d1d1f;color:#fff;border-radius:12px;padding:11px 14px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;gap:10px">
+    <span style="font-weight:600">Vista previa · ${esc(label)} <span style="opacity:.6;font-weight:400">(así lo ve esa persona)</span></span>
+    <button class="btn sm" style="background:#fff;color:#000;flex:0 0 auto" onclick="salirPreview()">Volver a Admin</button>
+  </div>`+a.innerHTML;
+}
+function copiarLinkApp(){ const u=location.origin+location.pathname;
+  try{ navigator.clipboard.writeText(u); }catch(e){}
+  toast("Link de la app copiado"); }
 function vistaCargando(){ $("#roleBtn").style.display="none";
   app().innerHTML=`<div class="center" style="margin-top:80px"><div class="subtitle">Cargando…</div></div>`; }
 function vistaLogin(){
@@ -688,7 +786,7 @@ function goHome(){ stopPlay();
 
 /* ---------- OPERADOR ---------- */
 function segOp(active){
-  if(ROL!=="admin") return "";   // el operador no ve pestañas: solo su preparación
+  if(ROL!=="admin" || PREVIEW) return "";   // operador (o admin previsualizando) no ve pestañas
   const tabs=[["panel","Panel"],["pedidos","Pedidos"],["preparacion","Preparación"],["stock","Stock"],["ruta","Ruta"],["deposito","Depósito"]];
   return `<div class="row" style="justify-content:space-between;margin-bottom:14px"><div class="seg">${
     tabs.map(t=>`<button class="${active===t[0]?'on':''}" ${active===t[0]?'':`onclick="OPVIEW='${t[0]}';vistaOperador()"`}>${t[1]}</button>`).join("")
@@ -741,11 +839,14 @@ function vistaPanel(){
     <span class="label" style="margin-top:26px">Accesos del equipo</span>
     ${DB.modo==="firebase"?`
     <div class="card">
-      <div class="hint" style="margin:0">Cada persona entra con <b>su email y contraseña</b>, y solo ve lo de su rol:</div>
-      <div class="row" style="justify-content:space-between;padding:10px 0 4px;border-top:.5px solid var(--border);margin-top:10px"><span>Admin <span class="muted">· todo</span></span></div>
-      <div class="row" style="justify-content:space-between;padding:8px 0"><span>Operador <span class="muted">· solo preparación</span></span></div>
-      <div class="row" style="justify-content:space-between;padding:8px 0"><span>Reparto <span class="muted">· sus entregas</span></span></div>
-      <div class="hint" style="margin-top:8px">Para crear o cambiar usuarios se hace desde la consola de Firebase (o pedímelo y lo armamos).</div>
+      <div class="hint" style="margin:0">Todos entran a la <b>misma dirección</b> y se identifican con su email y contraseña. Cada uno ve solo lo de su rol.</div>
+      <button class="btn ghost block" style="margin-top:12px" onclick="copiarLinkApp()">Copiar link de la app</button>
+      <div class="label" style="margin-top:18px">Previsualizar (solo vos)</div>
+      <div class="row" style="gap:8px;flex-wrap:wrap">
+        <button class="btn sm ghost" onclick="verComo('operador')">Ver como Operador</button>
+        <button class="btn sm ghost" onclick="verComo('cadete')">Ver como Reparto</button>
+      </div>
+      <div class="hint" style="margin-top:12px">Para crear o cambiar usuarios: consola de Firebase (o pedímelo y lo armamos).</div>
     </div>`:`
     <div class="card">
       <div class="row" style="justify-content:space-between;padding:4px 0"><span>Reparto <span class="muted">· ve y entrega sus repartos</span></span><button class="btn sm ghost" onclick="copiarAcceso('cadete')">Copiar link</button></div>
@@ -1284,6 +1385,7 @@ function etiquetasPend(){ printLabels(soloPedidos().filter(p=>p.estado==="pendie
 function vistaStock(){
   const st=stockState(), pick=pickingConsolidado();
   const imp=imputacion(st);
+  const impE=imputacionEmp(st,STOCK_DESDE,STOCK_HASTA);
   const rows=PRODUCTOS.map((p,i)=>{ const stk=nivel(p.nombre,st), mn=st.min[p.nombre]||0, d=demandaDe(p,pick);
     return {p,i,stk,mn,d,rep:Math.max(0,mn+d-stk)}; });
   const reponer=rows.filter(r=>r.rep>0);
@@ -1302,34 +1404,59 @@ function vistaStock(){
         <input id="mvCant" type="number" inputmode="numeric" placeholder="Cant." style="${inp};width:80px;text-align:center">
       </div>
       <input id="mvMotivo" placeholder="Motivo (ej: compra, rotura, ajuste)" style="${inp};margin-top:8px">
+      <div class="row" style="margin-top:8px;align-items:center;gap:8px">
+        <span class="muted" style="font-size:12px;white-space:nowrap">Aporta</span>
+        <select id="mvEmp" style="${inp};flex:1"><option value="">— ninguna (Labs / ajuste) —</option>${EMPRESAS.filter(e=>e.id!==STOCK_DUENO).map(e=>`<option value="${e.id}">${esc(e.nombre)} pone este stock</option>`).join("")}</select>
+      </div>
       <button class="btn block" style="margin-top:10px" onclick="registrarMov()">Registrar</button>
     </div>
-    <div class="row" style="margin-bottom:12px">
+    <div class="row" style="margin-bottom:12px;flex-wrap:wrap">
       <button class="btn ghost" onclick="guardarMinimos()">Guardar mínimos</button>
+      <button class="btn ghost" onclick="imprimirStock()">${icon('printer')} Imprimir A4</button>
       ${reponer.length?`<button class="btn ghost" onclick="ordenCompra()">${icon('box')} Orden de compra</button>`:""}
     </div>
+    <div class="label">Lo que queda · stock compartido <span class="muted" style="font-weight:400">(lo pone ${esc(empresaObj(STOCK_DUENO).nombre)})</span></div>
     <div class="card" style="margin-bottom:16px">
-      <div style="${grid};border-top:none;font-size:12px;color:var(--text-2);font-weight:600">
-        <span>Producto</span><span style="text-align:center">Stock</span><span style="text-align:center">Mín.</span><span style="text-align:center">Pend.</span><span style="text-align:center">Repon.</span></div>
-      ${rows.map(r=>`<div style="${grid}">
-        <span style="font-size:14px">${esc(r.p.nombre)}</span>
-        <span style="text-align:center;font-weight:700;color:${r.stk<=r.mn?'var(--red)':'var(--text)'}">${r.stk}</span>
-        <input id="mn_${r.i}" type="number" inputmode="numeric" value="${r.mn}" style="${inp};text-align:center">
-        <span style="text-align:center;color:var(--text-2)">${r.d||'—'}</span>
-        <span style="text-align:center;font-weight:700;color:${r.rep>0?'var(--amber)':'var(--text-2)'}">${r.rep||'—'}</span>
-      </div>`).join("")}
+      ${rows.map(r=>{ const f=flujoProducto(r.p.nombre,st);
+        const split=Object.entries(f.porEmp).map(([e,n])=>esc(empresaObj(e).nombre.split(" ")[0])+" "+n).join(" · ");
+        return `<div style="padding:12px 0;border-top:.5px solid var(--border)">
+        <div class="row" style="justify-content:space-between;align-items:baseline;gap:10px">
+          <span style="font-size:14px;font-weight:600">${esc(r.p.nombre)}</span>
+          <span style="font-weight:800;white-space:nowrap;color:${r.stk<=r.mn?'var(--red)':'var(--text)'}">Quedan ${r.stk}</span>
+        </div>
+        <div class="muted" style="font-size:13px;margin-top:4px">Entraron ${f.ent} · Salieron ${f.sal}${split?` <span style="opacity:.85">(${split})</span>`:""}${r.rep>0?` · <span style="color:var(--amber);font-weight:600">reponer ${r.rep}</span>`:""}</div>
+        <div class="row" style="align-items:center;gap:6px;margin-top:6px">
+          <span class="muted" style="font-size:12px">Mínimo</span>
+          <input id="mn_${r.i}" type="number" inputmode="numeric" value="${r.mn}" style="${inp};width:64px;text-align:center;padding:5px">
+        </div>
+      </div>`; }).join("")}
     </div>
-    <div class="label" style="margin-top:18px">Imputación · lo que sacó cada empresa</div>
-    <div class="card" style="margin-bottom:16px">
-      ${imp.length?imp.map(g=>`
-        <div style="padding:11px 0;border-top:.5px solid var(--border)">
-          <div class="row" style="justify-content:space-between;align-items:center">
-            <span class="row" style="gap:8px"><span class="chip ${g.canal==='ml_flex'?'flex':'tn'}">${esc(canalObj(g.canal).nombre)}</span><b>${esc(empresaObj(g.empresa).nombre)}</b></span>
-            <b style="font-variant-numeric:tabular-nums">${g.unidades} u</b>
-          </div>
-          <div class="muted" style="font-size:13px;margin-top:5px">${Object.entries(g.prods).map(([n,c])=>esc(n)+": "+c).join(" · ")}</div>
-        </div>`).join(""):empty('box','Cuando prepares ventas, acá ves cuánto sacó cada empresa y canal.')}
+    <div class="label" style="margin-top:18px">Cuenta corriente · lo que retiró cada una</div>
+    <div class="card" style="margin-bottom:14px">
+      <div class="row" style="gap:10px;align-items:flex-end;flex-wrap:wrap">
+        <div style="flex:1;min-width:120px"><span class="label">Desde</span><input id="stDesde" type="date" value="${STOCK_DESDE}" onchange="STOCK_DESDE=this.value;vistaStock()" style="${inp}"></div>
+        <div style="flex:1;min-width:120px"><span class="label">Hasta</span><input id="stHasta" type="date" value="${STOCK_HASTA}" onchange="STOCK_HASTA=this.value;vistaStock()" style="${inp}"></div>
+      </div>
+      ${(STOCK_DESDE||STOCK_HASTA)?`<button class="btn sm ghost" style="margin-top:10px" onclick="STOCK_DESDE='';STOCK_HASTA='';vistaStock()">Ver todo el período</button>`:`<div class="hint" style="margin-top:8px">Mostrando todo. Elegí un rango para filtrar lo que retiró cada empresa.</div>`}
     </div>
+    ${impE.length?impE.map(g=>{ const esDueno=g.empresa===STOCK_DUENO;
+      return `<div class="card" style="margin-bottom:12px">
+        <div class="row" style="justify-content:space-between;align-items:center">
+          <b style="font-size:16px">${esc(empresaObj(g.empresa).nombre)}</b>
+          <span class="muted">Retiró <b style="color:var(--text);font-variant-numeric:tabular-nums">${g.total} u</b></span>
+        </div>
+        <div class="row" style="gap:8px;margin-top:8px;flex-wrap:wrap">
+          ${Object.entries(g.canales).map(([c,n])=>`<span class="chip ${c==='ml_flex'?'flex':'tn'}">${esc(canalObj(c).nombre)}: ${n}</span>`).join("")}
+        </div>
+        ${g.aporte>0?`<div class="row" style="justify-content:space-between;margin-top:8px"><span class="muted">Aportó al stock</span><b style="color:var(--green)">+${g.aporte} u</b></div>`:""}
+        ${esDueno?`<div class="hint" style="margin-top:10px">Vende de su propio stock.</div>`
+                 :`<div class="row" style="justify-content:space-between;margin-top:10px;padding-top:10px;border-top:.5px solid var(--border)">
+                     <b>Saldo a pagar a ${esc(empresaObj(STOCK_DUENO).nombre.split(" ")[0])}</b>
+                     <b style="color:var(--amber);font-size:17px;font-variant-numeric:tabular-nums">${g.saldo} u</b></div>`}
+        <div style="margin-top:6px">
+          ${Object.entries(g.prods).sort((a,b)=>b[1]-a[1]).map(([n,c])=>`<div class="row" style="justify-content:space-between;padding:7px 0;border-top:.5px solid var(--border)"><span style="font-size:14px">${esc(n)}</span><b style="font-variant-numeric:tabular-nums">${c}</b></div>`).join("")}
+        </div>
+      </div>`; }).join(""):`<div class="card" style="margin-bottom:16px">${empty('box','No hay retiros en este período.')}</div>`}
     <div class="label">Últimos movimientos</div>
     <div class="card">
       ${movs.map(m=>`<div class="row" style="justify-content:space-between;padding:8px 0;border-top:.5px solid var(--border)">
@@ -1340,9 +1467,10 @@ function vistaStock(){
 }
 async function registrarMov(){
   const prod=($("#mvProd")||{}).value, tipo=($("#mvTipo")||{}).value||"entrada",
-        cant=+(($("#mvCant")||{}).value||0), motivo=(($("#mvMotivo")||{}).value||"").trim();
+        cant=+(($("#mvCant")||{}).value||0), motivo=(($("#mvMotivo")||{}).value||"").trim(),
+        emp=($("#mvEmp")||{}).value||"";
   if(!prod||!cant){ toast("Elegí producto y cantidad"); return; }
-  await pushMov(prod,tipo,cant,motivo);
+  await pushMov(prod,tipo,cant,motivo, emp?{empresa:emp}:{});
   toast((tipo==="salida"?"−":"+")+cant+" "+prod);
 }
 async function guardarMinimos(){ const min={...stockState().min};
