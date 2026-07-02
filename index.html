@@ -119,6 +119,7 @@ a{color:var(--accent);text-decoration:none}
 .scan-frame{position:relative;width:78%;max-width:320px;height:150px;border:3px solid #fff;border-radius:16px;box-shadow:0 0 0 9999px rgba(0,0,0,.45)}
 .scan-hint{position:absolute;left:0;right:0;bottom:118px;color:#fff;font-size:16px;font-weight:600;text-align:center;padding:0 24px}
 .scan-x{position:absolute;bottom:40px;left:50%;transform:translateX(-50%)}
+.scan-last{position:absolute;left:0;right:0;bottom:92px;color:#7CFC98;font-size:15px;font-weight:700;text-align:center}
 
 /* ---- Inputs ---- */
 .field{margin-bottom:16px}
@@ -279,15 +280,128 @@ const CORREOS = ["Andreani","OCA","Correo Argentino","Vía Cargo","Cruz del Sur"
    poné el código de barras real (EAN) impreso en cada paquete. Acá uso el SKU como referencia.
    Completá con tu catálogo completo de Labs Nutrition. */
 const PRODUCTOS = [
-  {barcode:"PLN1052",nombre:"Hipo T - Tiroides Saludables (60 Caps)"},
-  {barcode:"PLN1086",nombre:"Omega 3 (60 capsulas)"},
-  {barcode:"",       nombre:"Cafeína + Guaraná - Concentración, Energía (60 Capsulas)"},
-  {barcode:"",       nombre:"Bisglicinato de Magnesio 500 mg (60 capsulas)"},
-  {barcode:"",       nombre:"Centella Asiática - Cicatrizante, Celulitis (30 Capsulas)"},
-  {barcode:"",       nombre:"Treonato de Magnesio 500 mg (60 capsulas)"},
-  {barcode:"PLN1109",nombre:"Vitamina C - Ácido Ascórbico 500 mg (60 caps)"},
-  {barcode:"PLN1077",nombre:"Melena de León pura 500 mg - Neuronal, digestivo (60 capsulas)"},
-  {barcode:"PLN1061",nombre:"Kit Hongo Candida (180 capsulas)"}
+  {barcode:"0714604143901", nombre:"Aceite Esencial De Cúrcuma Labs Nutrition (30ml)"},
+  {barcode:"0714604143871", nombre:"Aceite Esencial De Orégano Labs Nutrition (30ml)"},
+  {barcode:"0714604143888", nombre:"Aceite Esencial De Romero Labs Nutrition (30ml) - Capilar"},
+  {barcode:"0714604213192", nombre:"Aceite Esencial De Tomillo Labs Nutrition (30ml) Tonificante"},
+  {barcode:"0714604143895", nombre:"Aceite Esencial De Urucum Labs Nutrition (30ml)"},
+  {barcode:"0714604143789", nombre:"Acido Alfa Lipoico 500mg - Antioxidante (60 capsulas)"},
+  {barcode:"0714604142911", nombre:"Acido Fólico (60 capsulas)"},
+  {barcode:"0714604142928", nombre:"Acido Hialurónico (60 capsulas)"},
+  {barcode:"0714604142935", nombre:"Adrelax - Cortisol Support (60 capsulas) EX ADRENO CORTISOL - MISMA FORMULA"},
+  {barcode:"0714604213345", nombre:"Adrelax - Cortisol Support (60 comprimidos) EX ADRENO CORTISOL - MISMA FORMULA"},
+  {barcode:"0714604142942", nombre:"AKG - Acido Alfa Ketoglutarico - Longevidad (60 capsulas)"},
+  {barcode:"0714604213215", nombre:"Ashwagandha 100% Pura - Estrés, Insomnio, Fatiga (60 Capsulas)"},
+  {barcode:"0714604143734", nombre:"Astaxantina 10 mg - Antioxidante, Piel, Ojos, Articulaciones (30 capsulas)"},
+  {barcode:"0714604143864", nombre:"Astaxantina 4 Mg - Antioxidante, Piel, Ojos, Articulaciones"},
+  {barcode:"0714604142966", nombre:"BCAA Aminoácidos Esenciales 600mg - Masa Muscular, recuperador (90 Capsulas)"},
+  {barcode:"0714604213772", nombre:"Beta Alanina - Fatiga y recuperacion muscular (120 capsulas)"},
+  {barcode:"0714604142973", nombre:"Betacaroteno (60 capsulas)"},
+  {barcode:"0714604142980", nombre:"Bio F - Hongo Candida (60 Capsulas) EX BIO FLORATIN - MISMA FORMULA"},
+  {barcode:"0714604213390", nombre:"Bisglicinato de magnesio (60 comprimidos)"},
+  {barcode:"0714604142997", nombre:"Bisglicinato de Magnesio 500 mg (60 capsulas)"},
+  {barcode:"0714604143109", nombre:"Blend Fusion (60 capsulas) EX COLAGENOL (60 CAPSULAS)"},
+  {barcode:"0714604143017", nombre:"C Stop - Candida Balance (60 capsulas) EX CANDIDA STOP - MISMA FORMULA"},
+  {barcode:"0714604213338", nombre:"Cafeína + Guaraná - Concentración, Energía (60 Capsulas)"},
+  {barcode:"0714604213765", nombre:"Calcio Plus - Calcio + Vitamina D3, Salud Ósea (60 Capsulas)"},
+  {barcode:"0714604213574", nombre:"Centella Asiática - Cicatrizante, Celulitis (30 Capsulas)"},
+  {barcode:"0714604213789", nombre:"Cistina Action - Capilar (60 capsulas)"},
+  {barcode:"0714604143062", nombre:"Citrato de Magnesio 400 mg (60 capsulas)"},
+  {barcode:"0714604213420", nombre:"Citrato de Magnesio 400 mg (60 comprimidos)"},
+  {barcode:"0714604143093", nombre:"Citrato de Potasio 400 mg (60 capsulas)"},
+  {barcode:"0714604143215", nombre:"Clean F - Hongo Candida (60 Capsulas) EX FUNGI CLEAN - MISMA FORMULA"},
+  {barcode:"0714604143857", nombre:"Coenzima Q10 300 mg - Antioxidante, Energia (60 capsulas)"},
+  {barcode:"0714604213239", nombre:"Complex B - Complejo vitamínico B (30 capsulas)"},
+  {barcode:"0714604143321", nombre:"Creatina (90 capsulas)"},
+  {barcode:"0714604213444", nombre:"Creatina Pura 100% Labs Nutrition (300 gr)"},
+  {barcode:"0714604143161", nombre:"Cúrcuma Activada con Jengibre (60 capsulas)"},
+  {barcode:"0714604143178", nombre:"Curcuma organica"},
+  {barcode:"0714604143192", nombre:"Elixir Bio-Regenerador (60 capsulas)"},
+  {barcode:"0714604213628", nombre:"Fucus Plus (60 capsulas)"},
+  {barcode:"0714604213819", nombre:"Full Men - Estimulante Natural (60 capsulas)"},
+  {barcode:"0714604213321", nombre:"Garcinia Cambigia - Quemador de grasas, saciedad (60 capsulas)"},
+  {barcode:"0714604213611", nombre:"Ginkgo Biloba - Memoria, Concentración (60 Capsulas)"},
+  {barcode:"0714604213406", nombre:"Glicinato de magnesio (60 Comprimidos)"},
+  {barcode:"0714604143222", nombre:"Glicinato de Magnesio 500 mg (60 caps)"},
+  {barcode:"0714604213222", nombre:"Gluconato De Zinc - Sistema Inmunológico (60 Capsulas)"},
+  {barcode:"0714604213468", nombre:"Glutamina Micronizada 300 gr"},
+  {barcode:"0714604143239", nombre:"Glutatión Labs Nutrition - Antioxidante (60 Capsulas)"},
+  {barcode:"0714604213550", nombre:"Glutatión Labs Nutrition - Antioxidante (60 Comprimidos)"},
+  {barcode:"0714604213307", nombre:"Hiper T - Tiroides control (60 capsulas) EX HIPERTIROIDAL"},
+  {barcode:"0714604213291", nombre:"Hipo T - Tiroides control (60 capsulas) EX HIPOTIROIDAL"},
+  {barcode:"0714604143253", nombre:"Hongos Adaptogenos - Anti estrés (60 capsulas)"},
+  {barcode:"0714604143260", nombre:"INOSITOL - Vitamina B8 (30 capsulas)"},
+  {barcode:"0714604213581", nombre:"Inulina - Prebiotico Natural (60 capsulas) EX PREBIOTICO+"},
+  {barcode:"0714604143284", nombre:"Kardio 3 (60 capsulas)"},
+  {barcode:"NO CORRESPONDE", nombre:"Kit Active Vital - Oxido Nitrico + Nad con Resveratrol + BCAA (3 unidades)"},
+  {barcode:"NO CORRESPONDE", nombre:"Kit Daily Energy - Curcuma con Jengibre + Nad con Resveratrol + Malato de Magnesio (3 unidades)"},
+  {barcode:"NO CORRESPONDE", nombre:"Kit Hongo Candida (180 capsulas)"},
+  {barcode:"NO CORRESPONDE", nombre:"Kit Skin Balance - Omega 3 + Coenzima Q10 + Centella Asiatica (3 unidades)"},
+  {barcode:"0714604143307", nombre:"Lady Balance (60 capsulas)"},
+  {barcode:"0714604143345", nombre:"Levadura de Selenio (60 capsulas)"},
+  {barcode:"0714604213475", nombre:"L-glicina - Formacion De Proteinas Y Colageno (60 Capsulas)"},
+  {barcode:"0714604143352", nombre:"L-Glutamina (90 capsulas)"},
+  {barcode:"0714604143369", nombre:"L-Lisina 500 mg (60 capsulas)"},
+  {barcode:"0714604213642", nombre:"L-teanina Labs Nutrition - Estrés, Insomnio (60 Capsulas)"},
+  {barcode:"0714604213253", nombre:"Maca Peruana Pura 500 mg - Estimulante, Energizante (60 capsulas)"},
+  {barcode:"0714604143383", nombre:"Magnesio Quelatado 400 mg (60 capsulas)"},
+  {barcode:"0714604213604", nombre:"Maitake Hongo Labs Nutrition, Estrés, Inmunológico (60 Caps)"},
+  {barcode:"0714604213383", nombre:"Malato de magnesio (60 comprimidos)"},
+  {barcode:"0714604213277", nombre:"Malato de Magnesio 500mg - Energia, recuperador muscular (60 capsulas)"},
+  {barcode:"0714604143390", nombre:"Mega D - Hongo Candida (60 Capsulas) EX MEGA DETOX - MISMA FORMULA"},
+  {barcode:"0714604213260", nombre:"Melena de Leon pura 500 mg - Neuronal, digestivo (60 capsulas)"},
+  {barcode:"0714604213536", nombre:"Moringa Labs Nutrition - Calcio, Antioxidante (60 Capsulas)"},
+  {barcode:"0714604143413", nombre:"MSM - Metil Sulfonil Metano 500 mg (60 capsulas)"},
+  {barcode:"0714604143420", nombre:"Mucline - Intestino Permeable, Optimizador Mucosas (60 Caps) EX MUCOSUL - MISMA FORMULA"},
+  {barcode:"0714604143758", nombre:"Multi Magnesio 500 mg - 5 Magnesio en 1 (60 capsulas)"},
+  {barcode:"0714604213451", nombre:"Multi Magnesio 500 mg - 5 Magnesio en 1 (60 comprimidos)"},
+  {barcode:"0714604143437", nombre:"NAC 500 mg (N-Acetilcisteína) - Optimizador respiratorio (60 cápsulas)"},
+  {barcode:"0714604143444", nombre:"NAD - Nicotinamida Adenina Dinucleótido (60 capsulas)"},
+  {barcode:"0714604213499", nombre:"NAD - Nicotinamida Adenina Dinucleótido (60 comprimidos)"},
+  {barcode:"NO CORRESPONDE", nombre:"Nad + Resveratrol - Kit Anti age (120 capsulas)"},
+  {barcode:"0714604213314", nombre:"Nad con Resveratrol 2 en 1 - Regenerador Celular (60 capsulas)"},
+  {barcode:"0714604143833", nombre:"Nmn - Nicotinamida Mononucleótido (60 Capsulas)"},
+  {barcode:"0714604213505", nombre:"Nmn - Nicotinamida Mononucleótido (60 Comprimidos)"},
+  {barcode:"0714604213826", nombre:"NMN con Resveratrol (60 capsulas)"},
+  {barcode:"0714604143468", nombre:"Omega 3 (60 capsulas)"},
+  {barcode:"0714604143482", nombre:"ORMUX - Suplemento Regenerador Celular (60 caps)"},
+  {barcode:"0714604143512", nombre:"Oxido Nitrico - Vaso dilatador (60 capsulas)"},
+  {barcode:"0714604143826", nombre:"Picolinato de Cromo 250 mcg - Control Peso, Glucemico"},
+  {barcode:"0714604213246", nombre:"Potasio + Magnesio 500 mg - (60 capsulas)"},
+  {barcode:"0714604213598", nombre:"Reishi Hongo Labs Nutrition - Estrés, Fatiga (60 Capsulas)"},
+  {barcode:"0714604143536", nombre:"Resveratrol - Rejuvenecedor celular antioxidante (60 capsulas)"},
+  {barcode:"0714604213369", nombre:"Resveratrol Labs Nutrition, Antioxidante (60 Comprimidos)"},
+  {barcode:"0714604143741", nombre:"Sinefrina - Quemador de Grasas Natural (60 capsulas)"},
+  {barcode:"0714604213352", nombre:"Sinefrina - Quemador de Grasas Natural (60 comprimidos)"},
+  {barcode:"0714604213284", nombre:"Spirulina Pura 500 mg - Perdida de peso, Antioxidante (60 capsulas)"},
+  {barcode:"0714604143550", nombre:"Taurato de Magnesio 500 mg (60 capsulas)"},
+  {barcode:"0714604213543", nombre:"Taurato De Magnesio Labs Nutrition (60 Comprimidos)"},
+  {barcode:"0714604213741", nombre:"Testo Up - Precursor De Testosterona, Estimulante (60 Comp)"},
+  {barcode:"0714604143567", nombre:"Testo Up (60 capsulas)"},
+  {barcode:"0714604213635", nombre:"Tirosina + Yodo (60 capsulas)"},
+  {barcode:"0714604213376", nombre:"Treonato de Magnesio (60 comprimidos)"},
+  {barcode:"0714604143581", nombre:"Treonato de Magnesio 500 mg (60 capsulas)"},
+  {barcode:"0714604213437", nombre:"Triptofano - Insomnio, calma y relajacion (60 capsulas)"},
+  {barcode:"0714604143819", nombre:"Vitamina A - Retinol 1000mcg (30 capsulas)"},
+  {barcode:"0714604143604", nombre:"Vitamina B12 - Equilibrio Sanguíneo Y Neuronal (60 capsulas)"},
+  {barcode:"0714604143611", nombre:"Vitamina C - Acido Ascórbico 500 mg (60 caps)"},
+  {barcode:"0714604213758", nombre:"Vitamina C - Acido Ascórbico 500 Mg (60 Comprimidos)"},
+  {barcode:"0714604143659", nombre:"Vitamina D3 + K2 - Regenerador Oseo (60 Capsulas)"},
+  {barcode:"0714604213512", nombre:"Vitamina D3 + K2 - Regenerador Oseo (60 Comprimidos)"},
+  {barcode:"0714604143642", nombre:"Vitamina D3 20mcg - Huesos, Músculos, Nervios (30 Capsulas)"},
+  {barcode:"0714604213666", nombre:"Whey protein + Creatina Americana (1 kg)"},
+  {barcode:"0714604143680", nombre:"Whey protein + Creatina Chocolate (1 kg)"},
+  {barcode:"0714604213659", nombre:"Whey protein + Creatina Frambuesa (1 kg)"},
+  {barcode:"0714604213680", nombre:"Whey protein + Gutamina y Bcaa (1 kg) Americana"},
+  {barcode:"0714604143697", nombre:"Whey protein + Gutamina y Bcaa (1 kg) Chocolate"},
+  {barcode:"0714604213673", nombre:"Whey protein + Gutamina y Bcaa (1 kg) Frambuesa"},
+  {barcode:"0714604213703", nombre:"Whey protein + Testo (1 kg) Americana"},
+  {barcode:"0714604213529", nombre:"Whey protein + Testo (1 kg) Chocolate"},
+  {barcode:"0714604213697", nombre:"Whey protein + Testo (1 kg) Frambuesa"},
+  {barcode:"0714604213734", nombre:"Whey Protein 80% Americana (1 kg)"},
+  {barcode:"0714604213710", nombre:"Whey Protein 80% Chocolate (1 kg)"},
+  {barcode:"0714604213727", nombre:"Whey Protein 80% Frambuesa (1 kg)"},
+  {barcode:"0714604143727", nombre:"ZMA Zinc-Magnesio-Vitamina B6 (60 capsulas)"},
 ];
 /* Impresora de etiquetas: ajustá al tamaño del rollo (en mm) que uses */
 const LABEL_MM = { w:100, h:150 };  // 10x15 cm (estándar e-commerce). Ej. más chico: {w:100,h:100}
@@ -347,7 +461,10 @@ function pickingConsolidado(){
       if(!map[k]) map[k]={nombre:it.nombre,cant:0}; map[k].cant+=it.cant; }));
   return Object.values(map).sort((a,b)=>b.cant-a.cant);
 }
-function prodPorBarcode(code){ const c=(code||"").trim(); return PRODUCTOS.find(p=>p.barcode===c); }
+function prodPorBarcode(code){ const c=(code||"").trim(); if(!c) return null;
+  const norm=s=>String(s||"").replace(/^0+/,"");
+  return PRODUCTOS.find(p=>p.barcode===c)
+      || PRODUCTOS.find(p=>p.barcode && norm(p.barcode)===norm(c)) || null; }
 function matchNombre(a,b){ const T=s=>(s||"").toLowerCase().replace(/[^a-z0-9áéíóúñ ]/g," ").split(/\s+/).filter(w=>w.length>=3);
   const A=T(a),B=T(b); return A.some(w=>B.includes(w)); }
 const PROVINCIAS = ["CABA","Buenos Aires","Catamarca","Chaco","Chubut","Córdoba","Corrientes",
@@ -1394,7 +1511,8 @@ function vistaStock(){
   const imp=imputacion(st);
   const impE=imputacionEmp(st,STOCK_DESDE,STOCK_HASTA);
   const rows=PRODUCTOS.map((p,i)=>{ const stk=nivel(p.nombre,st), mn=st.min[p.nombre]||0, d=demandaDe(p,pick);
-    return {p,i,stk,mn,d,rep:Math.max(0,mn+d-stk)}; });
+    return {p,i,stk,mn,d,rep:Math.max(0,mn+d-stk)}; })
+    .filter(r=> r.stk!==0 || r.mn>0 || r.d>0 );   // solo los que tienen stock, mínimo o pedidos hoy
   const reponer=rows.filter(r=>r.rep>0);
   const movs=(st.movs||[]).slice(-12).reverse();
   const inp="width:100%;padding:7px;border:1px solid var(--border);border-radius:9px;font:inherit;background:var(--bg)";
@@ -1436,7 +1554,7 @@ function vistaStock(){
           <span class="muted" style="font-size:12px">Mínimo</span>
           <input id="mn_${r.i}" type="number" inputmode="numeric" value="${r.mn}" style="${inp};width:64px;text-align:center;padding:5px">
         </div>
-      </div>`; }).join("")}
+      </div>`; }).join("")||empty('box','Todavía no hay stock cargado. Registrá una entrada arriba para empezar.')}
     </div>
     <div class="label" style="margin-top:18px">Cuenta corriente · lo que retiró cada una</div>
     <div class="card" style="margin-bottom:14px">
@@ -1481,7 +1599,7 @@ async function registrarMov(){
   toast((tipo==="salida"?"−":"+")+cant+" "+prod);
 }
 async function guardarMinimos(){ const min={...stockState().min};
-  PRODUCTOS.forEach((p,i)=>{ min[p.nombre]=+(($("#mn_"+i)||{}).value||0); });
+  PRODUCTOS.forEach((p,i)=>{ const el=$("#mn_"+i); if(el && el.value!=null && el.value!=="") min[p.nombre]=+el.value; });
   await setMin(min); toast("Mínimos guardados"); }
 function ordenCompra(){ const st=stockState(), pick=pickingConsolidado();
   const lst=PRODUCTOS.map(p=>{ const rep=Math.max(0,(st.min[p.nombre]||0)+demandaDe(p,pick)-nivel(p.nombre,st));
@@ -1506,7 +1624,8 @@ function vistaPreparacion(){
     <div class="card" style="margin-bottom:16px">
       <span class="label">Escaneá el código de barras del producto</span>
       <input id="scanBox" autocomplete="off" placeholder="Escaneá con el lector o escribí el código y Enter">
-      <div class="hint" style="margin-top:8px">Conectá un lector USB/Bluetooth: cada escaneo marca el producto en la lista. El lector funciona como un teclado, no hace falta instalar nada.</div>
+      <button class="btn block" style="margin-top:12px" onclick="escanearProducto()"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:6px"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>Escanear con la cámara</button>
+      <div class="hint" style="margin-top:8px">Podés usar la <b>cámara del celu</b> (botón de arriba) o un lector USB/Bluetooth. Cada lectura suma el producto en la lista.</div>
     </div>
     <div class="card" style="margin-bottom:16px">
       <div class="row" style="justify-content:space-between"><span class="label" style="margin:0">Picking consolidado de hoy</span>
@@ -1528,7 +1647,7 @@ function vistaPreparacion(){
         <button class="btn sm ghost" onclick="imprimirEtiqueta('${p.id}')">${icon('printer')}Etiqueta</button>
       </div></div>`).join("")||empty('check','Todo preparado.')}`;
   const box=$("#scanBox");
-  if(box){ if(box.focus) box.focus(); box.onkeydown=e=>{ if(e.key==="Enter"){ procesarScan(box.value); box.value=""; } }; }
+  if(box){ if(box.focus && !document.querySelector(".scan-ov")) box.focus(); box.onkeydown=e=>{ if(e.key==="Enter"){ procesarScan(box.value); box.value=""; } }; }
 }
 function procesarScan(code){
   if(!code||!code.trim()) return;
@@ -1607,45 +1726,53 @@ function confirmarPorCodigo(code){
   toast("Entregado: "+p.id+" — tocá WhatsApp para avisar al cliente");
   return true;
 }
-/* Abre la cámara y escanea el código del paquete para confirmar la entrega.
-   Usa ZXing (anda en Android y iPhone). Si no está, prueba el lector nativo, y si no, pide tipear. */
-async function escanearEntrega(){
+/* Escáner de cámara reutilizable. onCode(codigo) se llama en cada lectura.
+   opts.continuo=true: sigue escaneando sin cerrar (para pickear varios productos). */
+async function abrirEscaner(onCode, opts){
+  opts=opts||{};
   if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
-    const c=prompt("Este teléfono no permite usar la cámara. Ingresá el número del paquete:");
-    if(c) confirmarPorCodigo(c); return;
+    const c=prompt("Este teléfono no permite usar la cámara. Ingresá el código a mano:");
+    if(c) onCode(c); return;
   }
   const ov=document.createElement("div"); ov.className="scan-ov";
   ov.innerHTML=`<video class="scan-vid" autoplay playsinline muted></video>
     <div class="scan-frame"></div>
-    <div class="scan-hint">Apuntá al código de barras del paquete</div>
-    <button class="btn scan-x">Cerrar</button>`;
+    <div class="scan-hint">${esc(opts.hint||"Apuntá al código de barras")}</div>
+    <div class="scan-last" id="scanLast"></div>
+    <button class="btn scan-x">${opts.continuo?"Listo":"Cerrar"}</button>`;
   document.body.appendChild(ov);
   const vid=ov.querySelector("video");
-  let reader=null, stop=false;
+  let reader=null, stop=false, ult="", ultTs=0;
   const cerrar=()=>{ if(stop)return; stop=true;
     try{ reader && reader.reset && reader.reset(); }catch(e){}
     try{ const s=vid.srcObject; if(s) s.getTracks().forEach(t=>t.stop()); }catch(e){}
     ov.remove(); };
   ov.querySelector(".scan-x").onclick=cerrar;
+  const manejar=raw=>{ if(!raw) return; const now=Date.now();
+    if(raw===ult && now-ultTs<1600) return;      // no repetir la misma lectura al toque
+    ult=raw; ultTs=now;
+    if(opts.continuo){ onCode(raw); const el=document.getElementById("scanLast"); if(el) el.textContent="✓ leído"; }
+    else { cerrar(); onCode(raw); } };
   try{
     if(typeof ZXing!=="undefined" && ZXing.BrowserMultiFormatReader){
       reader=new ZXing.BrowserMultiFormatReader();
-      await reader.decodeFromConstraints({video:{facingMode:"environment"}}, vid, (result)=>{
-        if(result && !stop){ const raw=(result.getText&&result.getText())||result.text||""; cerrar(); confirmarPorCodigo(raw); }
-      });
+      await reader.decodeFromConstraints({video:{facingMode:"environment"}}, vid, r=>{
+        if(r && !stop) manejar((r.getText&&r.getText())||r.text||""); });
     } else if("BarcodeDetector" in window){
       const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});
       vid.srcObject=stream;
       const det=new BarcodeDetector({formats:["code_128","qr_code","ean_13","code_39"]});
       const loop=async()=>{ if(stop)return;
-        try{ const codes=await det.detect(vid); if(codes&&codes.length){ cerrar(); confirmarPorCodigo(codes[0].rawValue||""); return; } }catch(e){}
+        try{ const codes=await det.detect(vid); if(codes&&codes.length) manejar(codes[0].rawValue||""); }catch(e){}
         requestAnimationFrame(loop); };
       vid.onloadedmetadata=()=>loop();
-    } else {
-      cerrar(); const c=prompt("Ingresá el número del paquete:"); if(c) confirmarPorCodigo(c);
-    }
+    } else { cerrar(); const c=prompt("Ingresá el código a mano:"); if(c) onCode(c); }
   }catch(e){ cerrar(); toast("No pude abrir la cámara. Revisá los permisos del navegador."); }
 }
+/* Cadete: escanea el paquete para confirmar la entrega (una lectura) */
+function escanearEntrega(){ abrirEscaner(confirmarPorCodigo,{hint:"Apuntá al código de barras del paquete"}); }
+/* Operador: escanea productos con la cámara mientras arma el pedido (continuo) */
+function escanearProducto(){ abrirEscaner(procesarScan,{continuo:true,hint:"Apuntá al código de barras del producto"}); }
 
 /* ---------- CLIENTE ---------- */
 async function vistaCliente(id){
