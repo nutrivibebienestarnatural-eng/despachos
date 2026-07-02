@@ -60,7 +60,7 @@ a{color:var(--accent);text-decoration:none}
   padding:7px 14px;border-radius:var(--r-pill);border:.5px solid var(--border);transition:.2s}
 .nav .role-pill:hover{color:var(--text);border-color:var(--border-2)}
 
-.wrap{max-width:960px;margin:0 auto;padding:28px 20px 100px}
+.wrap{max-width:1040px;margin:0 auto;padding:28px 20px 100px}
 .title{font-size:34px;font-weight:700;letter-spacing:-.025em;line-height:1.05;margin-bottom:6px}
 .subtitle{color:var(--text-2);font-size:17px;margin-bottom:26px}
 .label{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
@@ -70,6 +70,9 @@ a{color:var(--accent);text-decoration:none}
 .card{background:var(--bg-2);border:.5px solid var(--border);border-radius:var(--r-card);
   padding:22px;box-shadow:var(--sh-sm)}
 .grid{display:grid;gap:12px}
+.cardgrid{display:grid;gap:14px;grid-template-columns:1fr}
+.cardgrid .order{margin-bottom:0}
+@media(min-width:900px){.cardgrid{grid-template-columns:1fr 1fr}}
 
 /* ---- KPIs ---- */
 .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:26px}
@@ -250,6 +253,8 @@ hr{border:none;border-top:.5px solid var(--border);margin:20px 0}
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <!-- pdf.js: para importar el PDF de preparación de Tienda Nube -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<!-- ZXing: lector de códigos de barras por cámara (funciona en Android y iPhone) -->
+<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.20.0/umd/index.min.js"></script>
 
 
 <script>
@@ -920,7 +925,7 @@ function vistaOperador(){
         .map(f=>`<button class="${FILTRO===f?'on':''}" onclick="setFiltro('${f}')">${({todos:'Todos',activos:'Activos',cadete:'Cadete',correo:'Correo'})[f]||estObj(f).label}</button>`).join("")}
       ${EMPRESAS.map(e=>`<button class="${FILTRO==='emp:'+e.id?'on':''}" onclick="setFiltro('emp:${e.id}')">${esc(e.nombre)}</button>`).join("")}
     </div>
-    <div>${lista.map(cardOperador).join("")||empty('box','Sin pedidos en este filtro.')}</div>
+    <div class="cardgrid">${lista.map(cardOperador).join("")||empty('box','Sin pedidos en este filtro.')}</div>
     ${DB.modo==="demo"?`<div class="center" style="margin-top:24px">
       <span class="muted" style="font-size:13px">Modo demo · </span>
       <button class="btn sm ghost" onclick="resetDatos(false)">Recargar ejemplo (35)</button>
@@ -1549,7 +1554,7 @@ function vistaCadete(){
   app().innerHTML=`<div class="title">${esc(CADETE_ACTIVO)}</div>
     <div class="subtitle">${mios.length} para repartir · ${hechos} entregados</div>
     ${mios.some(p=>["asignado","en_reparto"].includes(p.estado))?`<button class="btn block" style="margin-bottom:14px" onclick="escanearEntrega()">${icon('check')} Escanear entrega</button>`:""}
-    <div>${mios.map(cardCadete).join("")||empty('check','No tenés pedidos asignados ahora.')}</div>`;
+    <div class="cardgrid">${mios.map(cardCadete).join("")||empty('check','No tenés pedidos asignados ahora.')}</div>`;
 }
 function cardCadete(p){
   const e=estObj(p.estado);
@@ -1602,36 +1607,44 @@ function confirmarPorCodigo(code){
   toast("Entregado: "+p.id+" — tocá WhatsApp para avisar al cliente");
   return true;
 }
-/* Abre la cámara y escanea el código del paquete para confirmar la entrega */
+/* Abre la cámara y escanea el código del paquete para confirmar la entrega.
+   Usa ZXing (anda en Android y iPhone). Si no está, prueba el lector nativo, y si no, pide tipear. */
 async function escanearEntrega(){
-  const soportado = ("BarcodeDetector" in window) && navigator.mediaDevices && navigator.mediaDevices.getUserMedia;
-  if(!soportado){
-    const c=prompt("Tu teléfono no soporta escaneo con cámara. Ingresá o pegá el número del paquete:");
-    if(c) confirmarPorCodigo(c);
-    return;
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    const c=prompt("Este teléfono no permite usar la cámara. Ingresá el número del paquete:");
+    if(c) confirmarPorCodigo(c); return;
   }
-  let stream;
-  try{ stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}}); }
-  catch(e){ toast("No pude abrir la cámara. Revisá los permisos."); return; }
   const ov=document.createElement("div"); ov.className="scan-ov";
   ov.innerHTML=`<video class="scan-vid" autoplay playsinline muted></video>
     <div class="scan-frame"></div>
     <div class="scan-hint">Apuntá al código de barras del paquete</div>
     <button class="btn scan-x">Cerrar</button>`;
   document.body.appendChild(ov);
-  const vid=ov.querySelector("video"); vid.srcObject=stream;
-  const det=new BarcodeDetector({formats:["code_128","qr_code","ean_13","code_39"]});
-  let stop=false;
-  const cerrar=()=>{ if(stop)return; stop=true; try{stream.getTracks().forEach(t=>t.stop());}catch(e){} ov.remove(); };
+  const vid=ov.querySelector("video");
+  let reader=null, stop=false;
+  const cerrar=()=>{ if(stop)return; stop=true;
+    try{ reader && reader.reset && reader.reset(); }catch(e){}
+    try{ const s=vid.srcObject; if(s) s.getTracks().forEach(t=>t.stop()); }catch(e){}
+    ov.remove(); };
   ov.querySelector(".scan-x").onclick=cerrar;
-  async function loop(){
-    if(stop) return;
-    try{ const codes=await det.detect(vid);
-      if(codes&&codes.length){ const raw=codes[0].rawValue||""; cerrar(); confirmarPorCodigo(raw); return; } }
-    catch(e){}
-    requestAnimationFrame(loop);
-  }
-  vid.onloadedmetadata=()=>loop();
+  try{
+    if(typeof ZXing!=="undefined" && ZXing.BrowserMultiFormatReader){
+      reader=new ZXing.BrowserMultiFormatReader();
+      await reader.decodeFromConstraints({video:{facingMode:"environment"}}, vid, (result)=>{
+        if(result && !stop){ const raw=(result.getText&&result.getText())||result.text||""; cerrar(); confirmarPorCodigo(raw); }
+      });
+    } else if("BarcodeDetector" in window){
+      const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});
+      vid.srcObject=stream;
+      const det=new BarcodeDetector({formats:["code_128","qr_code","ean_13","code_39"]});
+      const loop=async()=>{ if(stop)return;
+        try{ const codes=await det.detect(vid); if(codes&&codes.length){ cerrar(); confirmarPorCodigo(codes[0].rawValue||""); return; } }catch(e){}
+        requestAnimationFrame(loop); };
+      vid.onloadedmetadata=()=>loop();
+    } else {
+      cerrar(); const c=prompt("Ingresá el número del paquete:"); if(c) confirmarPorCodigo(c);
+    }
+  }catch(e){ cerrar(); toast("No pude abrir la cámara. Revisá los permisos del navegador."); }
 }
 
 /* ---------- CLIENTE ---------- */
