@@ -155,9 +155,15 @@ textarea{resize:vertical;min-height:66px;font-size:15px;line-height:1.5}
 
 /* ---- Lista de pedidos ---- */
 .order{background:var(--bg-2);border:.5px solid var(--border);border-radius:var(--r-card);
-  padding:18px;margin-bottom:12px;box-shadow:var(--sh-sm);
+  padding:14px 16px;margin-bottom:12px;box-shadow:var(--sh-sm);
   transition:border-color .2s,transform .15s,box-shadow .2s}
-.order:hover{border-color:var(--border-2);transform:translateY(-1px);box-shadow:var(--sh-md)}
+.order:hover{border-color:var(--border-2);box-shadow:var(--sh-md)}
+.ord-head{display:flex;align-items:center;gap:10px;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.ord-name{display:flex;align-items:center;gap:8px;min-width:0}
+.ord-cli{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ord-sub{color:var(--text-2);font-size:12.5px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ord-chev{flex:0 0 auto;color:var(--text-3);font-size:15px;font-weight:800;width:20px;text-align:center}
+.ord-body{margin-top:13px;border-top:.5px solid var(--border);padding-top:12px}
 .order .top{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap}
 .order .code{font-weight:700;letter-spacing:-.01em;font-variant-numeric:tabular-nums}
 .order .who{color:var(--text-2);font-size:15px}
@@ -467,6 +473,25 @@ function prodPorBarcode(code){ const c=(code||"").trim(); if(!c) return null;
       || PRODUCTOS.find(p=>p.barcode && norm(p.barcode)===norm(c)) || null; }
 function matchNombre(a,b){ const T=s=>(s||"").toLowerCase().replace(/[^a-z0-9áéíóúñ ]/g," ").split(/\s+/).filter(w=>w.length>=3);
   const A=T(a),B=T(b); return A.some(w=>B.includes(w)); }
+/* Elige el producto del catálogo que MEJOR coincide con el nombre de un item (para descontar del correcto).
+   Prioriza coincidencia exacta y castiga los productos con palabras de más (kits/variantes). */
+function mejorProducto(nombreItem){
+  const norm=s=>(s||"").toLowerCase().replace(/[^a-z0-9áéíóúñ ]/g," ").replace(/\s+/g," ").trim();
+  const words=s=>norm(s).split(" ").filter(w=>w.length>=3);
+  const ni=norm(nombreItem), wi=words(nombreItem);
+  if(!ni) return null;
+  let best=null, bestScore=0;
+  for(const p of PRODUCTOS){
+    const np=norm(p.nombre);
+    if(np===ni) return p;                                   // coincidencia exacta
+    const wp=words(p.nombre); let shared=0;
+    wp.forEach(w=>{ if(wi.includes(w)) shared++; });
+    if(!shared) continue;
+    const score=shared*2-(wp.length-shared);                // premia coincidencia, castiga palabras de más
+    if(score>bestScore){ bestScore=score; best=p; }
+  }
+  return best;
+}
 const PROVINCIAS = ["CABA","Buenos Aires","Catamarca","Chaco","Chubut","Córdoba","Corrientes",
   "Entre Ríos","Formosa","Jujuy","La Pampa","La Rioja","Mendoza","Misiones","Neuquén","Río Negro",
   "Salta","San Juan","San Luis","Santa Cruz","Santa Fe","Santiago del Estero","Tierra del Fuego","Tucumán"];
@@ -487,6 +512,7 @@ const EST = {
   en_camino: {label:"En camino",            desc:"Viajando por correo al destino",             color:"var(--accent)"},
   entregado: {label:"Entregado",            desc:"Llegó al cliente",                           color:"var(--green)"},
   confirmado:{label:"Confirmado por cliente",desc:"El cliente confirmó la recepción",          color:"var(--green)"},
+  anulado:   {label:"Anulado",              desc:"Pedido anulado, no se despacha",            color:"var(--red)"},
 };
 const FLUJO_CADETE = ["pendiente","preparado","asignado","en_reparto","entregado","confirmado"];
 const FLUJO_CORREO = ["pendiente","preparado","despachado","en_camino","entregado","confirmado"];
@@ -609,12 +635,15 @@ function stockState(){
   if(r.data){ for(const k in r.data){ const v=r.data[k]||{};   // migra formato viejo
     if(v.min) min[k]=v.min;
     if(v.cant) movs.push({ts:Date.now(),prod:k,tipo:"inicial",cant:v.cant,motivo:"Saldo inicial"}); } }
-  return {min,movs};
+  return {min,movs,descontar:r.descontar===true};
 }
+function descuentoActivo(){ return stockState().descontar===true; }
+async function toggleDescuento(){ const st=stockState(); st.descontar=!st.descontar;
+  await persistStock(st); toast(st.descontar?"Descuento de stock activado":"Descuento de stock desactivado"); vistaStock(); }
 function nivel(prod,st){ return (st.movs||[]).filter(m=>m.prod===prod).reduce((s,m)=>s+(m.tipo==="salida"?-m.cant:m.cant),0); }
 async function persistStock(st){ const r=stockRecord();
-  if(r) await DB.update(r.id,{min:st.min,movs:st.movs,data:null});
-  else await DB.create({tipo:"stock",min:st.min,movs:st.movs}); }
+  if(r) await DB.update(r.id,{min:st.min,movs:st.movs,descontar:!!st.descontar,data:null});
+  else await DB.create({tipo:"stock",min:st.min,movs:st.movs,descontar:!!st.descontar}); }
 async function pushMov(prod,tipo,cant,motivo,extra={}){ const st=stockState();
   st.movs.push({ts:Date.now(),prod,tipo,cant:Math.abs(+cant||0),motivo:motivo||"",...extra}); await persistStock(st); }
 /* Descuenta del pool compartido los items de un pedido, etiquetando empresa+canal (imputación) */
@@ -623,7 +652,7 @@ async function descontarStockPedido(id){
   const items=parseItems(p.items||"");
   if(items.length){
     const st=stockState();
-    items.forEach(it=>{ const prod=PRODUCTOS.find(pr=>matchNombre(it.nombre,pr.nombre));
+    items.forEach(it=>{ const prod=mejorProducto(it.nombre);
       st.movs.push({ts:Date.now(),prod:prod?prod.nombre:it.nombre,tipo:"salida",cant:Math.abs(it.cant||1),
         motivo:"Venta "+(p.ref||p.id),empresa:p.empresa,canal:canalDe(p),ref:p.ref||p.id}); });
     await persistStock(st);
@@ -758,7 +787,7 @@ async function avanzar(id, nuevo, nota="", extra={}){
   const p=PEDIDOS.find(x=>x.id===id); if(!p) return;
   const eventos=(p.eventos||[]).concat([{estado:nuevo,ts:Date.now(),nota}]);
   await DB.update(id,{estado:nuevo,eventos,...extra});
-  if(nuevo==="preparado") await descontarStockPedido(id);
+  if(nuevo==="preparado" && descuentoActivo()) await descontarStockPedido(id);
   toast("Estado: "+estObj(nuevo).label);
 }
 async function asignarCadete(id,cadete){ await avanzar(id,"asignado","Asignado a "+cadete,{cadete}); }
@@ -919,7 +948,7 @@ function segOp(active){
 function vistaPanel(){
   const ped=soloPedidos();
   const hoy=new Date(); hoy.setHours(0,0,0,0);
-  const activos=ped.filter(p=>p.estado!=="confirmado");
+  const activos=ped.filter(p=>!["confirmado","anulado"].includes(p.estado));
   const porPrep=ped.filter(p=>p.estado==="pendiente").length;
   const enRuta=ped.filter(p=>["asignado","en_reparto"].includes(p.estado)).length;
   const entregadosHoy=ped.filter(p=>(p.eventos||[]).some(e=>e.estado==="entregado"&&e.ts>=hoy.getTime())).length;
@@ -994,7 +1023,7 @@ function vistaOperador(){
     enRuta:  ped.filter(p=>["asignado","en_reparto","despachado","en_camino"].includes(p.estado)).length,
     hoy: entregadosHoy
   };
-  const activosArr=ped.filter(p=>p.estado!=="confirmado");
+  const activosArr=ped.filter(p=>!["confirmado","anulado"].includes(p.estado));
   const grupos=[];
   EMPRESAS.forEach(e=>CANALES.forEach(c=>{
     const arr=activosArr.filter(p=>(p.empresa||"")===e.id && canalDe(p)===c.id);
@@ -1003,8 +1032,8 @@ function vistaOperador(){
   const costoTotal=grupos.reduce((s,g)=>s+g.total,0);
   const lista=ped.filter(p=>{
     if(FILTRO.startsWith("emp:")) return (p.empresa||"")===FILTRO.slice(4);
-    if(FILTRO==="todos") return true;
-    if(FILTRO==="activos") return p.estado!=="confirmado";
+    if(FILTRO==="todos") return p.estado!=="anulado";
+    if(FILTRO==="activos") return !["confirmado","anulado"].includes(p.estado);
     if(FILTRO==="cadete") return p.metodo==="cadete";
     if(FILTRO==="correo") return p.metodo==="correo";
     return p.estado===FILTRO;
@@ -1038,8 +1067,8 @@ function vistaOperador(){
       <button class="btn ghost" onclick="hojaEnvios()">${icon('printer')} Hoja de envíos</button>
     </div>
     <div class="filters">
-      ${["todos","activos","cadete","correo","pendiente","preparado","entregado","confirmado"]
-        .map(f=>`<button class="${FILTRO===f?'on':''}" onclick="setFiltro('${f}')">${({todos:'Todos',activos:'Activos',cadete:'Cadete',correo:'Correo'})[f]||estObj(f).label}</button>`).join("")}
+      ${["todos","activos","cadete","correo","pendiente","preparado","entregado","confirmado","anulado"]
+        .map(f=>`<button class="${FILTRO===f?'on':''}" onclick="setFiltro('${f}')">${({todos:'Todos',activos:'Activos',cadete:'Cadete',correo:'Correo',anulado:'Anulados'})[f]||estObj(f).label}</button>`).join("")}
       ${EMPRESAS.map(e=>`<button class="${FILTRO==='emp:'+e.id?'on':''}" onclick="setFiltro('emp:${e.id}')">${esc(e.nombre)}</button>`).join("")}
     </div>
     <div class="cardgrid">${lista.map(cardOperador).join("")||empty('box','Sin pedidos en este filtro.')}</div>
@@ -1057,40 +1086,49 @@ function resetDatos(blank){
   toast(blank?"Listo, sin pedidos":"Datos de ejemplo recargados");
 }
 
+let EXP_PED={};
+function toggleExp(id){ EXP_PED[id]=!EXP_PED[id]; vistaOperador(); }
 function cardOperador(p){
-  const e=estObj(p.estado), fl=flujo(p), i=idxEst(p), sig=fl[i+1];
+  const e=estObj(p.estado), exp=!!EXP_PED[p.id];
+  const dest=(p.ciudad||"")+(p.provincia?(", "+p.provincia):"");
+  const head=`<div class="ord-head" onclick="toggleExp('${p.id}')">
+      <div style="min-width:0;flex:1">
+        <div class="ord-name">
+          <span class="ord-cli">${esc(p.cliente||'—')}</span>
+          <span class="badge" style="flex:0 0 auto"><span class="dot" style="background:${e.color}"></span>${e.label}</span>
+        </div>
+        <div class="ord-sub">${esc(empresaObj(p.empresa).nombre)} · ${p.metodo==='correo'?'Correo':'Cadete'}${dest?(' · '+esc(dest)):''}</div>
+      </div>
+      <span class="ord-chev">${exp?'▲':'▼'}</span>
+    </div>`;
+  if(!exp) return `<div class="order compact">${head}</div>`;
   let acts="";
-  // Flujo CADETE
   if(p.metodo==="cadete"){
     if(p.estado==="pendiente") acts+=`<button class="btn sm" onclick="avanzar('${p.id}','preparado')">→ Preparado</button>`;
     if(p.estado==="preparado") acts+=selectCadete(p);
-    if(p.estado==="asignado")  acts+=selectCadete(p); // permite reasignar
+    if(p.estado==="asignado")  acts+=selectCadete(p);
   }
-  // Flujo CORREO
   if(p.metodo==="correo"){
     if(p.estado==="pendiente") acts+=`<button class="btn sm" onclick="avanzar('${p.id}','preparado')">→ Preparado</button>`;
     if(p.estado==="preparado") acts+=`<button class="btn sm" onclick="despachar('${p.id}')">→ Despachar al correo</button>`;
     if(p.estado==="despachado")acts+=`<button class="btn sm" onclick="avanzar('${p.id}','en_camino')">→ En camino</button>`;
     if(p.estado==="en_camino") acts+=`<button class="btn sm green" onclick="avanzar('${p.id}','entregado')">→ Entregado</button>`;
   }
-  acts+=`<button class="btn sm ghost" onclick="cambiarRuta('${p.id}')">Ruta</button>`;
+  acts+=`<button class="btn sm ghost" onclick="cambiarRuta('${p.id}')">Editar</button>`;
   acts+=`<button class="btn sm ghost" onclick="imprimirEtiqueta('${p.id}')">${icon('printer')}Etiqueta</button>`;
   acts+=`<button class="btn sm ghost" onclick="copiarLink('${p.id}')">Link</button>`;
   acts+=`<button class="btn sm green" onclick="waCliente('${p.id}')">WhatsApp</button>`;
-  const ruta = (p.origen==="riotercero"?"Río Tercero":"Bs As") + " · " +
-    (p.metodo==="correo"? ("Correo"+(p.correo?(" "+esc(p.correo)):"")) : "Cadete");
-  return `<div class="order">
-    <div class="top">
-      <span class="code">${esc(p.id)}</span>
-      <span class="chip ${canalDe(p)==='ml_flex'?'flex':'tn'}">${esc(empresaObj(p.empresa).nombre)}</span>
-      <span class="chip ${p.metodo==='correo'?'correo':'cadete'}">${icon(p.metodo==='correo'?'route':'truck')}${p.metodo==='correo'?'Correo':'Cadete'}</span>
-      <span class="badge"><span class="dot" style="background:${e.color}"></span>${e.label}</span>
+  if(p.estado==="anulado") acts+=`<button class="btn sm ghost" onclick="reactivarPedido('${p.id}')">Reactivar</button>`;
+  else if(p.estado!=="confirmado") acts+=`<button class="btn sm ghost" style="color:var(--red)" onclick="anularPedido('${p.id}')">Anular</button>`;
+  const ruta=(p.origen==="riotercero"?"Río Tercero":"Bs As")+" · "+(p.metodo==="correo"?("Correo"+(p.correo?(" "+esc(p.correo)):"")):"Cadete");
+  return `<div class="order">${head}
+    <div class="ord-body">
+      <div class="who">${esc(p.id)} · ${esc(p.tel||"—")}${p.ref?(' · '+esc(p.ref)):''}</div>
+      <div class="addr">${esc(p.dir||'')} — ${esc(p.ciudad||'')}, ${esc(p.provincia||'')}</div>
+      <div><span class="tag">Items</span> ${esc(p.items||"—")}</div>
+      <div style="margin-top:6px"><span class="tag">Ruta</span> ${ruta}${p.cadete?(" · "+esc(p.cadete)):""}${p.tracking?(" · seg. "+esc(p.tracking)):""} · <b>${fmtAr(costoEnvio(p))}</b></div>
+      <div class="acts">${acts}</div>
     </div>
-    <div class="who">${esc(p.cliente)} · ${esc(p.tel||"")} ${p.ref?('· '+esc(p.ref)):''}</div>
-    <div class="addr">${esc(p.dir)} — ${esc(p.ciudad)}, ${esc(p.provincia)}</div>
-    <div><span class="tag">Items</span> ${esc(p.items||"—")}</div>
-    <div style="margin-top:6px"><span class="tag">Ruta</span> ${ruta}${p.cadete?(" · "+esc(p.cadete)):""}${p.tracking?(" · seg. "+esc(p.tracking)):""} · <b>${fmtAr(costoEnvio(p))}</b></div>
-    <div class="acts">${acts}</div>
   </div>`;
 }
 function selectCadete(p){
@@ -1343,25 +1381,25 @@ function formNuevo(edit){
   const provOpts=PROVINCIAS.map(pr=>`<option ${p.provincia===pr?'selected':''}>${pr}</option>`).join("");
   app().innerHTML=`
     <button class="btn sm ghost" onclick="vistaOperador()">← Volver</button>
-    <div class="title" style="margin-top:14px">${edit?'Editar ruta':'Nuevo pedido'}</div>
-    <div class="subtitle">${edit?esc(p.cliente):'Cargá el pedido a mano'}</div>
+    <div class="title" style="margin-top:14px">${edit?'Editar pedido':'Nuevo pedido'}</div>
+    <div class="subtitle">${edit?'Corregí los datos y guardá — la etiqueta sale con lo nuevo':'Cargá el pedido a mano'}</div>
     <div class="card">
       ${edit?'':`<div class="two">
         <div class="field"><span class="label">Empresa</span>
           <select id="f_emp">${EMPRESAS.map(e=>`<option value="${e.id}">${esc(e.nombre)}</option>`).join("")}</select></div>
         <div class="field"><span class="label">Canal</span>
           <select id="f_canal">${CANALES.map(c=>`<option value="${c.id}">${esc(c.nombre)} · ${fmtAr(c.costo)}</option>`).join("")}</select></div>
-      </div>
+      </div>`}
       <div class="two">
-        <div class="field"><span class="label">Cliente</span><input id="f_cli" placeholder="Nombre y apellido"></div>
-        <div class="field"><span class="label">Teléfono</span><input id="f_tel" inputmode="tel" placeholder="11 5678 9000"></div>
+        <div class="field"><span class="label">Cliente</span><input id="f_cli" value="${esc(p.cliente||'')}" placeholder="Nombre y apellido"></div>
+        <div class="field"><span class="label">Teléfono</span><input id="f_tel" inputmode="tel" value="${esc(p.tel||'')}" placeholder="11 5678 9000"></div>
       </div>
-      <div class="field"><span class="label">Dirección</span><input id="f_dir" placeholder="Calle, número, piso/depto"></div>
+      <div class="field"><span class="label">Dirección</span><input id="f_dir" value="${esc(p.dir||'')}" placeholder="Calle, número, piso/depto"></div>
       <div class="two">
-        <div class="field"><span class="label">Localidad</span><input id="f_ciu" placeholder="Ej: Palermo"></div>
+        <div class="field"><span class="label">Localidad</span><input id="f_ciu" value="${esc(p.ciudad||'')}" placeholder="Ej: Palermo"></div>
         <div class="field"><span class="label">Provincia</span><select id="f_prov">${provOpts}</select></div>
       </div>
-      <div class="field"><span class="label">Items</span><textarea id="f_items" placeholder="Ej: 2x Magnesio · 1x Omega 3"></textarea></div>`}
+      <div class="field"><span class="label">Items</span><textarea id="f_items" placeholder="Ej: 2x Magnesio · 1x Omega 3">${esc(p.items||'')}</textarea></div>
       <div class="two">
         <div class="field"><span class="label">Origen del envío</span>
           <select id="f_origen">
@@ -1379,7 +1417,7 @@ function formNuevo(edit){
           <select id="f_correo">${CORREOS.map(c=>`<option ${p.correo===c?'selected':''}>${c}</option>`).join("")}</select></div>
         <div class="field"><span class="label">Nº seguimiento</span><input id="f_track" value="${esc(p.tracking||'')}" placeholder="opcional"></div>
       </div>
-      <button class="btn block" onclick='${edit?`guardarRuta(${JSON.stringify(p.id)})`:"guardarNuevo()"}'>${edit?'Guardar ruta':'Crear pedido'}</button>
+      <button class="btn block" onclick='${edit?`guardarEdicion(${JSON.stringify(p.id)})`:"guardarNuevo()"}'>${edit?'Guardar cambios':'Crear pedido'}</button>
     </div>`;
 }
 function toggleCorreo(){ const m=$("#f_metodo").value;
@@ -1394,11 +1432,36 @@ async function guardarNuevo(){
     correo: metodo==="correo"?$("#f_correo").value:"", tracking: metodo==="correo"?$("#f_track").value.trim():"" });
   toast("Pedido creado"); vistaOperador();
 }
-async function guardarRuta(id){
+async function guardarEdicion(id){
+  const cliente=$("#f_cli").value.trim();
+  if(!cliente){ toast("Falta el nombre del cliente"); return; }
   const metodo=$("#f_metodo").value;
-  await DB.update(id,{ origen:$("#f_origen").value, metodo,
-    correo: metodo==="correo"?$("#f_correo").value:"", tracking: metodo==="correo"?$("#f_track").value.trim():"" });
-  toast("Ruta actualizada"); vistaOperador();
+  await DB.update(id,{ cliente, tel:$("#f_tel").value.trim(), dir:$("#f_dir").value.trim(),
+    ciudad:$("#f_ciu").value.trim(), provincia:$("#f_prov").value, items:$("#f_items").value.trim(),
+    origen:$("#f_origen").value, metodo, correo: metodo==="correo"?$("#f_correo").value:"",
+    tracking: metodo==="correo"?$("#f_track").value.trim():"" });
+  toast("Pedido corregido"); vistaOperador();
+}
+/* Devuelve al stock lo que se había descontado de un pedido (borra sus salidas) */
+async function devolverStockPedido(id){
+  const p=await DB.get(id); if(!p) return;
+  const ref=p.ref||p.id; const st=stockState();
+  st.movs=(st.movs||[]).filter(m=>!(m.tipo==="salida" && m.ref===ref));
+  await persistStock(st);
+}
+async function anularPedido(id){
+  const p=PEDIDOS.find(x=>x.id===id); if(!p) return;
+  if(!confirm("¿Anular este pedido? Sale de la lista y no se despacha. (Después lo podés reactivar)")) return;
+  if(p.stockBajado) await devolverStockPedido(id);   // si se había descontado, se devuelve al stock
+  await DB.update(id,{ estado:"anulado", stockBajado:false,
+    eventos:[...(p.eventos||[]),{estado:"anulado",ts:Date.now(),nota:"Pedido anulado"}] });
+  toast("Pedido anulado"); vistaOperador();
+}
+async function reactivarPedido(id){
+  const p=PEDIDOS.find(x=>x.id===id); if(!p) return;
+  await DB.update(id,{ estado:"pendiente",
+    eventos:[...(p.eventos||[]),{estado:"pendiente",ts:Date.now(),nota:"Pedido reactivado"}] });
+  toast("Pedido reactivado"); vistaOperador();
 }
 
 /* ---------- OPERADOR · Depósito (reabastecimientos) ---------- */
@@ -1508,6 +1571,7 @@ function etiquetasPend(){ printLabels(soloPedidos().filter(p=>p.estado==="pendie
 /* ---------- OPERADOR · Stock ---------- */
 function vistaStock(){
   const st=stockState(), pick=pickingConsolidado();
+  const desc=st.descontar===true;
   const imp=imputacion(st);
   const impE=imputacionEmp(st,STOCK_DESDE,STOCK_HASTA);
   const rows=PRODUCTOS.map((p,i)=>{ const stk=nivel(p.nombre,st), mn=st.min[p.nombre]||0, d=demandaDe(p,pick);
@@ -1534,6 +1598,15 @@ function vistaStock(){
         <select id="mvEmp" style="${inp};flex:1"><option value="">— ninguna (Labs / ajuste) —</option>${EMPRESAS.filter(e=>e.id!==STOCK_DUENO).map(e=>`<option value="${e.id}">${esc(e.nombre)} pone este stock</option>`).join("")}</select>
       </div>
       <button class="btn block" style="margin-top:10px" onclick="registrarMov()">Registrar</button>
+    </div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="row" style="justify-content:space-between;align-items:center;gap:12px">
+        <div>
+          <div style="font-weight:600">Descontar del stock al preparar</div>
+          <div class="hint" style="margin-top:3px">${desc?'Cada pedido que marcás preparado descuenta del stock.':'Los envíos NO tocan el stock (dejalo así mientras acomodás).'}</div>
+        </div>
+        <button class="btn ${desc?'':'ghost'}" style="flex:0 0 auto" onclick="toggleDescuento()">${desc?'Activado':'Desactivado'}</button>
+      </div>
     </div>
     <div class="row" style="margin-bottom:12px;flex-wrap:wrap">
       <button class="btn ghost" onclick="guardarMinimos()">Guardar mínimos</button>
@@ -1619,7 +1692,7 @@ function vistaPreparacion(){
     <div class="subtitle">${pend.length} pedidos por preparar · ${unidades} unidades a pickear</div>
     <div class="row" style="margin-bottom:16px;flex-wrap:wrap">
       <button class="btn ghost" onclick="hojaEnvios()">${icon('printer')} Hoja de envíos (correo)</button>
-      ${pend.length?`<button class="btn ghost" onclick="etiquetasPend()">${icon('printer')} Imprimir etiquetas</button>`:""}
+      ${pend.length?`<button class="btn ghost" onclick="pantallaEtiquetas()">${icon('printer')} Imprimir etiquetas</button>`:""}
     </div>
     <div class="card" style="margin-bottom:16px">
       <span class="label">Escaneá el código de barras del producto</span>
@@ -1933,7 +2006,40 @@ function imprimirEtiqueta(id){
   if(!p){ toast("No encontré el pedido"); return; }
   printLabels([p]);
 }
-function imprimirLote(){ printLabels((LISTA_OP||[]).filter(p=>!p.tipo||p.tipo==="pedido")); }
+function imprimirLote(){ pantallaEtiquetas(); }
+let SEL_ETQ={};
+function etqImprimibles(){ return soloPedidos().filter(p=>!["entregado","confirmado","anulado"].includes(p.estado)); }
+function pantallaEtiquetas(){
+  const arr=etqImprimibles();
+  const n=arr.filter(p=>SEL_ETQ[p.id]).length;
+  app().innerHTML=`
+    <button class="btn sm ghost" onclick="vistaOperador()">← Volver</button>
+    <div class="title" style="margin-top:14px">Imprimir etiquetas</div>
+    <div class="subtitle">Marcá las que querés imprimir. Podés corregir cada una con “Editar”.</div>
+    <div class="row" style="gap:8px;margin:14px 0">
+      <button class="btn sm ghost" onclick="selEtq(true)">Marcar todas</button>
+      <button class="btn sm ghost" onclick="selEtq(false)">Ninguna</button>
+    </div>
+    ${arr.length?arr.map(p=>`
+      <div class="card" style="margin-bottom:10px;padding:14px 16px;display:flex;gap:12px;align-items:center">
+        <label style="display:flex;gap:12px;align-items:flex-start;cursor:pointer;flex:1;min-width:0;margin:0">
+          <input type="checkbox" ${SEL_ETQ[p.id]?'checked':''} onchange="toggleEtq('${p.id}')" style="width:22px;height:22px;margin-top:2px;flex:0 0 auto;accent-color:var(--accent)">
+          <span style="min-width:0">
+            <span style="font-weight:600;display:block">${esc(p.cliente||'—')} <span class="muted" style="font-weight:400">· ${esc(empresaObj(p.empresa).nombre)}</span></span>
+            <span class="muted" style="font-size:13px;display:block;margin-top:2px">${esc(p.dir||'')}${p.ciudad?(' — '+esc(p.ciudad)):''}</span>
+            <span class="muted" style="font-size:13px;display:block;margin-top:2px">${esc(p.items||'—')}</span>
+          </span>
+        </label>
+        <button class="btn sm ghost" style="flex:0 0 auto" onclick="cambiarRuta('${p.id}')">Editar</button>
+      </div>`).join(""):empty('box','No hay pedidos para etiquetar.')}
+    ${arr.length?`<div style="position:sticky;bottom:16px;margin-top:18px">
+      <button class="btn block" onclick="imprimirSeleccionadas()">${icon('printer')} Imprimir ${n} etiqueta${n===1?'':'s'}</button>
+    </div>`:''}`;
+}
+function toggleEtq(id){ SEL_ETQ[id]=!SEL_ETQ[id]; pantallaEtiquetas(); }
+function selEtq(v){ SEL_ETQ={}; if(v) etqImprimibles().forEach(p=>SEL_ETQ[p.id]=true); pantallaEtiquetas(); }
+function imprimirSeleccionadas(){ const arr=soloPedidos().filter(p=>SEL_ETQ[p.id]);
+  if(!arr.length){ toast("Marcá al menos una etiqueta"); return; } printLabels(arr); }
 
 /* =========================================================================
    9) SIMULACIÓN DEL CICLO COMPLETO (modo demostración, no toca tus datos)
