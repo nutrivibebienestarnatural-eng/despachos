@@ -1630,9 +1630,12 @@ function vistaStock(){
           <span style="font-weight:800;white-space:nowrap;color:${r.stk<=r.mn?'var(--red)':'var(--text)'}">Quedan ${r.stk}</span>
         </div>
         <div class="muted" style="font-size:13px;margin-top:4px">Entraron ${f.ent} · Salieron ${f.sal}${split?` <span style="opacity:.85">(${split})</span>`:""}${r.rep>0?` · <span style="color:var(--amber);font-weight:600">pedir ${r.rep}</span>`:""}</div>
-        <div class="row" style="align-items:center;gap:6px;margin-top:6px">
-          <span class="muted" style="font-size:12px">Pedir cuando falta</span>
-          <input id="mn_${r.i}" type="number" inputmode="numeric" value="${r.mn}" style="${inp};width:64px;text-align:center;padding:5px">
+        <div class="row" style="align-items:center;gap:6px;margin-top:6px;justify-content:space-between;flex-wrap:wrap">
+          <span class="row" style="align-items:center;gap:6px">
+            <span class="muted" style="font-size:12px">Pedir cuando falta</span>
+            <input id="mn_${r.i}" type="number" inputmode="numeric" value="${r.mn}" style="${inp};width:64px;text-align:center;padding:5px">
+          </span>
+          <button class="btn sm ghost" onclick="ajustarStock('${encodeURIComponent(r.p.nombre)}')">Ajustar</button>
         </div>
       </div>`; }).join("")||empty('box', q?('No encontré productos con "'+esc(STOCK_Q)+'".'):'Cargá stock con el botón de arriba para empezar.')}
     </div>
@@ -1677,6 +1680,20 @@ async function registrarMov(){
   if(!prod||!cant){ toast("Elegí producto y cantidad"); return; }
   await pushMov(prod,tipo,cant,motivo, emp?{empresa:emp}:{});
   toast((tipo==="salida"?"−":"+")+cant+" "+prod);
+}
+/* Corrige el stock de un producto a la cantidad real (arregla errores de carga) */
+async function ajustarStock(nombreEnc){
+  const nombre=decodeURIComponent(nombreEnc);
+  const actual=nivel(nombre,stockState());
+  const v=prompt("¿Cuántas unidades tenés REALMENTE de:\n\n"+nombre+"\n\n(ahora el sistema marca "+actual+")", String(actual));
+  if(v===null) return;
+  const target=parseInt((String(v).match(/-?\d+/)||[])[0],10);
+  if(isNaN(target)){ toast("Poné un número"); return; }
+  const delta=target-actual;
+  if(delta===0){ toast("Ya estaba en "+target); return; }
+  await pushMov(nombre, delta>0?"entrada":"salida", Math.abs(delta), "Ajuste manual");
+  toast(nombre.split(" ").slice(0,2).join(" ")+" → "+target);
+  vistaStock();
 }
 async function guardarMinimos(){ const min={...stockState().min};
   PRODUCTOS.forEach((p,i)=>{ const el=$("#mn_"+i); if(el && el.value!=null && el.value!=="") min[p.nombre]=+el.value; });
