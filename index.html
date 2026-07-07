@@ -434,6 +434,10 @@ const canalObj   = id => CANALES.find(c=>c.id===id) || CANALES[0];
 const canalDe    = p => (p&&p.canal) || empresaObj(p&&p.empresa).canalDefault;
 const costoEnvio = p => canalObj(canalDe(p)).costo;
 const STOCK_DUENO = "labs";   // Labs pone el stock compartido; las demás empresas le pagan lo que sacan
+const MIN_DEFAULT=5;   // cuánto pedir cuando un producto que manejás baja del mínimo
+function minDe(n,st){ st=st||stockState(); return (st&&st.min&&st.min[n]!=null)?st.min[n]:MIN_DEFAULT; }
+function tieneMov(n,st){ st=st||stockState(); return (st.movs||[]).some(m=>m.prod===n); }
+function pedirDe(n,st){ if(!tieneMov(n,st)) return 0; const mn=minDe(n,st),stk=nivel(n,st); return (mn>0 && stk<mn)?mn:0; }
 const fmtAr = n => "$"+Number(n||0).toLocaleString("es-AR");
 /* Geo para la hoja de ruta: salida desde Puerto Madero + centro de cada barrio CABA */
 const ORIGEN_CABA={nombre:"Puerto Madero, CABA",lat:-34.6118,lon:-58.3625};
@@ -617,7 +621,7 @@ function sembrarDemo(write,read){
    ========================================================================= */
 let PEDIDOS=[], ROL=null, CADETE_ACTIVO=null, FILTRO="todos", OPVIEW="panel", EMPLEADO=false;
 let USER=null, USERROL=null, AUTH_READY=false, SUBSCRITO=false, PREVIEW=null;
-let STOCK_DESDE="", STOCK_HASTA="";
+let STOCK_DESDE="", STOCK_HASTA="", STOCK_Q="";
 let SIM=null, SIM_STEP=0, SIM_METODO="cadete", SIM_TIMER=null;   // simulación del ciclo
 let LISTA_OP=[];   // último listado mostrado al operador (para imprimir en lote)
 let RUTA_ACTUAL=[];// hoja de ruta calculada (para Maps/impresión)
@@ -711,7 +715,7 @@ function imprimirStock(){
   const hoy=new Date().toLocaleDateString("es-AR");
   const fc=ts=>new Date(ts).toLocaleDateString("es-AR");
   // --- Planilla de stock (estado real, sin filtro de fecha) ---
-  const prods=PRODUCTOS.filter(p=>{ const f=flujoProducto(p.nombre,st); return f.ent||f.sal||nivel(p.nombre,st); });
+  const prods=PRODUCTOS.slice();   // todos los productos del catálogo
   const thEmp=EMPRESAS.map(e=>`<th class="c">Retiró ${esc(e.nombre.split(" ")[0])}</th>`).join("");
   const filasGen=prods.map(p=>{ const f=flujoProducto(p.nombre,st), q=nivel(p.nombre,st);
     const tdEmp=EMPRESAS.map(e=>`<td class="c">${f.porEmp[e.id]||0}</td>`).join("");
@@ -956,7 +960,7 @@ function vistaPanel(){
   const reabas=soloReabas().filter(r=>r.estado!=="recibido").length;
   const facturacion=activos.reduce((s,p)=>s+costoEnvio(p),0);
   const st=stockState(), pick=pickingConsolidado();
-  const reponer=PRODUCTOS.filter(p=>Math.max(0,(st.min[p.nombre]||0)+demandaDe(p,pick)-nivel(p.nombre,st))>0).length;
+  const reponer=PRODUCTOS.filter(p=>pedirDe(p.nombre,st)>0).length;
   const fecha=new Date().toLocaleDateString("es-AR",{weekday:"long",day:"numeric",month:"long"});
   const tile=(view,ic,nombre,sub,n)=>`<button class="tile" onclick="OPVIEW='${view}';vistaOperador()">
     <span class="ico">${icon(ic)}</span><div class="tn">${nombre}</div>
@@ -1574,9 +1578,10 @@ function vistaStock(){
   const desc=st.descontar===true;
   const imp=imputacion(st);
   const impE=imputacionEmp(st,STOCK_DESDE,STOCK_HASTA);
-  const rows=PRODUCTOS.map((p,i)=>{ const stk=nivel(p.nombre,st), mn=st.min[p.nombre]||0, d=demandaDe(p,pick);
-    return {p,i,stk,mn,d,rep:Math.max(0,mn+d-stk)}; })
-    .filter(r=> r.stk!==0 || r.mn>0 || r.d>0 );   // solo los que tienen stock, mínimo o pedidos hoy
+  const q=(STOCK_Q||"").toLowerCase().trim();
+  const rows=PRODUCTOS.map((p,i)=>{ const stk=nivel(p.nombre,st), mn=minDe(p.nombre,st), d=demandaDe(p,pick);
+    return {p,i,stk,mn,d,rep:pedirDe(p.nombre,st)}; })
+    .filter(r=> !q || r.p.nombre.toLowerCase().includes(q) );   // muestra TODOS; el buscador filtra
   const reponer=rows.filter(r=>r.rep>0);
   const movs=(st.movs||[]).slice(-12).reverse();
   const inp="width:100%;padding:7px;border:1px solid var(--border);border-radius:9px;font:inherit;background:var(--bg)";
@@ -1609,11 +1614,13 @@ function vistaStock(){
       </div>
     </div>
     <div class="row" style="margin-bottom:12px;flex-wrap:wrap">
+      <button class="btn" onclick="pantallaCargarStock()">${icon('upload')} Cargar stock</button>
       <button class="btn ghost" onclick="guardarMinimos()">Guardar mínimos</button>
       <button class="btn ghost" onclick="imprimirStock()">${icon('printer')} Imprimir A4</button>
-      ${reponer.length?`<button class="btn ghost" onclick="ordenCompra()">${icon('box')} Orden de compra</button>`:""}
+      <button class="btn ghost" onclick="imprimirReposicion()">${icon('printer')} Planilla de reposición</button>
     </div>
-    <div class="label">Lo que queda · stock compartido <span class="muted" style="font-weight:400">(lo pone ${esc(empresaObj(STOCK_DUENO).nombre)})</span></div>
+    <div class="label">Lo que queda · stock compartido <span class="muted" style="font-weight:400">(cuando baja de 5, pedís 5 · lo pone ${esc(empresaObj(STOCK_DUENO).nombre)})</span></div>
+    <input id="stockQ" autocomplete="off" placeholder="🔍 Buscar producto…" value="${esc(STOCK_Q||'')}" oninput="STOCK_Q=this.value;clearTimeout(window.__sq);window.__sq=setTimeout(vistaStock,250)" style="${inp};margin-bottom:10px">
     <div class="card" style="margin-bottom:16px">
       ${rows.map(r=>{ const f=flujoProducto(r.p.nombre,st);
         const split=Object.entries(f.porEmp).map(([e,n])=>esc(empresaObj(e).nombre.split(" ")[0])+" "+n).join(" · ");
@@ -1622,12 +1629,12 @@ function vistaStock(){
           <span style="font-size:14px;font-weight:600">${esc(r.p.nombre)}</span>
           <span style="font-weight:800;white-space:nowrap;color:${r.stk<=r.mn?'var(--red)':'var(--text)'}">Quedan ${r.stk}</span>
         </div>
-        <div class="muted" style="font-size:13px;margin-top:4px">Entraron ${f.ent} · Salieron ${f.sal}${split?` <span style="opacity:.85">(${split})</span>`:""}${r.rep>0?` · <span style="color:var(--amber);font-weight:600">reponer ${r.rep}</span>`:""}</div>
+        <div class="muted" style="font-size:13px;margin-top:4px">Entraron ${f.ent} · Salieron ${f.sal}${split?` <span style="opacity:.85">(${split})</span>`:""}${r.rep>0?` · <span style="color:var(--amber);font-weight:600">pedir ${r.rep}</span>`:""}</div>
         <div class="row" style="align-items:center;gap:6px;margin-top:6px">
-          <span class="muted" style="font-size:12px">Mínimo</span>
+          <span class="muted" style="font-size:12px">Pedir cuando falta</span>
           <input id="mn_${r.i}" type="number" inputmode="numeric" value="${r.mn}" style="${inp};width:64px;text-align:center;padding:5px">
         </div>
-      </div>`; }).join("")||empty('box','Todavía no hay stock cargado. Registrá una entrada arriba para empezar.')}
+      </div>`; }).join("")||empty('box', q?('No encontré productos con "'+esc(STOCK_Q)+'".'):'Cargá stock con el botón de arriba para empezar.')}
     </div>
     <div class="label" style="margin-top:18px">Cuenta corriente · lo que retiró cada una</div>
     <div class="card" style="margin-bottom:14px">
@@ -1674,12 +1681,72 @@ async function registrarMov(){
 async function guardarMinimos(){ const min={...stockState().min};
   PRODUCTOS.forEach((p,i)=>{ const el=$("#mn_"+i); if(el && el.value!=null && el.value!=="") min[p.nombre]=+el.value; });
   await setMin(min); toast("Mínimos guardados"); }
-function ordenCompra(){ const st=stockState(), pick=pickingConsolidado();
-  const lst=PRODUCTOS.map(p=>{ const rep=Math.max(0,(st.min[p.nombre]||0)+demandaDe(p,pick)-nivel(p.nombre,st));
-    return rep>0?(rep+"x "+p.nombre):null; }).filter(Boolean);
-  if(!lst.length){ toast("Nada para reponer"); return; }
-  const txt="Orden de compra — Labs Nutrition\n\n"+lst.join("\n");
-  navigator.clipboard?.writeText(txt).then(()=>toast("Orden de compra copiada"),()=>prompt("Orden de compra:",txt)); }
+/* Cargar stock pegando una lista "nombre = cantidad" (ej: de un remito) */
+function pantallaCargarStock(txt){
+  app().innerHTML=`
+    <button class="btn sm ghost" onclick="OPVIEW='stock';vistaOperador()">← Volver</button>
+    <div class="title" style="margin-top:14px">Cargar stock</div>
+    <div class="subtitle">Pegá una línea por producto, así: <b>nombre = cantidad</b>. Yo lo cruzo con tu catálogo.</div>
+    <textarea id="csTxt" style="width:100%;padding:9px;border:1px solid var(--border);border-radius:10px;font:inherit;background:var(--bg);min-height:200px;margin-top:12px" placeholder="Bisglicinato de Magnesio 500 mg (60 capsulas) = 15
+Omega 3 (60 capsulas) = 20">${esc(txt||"")}</textarea>
+    <button class="btn block" style="margin-top:12px" onclick="previsualizarCarga()">Ver qué se va a cargar</button>
+    <div id="csPrev"></div>`;
+}
+function parseCarga(){
+  return ($("#csTxt").value||"").split(/\n/).map(l=>l.trim()).filter(Boolean).map(l=>{
+    const i=l.lastIndexOf("="); if(i<0) return null;
+    const nombre=l.slice(0,i).trim(), cant=parseInt((l.slice(i+1).match(/\d+/)||[])[0],10);
+    if(!nombre||!cant) return null;
+    const prod=mejorProducto(nombre);
+    return { entrada:nombre, cant, prod: prod?prod.nombre:null };
+  }).filter(Boolean);
+}
+function previsualizarCarga(){
+  const items=parseCarga(); const prev=$("#csPrev");
+  if(!items.length){ prev.innerHTML=`<div class="hint" style="margin-top:12px">Pegá al menos una línea con “nombre = cantidad”.</div>`; return; }
+  window.__carga=items; const okN=items.filter(i=>i.prod).length;
+  prev.innerHTML=`
+    <div class="label" style="margin-top:18px">Se va a cargar (${okN} de ${items.length})</div>
+    <div class="card">
+      ${items.map(it=>`<div class="row" style="justify-content:space-between;align-items:center;padding:9px 0;border-top:.5px solid var(--border)">
+        <span style="min-width:0;font-size:14px">${it.prod?esc(it.prod):`<span style="color:var(--red)">⚠ No reconocido: ${esc(it.entrada)}</span>`}</span>
+        <b style="flex:0 0 auto">+${it.cant}</b></div>`).join("")}
+    </div>
+    ${okN?`<button class="btn block" style="margin-top:12px" onclick="confirmarCarga()">${icon('check')} Cargar ${okN} al stock</button>`:''}
+    <div class="hint" style="margin-top:8px">Los ⚠ no los cargo. Si querés, corregí el nombre y volvé a "Ver".</div>`;
+}
+async function confirmarCarga(){
+  const items=(window.__carga||[]).filter(i=>i.prod);
+  if(!items.length){ toast("Nada para cargar"); return; }
+  for(const it of items){ await pushMov(it.prod,"entrada",it.cant,"Carga de stock"); }
+  toast(items.length+" productos cargados al stock");
+  window.__carga=null; OPVIEW="stock"; vistaOperador();
+}
+function ordenCompra(){ imprimirReposicion(); }
+function imprimirReposicion(){
+  const st=stockState();
+  const lst=PRODUCTOS.map(p=>{ const stk=nivel(p.nombre,st), mn=minDe(p.nombre,st);
+    const pedir=pedirDe(p.nombre,st); return pedir>0?{nombre:p.nombre,stk,pedir}:null; }).filter(Boolean)
+    .sort((a,b)=>a.nombre.localeCompare(b.nombre));
+  if(!lst.length){ toast("No hay nada para reponer 🎉"); return; }
+  const w=window.open("","_blank","width=860,height=920");
+  if(!w){ toast("Permití las ventanas emergentes"); return; }
+  const hoy=new Date().toLocaleDateString("es-AR");
+  const total=lst.reduce((s,r)=>s+r.pedir,0);
+  const filas=lst.map((r,i)=>`<tr><td class="c">${i+1}</td><td>${esc(r.nombre)}</td><td class="c">${r.stk}</td><td class="c b">${r.pedir}</td><td></td></tr>`).join("");
+  w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Reposición</title>'+
+    '<style>body{font-family:Arial,sans-serif;padding:22px;color:#000}h1{font-size:20px;margin:0 0 4px}'+
+    'p{font-size:12px;color:#333;margin:0 0 16px}table{width:100%;border-collapse:collapse;font-size:12px}'+
+    'th,td{border:1px solid #999;padding:7px 9px;text-align:left}th{background:#2c3e50;color:#fff}'+
+    '.c{text-align:center}.b{font-weight:bold}tbody tr:nth-child(even) td{background:#f2f4f7}'+
+    'td:last-child{width:70px}@page{size:A4;margin:14mm}</style></head><body>'+
+    '<h1>Planilla de reposición</h1>'+
+    '<p>Fecha: '+hoy+' · '+lst.length+' productos a pedir · '+total+' unidades en total</p>'+
+    '<table><thead><tr><th class="c">#</th><th>Producto</th><th class="c">Tengo</th><th class="c">Pedir</th><th class="c">Recibido</th></tr></thead>'+
+    '<tbody>'+filas+'</tbody></table>'+
+    '<scr'+'ipt>window.onload=function(){setTimeout(function(){window.print()},300)}<\/scr'+'ipt></body></html>');
+  w.document.close();
+}
 
 /* ---------- OPERADOR · Preparación (picking + escaneo) ---------- */
 function vistaPreparacion(){
