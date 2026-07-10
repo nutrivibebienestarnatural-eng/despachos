@@ -280,7 +280,8 @@ const FIREBASE_CONFIG = {
   measurementId: "G-C4MEPBGVW6"
 };
 
-const CADETES = ["Cadete CABA 1","Cadete CABA 2","Cadete CABA 3"]; // editá con nombres reales
+const CADETES = ["Flex Mensajería"];   // cadetería que reparte CABA + Buenos Aires
+let CADETERIA_TEL = "";                 // WhatsApp de Flex Mensajería (para mandarles el reparto)
 const CORREOS = ["Andreani","OCA","Correo Argentino","Vía Cargo","Cruz del Sur"];
 /* Catálogo de productos. El campo `barcode` es lo que lee el lector:
    poné el código de barras real (EAN) impreso en cada paquete. Acá uso el SKU como referencia.
@@ -434,6 +435,36 @@ const canalObj   = id => CANALES.find(c=>c.id===id) || CANALES[0];
 const canalDe    = p => (p&&p.canal) || empresaObj(p&&p.empresa).canalDefault;
 const costoEnvio = p => canalObj(canalDe(p)).costo;
 const STOCK_DUENO = "labs";   // Labs pone el stock compartido; las demás empresas le pagan lo que sacan
+/* Zonas de reparto reales (precio editable). Buenos Aires → cadete por zona; otra provincia → correo */
+let ZONAS = {
+  1:{precio:6000, locs:["avellaneda","lanus","lanús","lomas de zamora","la matanza norte","moron","morón","hurlingham","ituzaingo","ituzaingó","san fernando","san isidro","san martin","san martín","tres de febrero","vicente lopez","vicente lópez"]},
+  2:{precio:7500, locs:["tristan suarez","tristán suárez","berazategui","quilmes","esteban echeverria","esteban echeverría","ezeiza","benavidez","la matanza sur","jose c paz","josé c paz","josé c. paz","merlo","florencio varela","moreno","san miguel","tigre","malvinas argentinas","pacheco","grand bourg","tortuguitas","don torcuato","bella vista","laferrere"]},
+  3:{precio:8500, locs:["nordelta","del viso","garin","garín","derqui","villa rosa","pilar","lujan","luján","escobar","maschwitz","rodriguez","rodríguez","campana","guernica","la plata","ensenada","berisso","san vicente","canuelas","cañuelas","marcos paz"]},
+};
+function zonaCosto(){ const st=stockState(); const d={caba:4000,1:ZONAS[1].precio,2:ZONAS[2].precio,3:ZONAS[3].precio};
+  return Object.assign(d,(st&&st.zonas)||{}); }   // lo que te cobra Flex (el cadete) por CABA/Zona
+function margenReparto(){ const st=stockState(); return (st&&st.margen!=null)?st.margen:5000; }   // tu ganancia por envío de cadete
+function correoGestion(){ const st=stockState(); return (st&&st.correoGestion!=null)?st.correoGestion:2500; }  // solo gestión (etiqueta ya paga)
+function precioCat(cat){ const c=zonaCosto();     // lo que le cobrás a la marca
+  if(cat==="correo") return correoGestion();
+  if(["caba","1","2","3"].includes(cat)) return (c[cat]||0)+margenReparto();
+  return 0; }
+function llegaCadete(p){ const an=anilloDe(p); return an.n>=0 && an.n<=3; }   // CABA o Zona 1/2/3
+function anilloDe(p){
+  const prov=(p.provincia||"").toLowerCase();
+  const txt=((p.ciudad||"")+" "+(p.dir||"")).toLowerCase();
+  if(/capital|c\.a\.b\.a|autónoma|autonoma/.test(prov)) return {n:0,label:"CABA"};
+  if(!/buenos aires/.test(prov)) return {n:null,label:"Correo"};   // otra provincia => correo
+  for(const z of [1,2,3]){ if(ZONAS[z].locs.some(nn=>txt.includes(nn))) return {n:z,label:"Zona "+z}; }
+  return {n:9,label:"BA sin cadete → correo"};    // Buenos Aires donde no llega el cadete => correo
+}
+function anilloColor(n){ return n===0?"#8a44ad":n===1?"#1d9e75":n===2?"#0a84ff":n===3?"#e6a100":n===9?"#e5484d":"#8a8a8e"; }
+/* Kits: "Nmn + Resveratrol Pack X2" → escanear 2 productos (Nmn y Resveratrol) */
+function esKit(nombre){ return /\bpack\b|\bcombo\b|\bkit\b|\bx\d\b|\+/i.test(nombre||""); }
+function componentesKit(nombre){
+  let base=(nombre||"").replace(/\(.*?\)/g," ").replace(/pack.*$/i," ").replace(/\bx\d+\b/ig," ").trim();
+  return base.split("+").map(s=>s.trim()).filter(s=>s.length>2);
+}
 const MIN_DEFAULT=5;   // cuánto pedir cuando un producto que manejás baja del mínimo
 function minDe(n,st){ st=st||stockState(); return (st&&st.min&&st.min[n]!=null)?st.min[n]:MIN_DEFAULT; }
 function tieneMov(n,st){ st=st||stockState(); return (st.movs||[]).some(m=>m.prod===n); }
@@ -484,17 +515,20 @@ function mejorProducto(nombreItem){
   const words=s=>norm(s).split(" ").filter(w=>w.length>=3);
   const ni=norm(nombreItem), wi=words(nombreItem);
   if(!ni) return null;
-  let best=null, bestScore=0;
+  let best=null, bestScore=-1e9;
   for(const p of PRODUCTOS){
     const np=norm(p.nombre);
     if(np===ni) return p;                                   // coincidencia exacta
     const wp=words(p.nombre); let shared=0;
     wp.forEach(w=>{ if(wi.includes(w)) shared++; });
     if(!shared) continue;
-    const score=shared*2-(wp.length-shared);                // premia coincidencia, castiga palabras de más
+    const cov=shared/Math.max(1,wi.length);                 // qué parte del nombre buscado está en el producto
+    let score=cov*10 + shared*2 - (wp.length-shared)*0.3;   // premia cobertura y coincidencia; castiga suave las de más
+    if(wp[0] && wp[0]===wi[0]) score+=5;                     // el producto empieza con la misma palabra
+    if(/\bcon\b|\+|pack|combo|\bkit\b/.test(np)) score-=4;   // castiga combos cuando buscás un producto simple
     if(score>bestScore){ bestScore=score; best=p; }
   }
-  return best;
+  return (best && bestScore>=3) ? best : null;               // umbral para no matchear cualquier cosa
 }
 const PROVINCIAS = ["CABA","Buenos Aires","Catamarca","Chaco","Chubut","Córdoba","Corrientes",
   "Entre Ríos","Formosa","Jujuy","La Pampa","La Rioja","Mendoza","Misiones","Neuquén","Río Negro",
@@ -632,6 +666,7 @@ const esc=s=>String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",
 const fmt=ts=>{ if(!ts)return""; const d=new Date(ts);
   return d.toLocaleDateString("es-AR",{day:"2-digit",month:"2-digit"})+" "+d.toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"}); };
 const soloPedidos=()=>PEDIDOS.filter(p=>!p.tipo||p.tipo==="pedido");
+const numOrden=p=>(p&&p.ref)?p.ref:(p&&p.id||"");   // N° de orden de Tienda Nube; si no hay, el interno
 const soloReabas=()=>PEDIDOS.filter(p=>p.tipo==="reabastecimiento");
 /* --- Stock con kardex de movimientos (idea adaptada de InvenTree) --- */
 function stockRecord(){ return PEDIDOS.find(p=>p.tipo==="stock"); }
@@ -640,25 +675,29 @@ function stockState(){
   if(r.data){ for(const k in r.data){ const v=r.data[k]||{};   // migra formato viejo
     if(v.min) min[k]=v.min;
     if(v.cant) movs.push({ts:Date.now(),prod:k,tipo:"inicial",cant:v.cant,motivo:"Saldo inicial"}); } }
-  return {min,movs,descontar:r.descontar===true};
+  return {min,movs,descontar:r.descontar,zonas:r.zonas,margen:r.margen,correoGestion:r.correoGestion};
 }
-function descuentoActivo(){ return stockState().descontar===true; }
+function descuentoActivo(){ return stockState().descontar!==false; }
 async function toggleDescuento(){ const st=stockState(); st.descontar=!st.descontar;
   await persistStock(st); toast(st.descontar?"Descuento de stock activado":"Descuento de stock desactivado"); vistaStock(); }
 function nivel(prod,st){ return (st.movs||[]).filter(m=>m.prod===prod).reduce((s,m)=>s+(m.tipo==="salida"?-m.cant:m.cant),0); }
 async function persistStock(st){ const r=stockRecord();
-  if(r) await DB.update(r.id,{min:st.min,movs:st.movs,descontar:!!st.descontar,data:null});
-  else await DB.create({tipo:"stock",min:st.min,movs:st.movs,descontar:!!st.descontar}); }
+  const data={min:st.min,movs:st.movs};
+  if(st.descontar!==undefined) data.descontar=st.descontar;   // solo si está definido (undefined = ON por defecto)
+  if(st.zonas!==undefined && st.zonas!==null) data.zonas=st.zonas;
+  if(st.margen!==undefined && st.margen!==null) data.margen=st.margen;
+  if(st.correoGestion!==undefined && st.correoGestion!==null) data.correoGestion=st.correoGestion;
+  if(r) await DB.update(r.id,{...data,data:null});
+  else await DB.create({tipo:"stock",...data}); }
 async function pushMov(prod,tipo,cant,motivo,extra={}){ const st=stockState();
   st.movs.push({ts:Date.now(),prod,tipo,cant:Math.abs(+cant||0),motivo:motivo||"",...extra}); await persistStock(st); }
 /* Descuenta del pool compartido los items de un pedido, etiquetando empresa+canal (imputación) */
 async function descontarStockPedido(id){
   const p=await DB.get(id); if(!p || p.stockBajado) return;
-  const items=parseItems(p.items||"");
+  const items=itemsPedido(p);   // expande kits en sus productos
   if(items.length){
     const st=stockState();
-    items.forEach(it=>{ const prod=mejorProducto(it.nombre);
-      st.movs.push({ts:Date.now(),prod:prod?prod.nombre:it.nombre,tipo:"salida",cant:Math.abs(it.cant||1),
+    items.forEach(it=>{ st.movs.push({ts:Date.now(),prod:it.prodNombre,tipo:"salida",cant:Math.abs(it.cant||1),
         motivo:"Venta "+(p.ref||p.id),empresa:p.empresa,canal:canalDe(p),ref:p.ref||p.id}); });
     await persistStock(st);
   }
@@ -681,6 +720,77 @@ function enRango(ts,desde,hasta){
   if(hasta){ const h=new Date(hasta+"T23:59:59").getTime(); if(ts>h) return false; }
   return true;
 }
+/* Informe de salidas: todo lo que se retiró del stock, por producto y por empresa */
+let SAL_DESDE="", SAL_HASTA="";
+function salidasResumen(desde,hasta){
+  const st=stockState();
+  const sal=(st.movs||[]).filter(m=>m.tipo==="salida" && enRango(m.ts,desde,hasta));
+  const porProd={};
+  sal.forEach(m=>{ const k=m.prod; if(!porProd[k]) porProd[k]={prod:k,total:0,porEmp:{}};
+    porProd[k].total+=m.cant; const e=m.empresa||"—"; porProd[k].porEmp[e]=(porProd[k].porEmp[e]||0)+m.cant; });
+  const lista=Object.values(porProd).sort((a,b)=>b.total-a.total);
+  const totEmp={}; sal.forEach(m=>{ const e=m.empresa||"—"; totEmp[e]=(totEmp[e]||0)+m.cant; });
+  return {lista, total:sal.reduce((s,m)=>s+m.cant,0), totEmp};
+}
+function pantallaSalidas(){
+  const {lista,total,totEmp}=salidasResumen(SAL_DESDE,SAL_HASTA);
+  const inpS="width:100%;padding:7px;border:1px solid var(--border);border-radius:9px;font:inherit;background:var(--bg)";
+  const empTxt=Object.entries(totEmp).map(([e,n])=>esc(empresaObj(e).nombre)+": "+n).join(" · ");
+  app().innerHTML=`
+    <button class="btn sm ghost" onclick="OPVIEW='stock';vistaOperador()">← Volver</button>
+    <div class="title" style="margin-top:14px">Lo que salió del stock</div>
+    <div class="subtitle">Todo lo que se retiró, por producto y por empresa</div>
+    <div class="card" style="margin:14px 0">
+      <div class="row" style="gap:10px;align-items:flex-end;flex-wrap:wrap">
+        <div style="flex:1;min-width:120px"><span class="label">Desde</span><input type="date" value="${SAL_DESDE}" onchange="SAL_DESDE=this.value;pantallaSalidas()" style="${inpS}"></div>
+        <div style="flex:1;min-width:120px"><span class="label">Hasta</span><input type="date" value="${SAL_HASTA}" onchange="SAL_HASTA=this.value;pantallaSalidas()" style="${inpS}"></div>
+      </div>
+      ${(SAL_DESDE||SAL_HASTA)?`<button class="btn sm ghost" style="margin-top:10px" onclick="SAL_DESDE='';SAL_HASTA='';pantallaSalidas()">Ver todo</button>`:''}
+    </div>
+    <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+      <b>${total} unidades salieron</b>
+      ${lista.length?`<span class="row" style="gap:6px"><button class="btn sm green" onclick="enviarSalidasWA()">WhatsApp</button><button class="btn sm ghost" onclick="imprimirSalidas()">${icon('printer')} PDF</button></span>`:''}
+    </div>
+    ${empTxt?`<div class="muted" style="margin-bottom:12px">${empTxt}</div>`:''}
+    ${lista.length?lista.map(r=>{ const split=Object.entries(r.porEmp).map(([e,n])=>esc(empresaObj(e).nombre)+" "+n).join(" · ");
+      return `<div class="card" style="margin-bottom:8px;padding:12px 14px">
+        <div class="row" style="justify-content:space-between;align-items:baseline;gap:10px">
+          <span style="min-width:0;font-size:14px">${esc(r.prod)}</span><b style="flex:0 0 auto">${r.total}</b>
+        </div><div class="muted" style="font-size:12.5px;margin-top:2px">${split}</div>
+      </div>`; }).join(""):empty('box','No salió nada en este período.')}`;
+}
+function textoSalidas(){
+  const {lista,total,totEmp}=salidasResumen(SAL_DESDE,SAL_HASTA);
+  const hoy=new Date().toLocaleDateString("es-AR");
+  let t="Salidas de stock "+hoy+" ("+total+" unidades)\n";
+  const empTxt=Object.entries(totEmp).map(([e,n])=>empresaObj(e).nombre+": "+n).join(" · ");
+  if(empTxt) t+=empTxt+"\n";
+  t+="\n";
+  lista.forEach(r=>{ t+="- "+r.prod+": "+r.total+"\n"; });
+  return t;
+}
+function enviarSalidasWA(){
+  const {lista}=salidasResumen(SAL_DESDE,SAL_HASTA);
+  if(!lista.length){ toast("No hay salidas para informar"); return; }
+  window.open("https://wa.me/"+INFORME_TEL+"?text="+encodeURIComponent(textoSalidas()),"_blank");
+}
+function imprimirSalidas(){
+  const {lista,total,totEmp}=salidasResumen(SAL_DESDE,SAL_HASTA);
+  if(!lista.length){ toast("No hay salidas"); return; }
+  const w=window.open("","_blank","width=820,height=920"); if(!w){ toast("Permití las ventanas emergentes"); return; }
+  const hoy=new Date().toLocaleDateString("es-AR");
+  const emps=Object.keys(totEmp);
+  const th=emps.map(e=>`<th class="c">${esc(empresaObj(e).nombre)}</th>`).join("");
+  const filas=lista.map((r,i)=>`<tr><td class="c">${i+1}</td><td>${esc(r.prod)}</td>${emps.map(e=>`<td class="c">${r.porEmp[e]||0}</td>`).join("")}<td class="c b">${r.total}</td></tr>`).join("");
+  w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Salidas de stock</title>'+
+    '<style>body{font-family:Arial,sans-serif;padding:22px;color:#000}h1{font-size:20px;margin:0 0 4px}'+
+    'p{font-size:12px;color:#333;margin:0 0 14px}table{width:100%;border-collapse:collapse;font-size:12px}'+
+    'th,td{border:1px solid #999;padding:7px 9px;text-align:left}th{background:#2c3e50;color:#fff}.c{text-align:center}.b{font-weight:bold}@page{size:A4;margin:14mm}</style></head><body>'+
+    '<h1>Salidas de stock</h1><p>Fecha: '+hoy+' · '+total+' unidades en total</p>'+
+    '<table><thead><tr><th class="c">#</th><th>Producto</th>'+th+'<th class="c">Total</th></tr></thead><tbody>'+filas+'</tbody></table>'+
+    '<scr'+'ipt>window.onload=function(){setTimeout(function(){window.print()},300)}<\/scr'+'ipt></body></html>');
+  w.document.close();
+}
 /* Fecha en que se entregó un pedido (del historial de eventos) */
 function fechaEntrega(p){
   const ev=(p.eventos||[]).filter(e=>e.estado==="entregado"||e.estado==="confirmado").pop();
@@ -691,6 +801,90 @@ function entregadosEn(desde,hasta){
     .map(p=>({p, fe:fechaEntrega(p)}))
     .filter(x=>enRango(x.fe,desde,hasta))
     .sort((a,b)=>b.fe-a.fe);
+}
+/* Cobro de reparto: lo que Fullminet le cobra a cada empresa según la zona */
+let COB_DESDE="", COB_HASTA="";
+function catPedido(p){ if(p.metodo==="correo") return "correo"; const an=anilloDe(p);
+  if(an.n===0) return "caba"; if(an.n>=1&&an.n<=3) return String(an.n); return "correo"; }
+const COB_ET={caba:"CABA","1":"Zona 1","2":"Zona 2","3":"Zona 3",correo:"Correo",revisar:"A revisar"};
+let COB_VERPAGADOS=false;
+function cobroReparto(desde,hasta){
+  const proc=soloPedidos().filter(p=>["entregado","confirmado"].includes(p.estado)
+    && (COB_VERPAGADOS ? p.pagado : !p.pagado)
+    && enRango(fechaEntrega(p),desde,hasta));
+  const byEmp={};
+  proc.forEach(p=>{ const e=p.empresa; if(!byEmp[e]) byEmp[e]={empresa:e,pedidos:[],total:0,costo:0};
+    const c=catPedido(p), precio=precioCat(c), costo=(zonaCosto()[c]||0);
+    byEmp[e].total+=precio; byEmp[e].costo+=costo;
+    byEmp[e].pedidos.push({id:p.id, ref:numOrden(p), cliente:p.cliente||"—", cat:c, zona:COB_ET[c], destino:(p.ciudad||"")+(p.provincia?(", "+p.provincia):""), precio, pagado:!!p.pagado}); });
+  const arr=Object.values(byEmp);
+  arr.forEach(f=>{ f.ganancia=f.total-f.costo; f.pedidos.sort((a,b)=>a.zona.localeCompare(b.zona)||a.ref.localeCompare(b.ref)); });
+  return arr;
+}
+async function marcarPagado(id){ await DB.update(id,{pagado:true,pagadoTs:Date.now()}); toast("Marcado como pagado ✅"); pantallaCobro(); }
+async function marcarImpago(id){ await DB.update(id,{pagado:false}); toast("Marcado como impago"); pantallaCobro(); }
+function pantallaCobro(){
+  const filas=cobroReparto(COB_DESDE,COB_HASTA);
+  const inpS="width:100%;padding:7px;border:1px solid var(--border);border-radius:9px;font:inherit;background:var(--bg)";
+  app().innerHTML=`
+    <button class="btn sm ghost" onclick="OPVIEW='pedidos';vistaOperador()">← Volver</button>
+    <div class="title" style="margin-top:14px">Facturar entregados</div>
+    <div class="subtitle">${COB_VERPAGADOS?'Pedidos ya cobrados':'Entregados pendientes de cobro'} · detalle por pedido</div>
+    <div class="card" style="margin:14px 0">
+      <div class="row" style="gap:10px;align-items:flex-end;flex-wrap:wrap">
+        <div style="flex:1;min-width:120px"><span class="label">Desde</span><input type="date" value="${COB_DESDE}" onchange="COB_DESDE=this.value;pantallaCobro()" style="${inpS}"></div>
+        <div style="flex:1;min-width:120px"><span class="label">Hasta</span><input type="date" value="${COB_HASTA}" onchange="COB_HASTA=this.value;pantallaCobro()" style="${inpS}"></div>
+      </div>
+      <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">
+        ${(COB_DESDE||COB_HASTA)?`<button class="btn sm ghost" onclick="COB_DESDE='';COB_HASTA='';pantallaCobro()">Ver todo</button>`:''}
+        <button class="btn sm ${COB_VERPAGADOS?'':'ghost'}" onclick="COB_VERPAGADOS=!COB_VERPAGADOS;pantallaCobro()">${COB_VERPAGADOS?'← Ver pendientes':'Ver pagados'}</button>
+      </div>
+    </div>
+    ${filas.length?filas.map(f=>`
+      <div class="card" style="margin-bottom:14px">
+        <div class="row" style="justify-content:space-between;align-items:baseline;margin-bottom:2px">
+          <div style="font-weight:700;font-size:17px">${esc(empresaObj(f.empresa).nombre)}</div>
+          <div style="font-weight:800;font-size:18px">${fmtAr(f.total)}</div>
+        </div>
+        <div class="muted" style="font-size:12px;margin-bottom:4px">Tu ganancia: ${fmtAr(f.ganancia)}</div>
+        ${f.pedidos.map(pe=>`<div class="row" style="justify-content:space-between;align-items:center;gap:8px;padding:9px 0;border-top:.5px solid var(--border)">
+          <span style="min-width:0"><b>N° ${esc(pe.ref)}</b> · ${esc(pe.cliente)}<br><span class="muted" style="font-size:12.5px">${esc(pe.zona)} · ${fmtAr(pe.precio)}</span></span>
+          ${pe.pagado
+            ? `<button class="btn sm ghost" style="flex:0 0 auto;color:var(--green)" onclick="marcarImpago('${pe.id}')">✓ Pagado</button>`
+            : `<button class="btn sm ghost" style="flex:0 0 auto" onclick="marcarPagado('${pe.id}')">Marcar pagado</button>`}
+        </div>`).join("")}
+        <div class="row" style="justify-content:flex-end;gap:8px;margin-top:12px">
+          <button class="btn sm green" onclick="enviarCobroWA('${f.empresa}')">WhatsApp</button>
+        </div>
+      </div>`).join(""):empty('check',COB_VERPAGADOS?'No hay pedidos pagados en este período.':'No hay entregados pendientes de cobro.')}
+    ${filas.length?`<button class="btn block" style="margin-top:6px" onclick="imprimirCobro()">${icon('printer')} Imprimir / guardar PDF</button>`:''}`;
+}
+function textoCobro(f){
+  const hoy=new Date().toLocaleDateString("es-AR");
+  let t="Resumen de cuenta - "+empresaObj(f.empresa).nombre+" ("+hoy+")\nServicio de preparación y envío - Fullminet\n\n";
+  f.pedidos.forEach(pe=>{ t+="N° "+pe.ref+" - "+pe.cliente+" ("+pe.zona+"): "+(pe.precio?fmtAr(pe.precio):"-")+"\n"; });
+  t+="\nTOTAL A COBRAR: "+fmtAr(f.total);
+  return t;
+}
+function enviarCobroWA(empId){
+  const f=cobroReparto(COB_DESDE,COB_HASTA).find(x=>x.empresa===empId);
+  if(!f||!f.pedidos.length){ toast("No hay pedidos para esta empresa"); return; }
+  window.open("https://wa.me/"+INFORME_TEL+"?text="+encodeURIComponent(textoCobro(f)),"_blank");
+}
+function imprimirCobro(){
+  const filas=cobroReparto(COB_DESDE,COB_HASTA); if(!filas.length){ toast("No hay repartos"); return; }
+  const w=window.open("","_blank","width=860,height=920"); if(!w){ toast("Permití las ventanas emergentes"); return; }
+  const hoy=new Date().toLocaleDateString("es-AR");
+  const secc=filas.map(f=>{ const rows=f.pedidos.map((pe,i)=>`<tr><td class="c">${i+1}</td><td>${esc(pe.ref)}</td><td>${esc(pe.cliente)}</td><td>${esc(pe.zona)}</td><td>${esc(pe.destino)}</td><td class="c b">${pe.precio?fmtAr(pe.precio):'—'}</td></tr>`).join("");
+    return `<h2>${esc(empresaObj(f.empresa).nombre)} — Total a cobrar: ${fmtAr(f.total)}</h2>
+      <table><thead><tr><th class="c">#</th><th>N° orden</th><th>Cliente</th><th>Zona</th><th>Destino</th><th class="c">Precio</th></tr></thead><tbody>${rows}</tbody></table>`; }).join("");
+  w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Resumen de cuenta</title>'+
+    '<style>body{font-family:Arial,sans-serif;padding:22px;color:#000}h1{font-size:20px;margin:0 0 4px}h2{font-size:15px;margin:22px 0 6px}'+
+    'p{font-size:12px;color:#333;margin:0 0 10px}table{width:100%;border-collapse:collapse;font-size:11.5px;margin-bottom:8px}'+
+    'th,td{border:1px solid #999;padding:6px 8px;text-align:left}th{background:#2c3e50;color:#fff}.c{text-align:center}.b{font-weight:bold}@page{size:A4;margin:13mm}</style></head><body>'+
+    '<h1>Resumen de cuenta — Fullminet</h1><p>Servicio de preparación y envío · Fecha: '+hoy+'</p>'+secc+
+    '<scr'+'ipt>window.onload=function(){setTimeout(function(){window.print()},300)}<\/scr'+'ipt></body></html>');
+  w.document.close();
 }
 /* Resumen de entregas: qué se entregó y a quién, con filtro de fecha */
 function pantallaEntregas(){
@@ -710,18 +904,41 @@ function pantallaEntregas(){
     </div>
     <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
       <b>${arr.length} entrega${arr.length===1?'':'s'}</b>
-      ${arr.length?`<button class="btn sm ghost" onclick="imprimirEntregas()">${icon('printer')} Imprimir A4</button>`:''}
+      ${arr.length?`<button class="btn sm green" onclick="enviarInformeWA()">Enviar por WhatsApp</button>
+      <button class="btn sm ghost" onclick="imprimirEntregas()">${icon('printer')} PDF (imprimir/guardar)</button>`:''}
     </div>
     ${chips?`<div style="margin-bottom:12px">${chips}</div>`:''}
     ${arr.length?arr.map(x=>{ const p=x.p; return `
       <div class="card" style="margin-bottom:10px;padding:14px 16px">
         <div class="row" style="justify-content:space-between;align-items:baseline;gap:10px">
-          <span style="font-weight:600;min-width:0">${esc(p.cliente||'—')}</span>
+          <span style="font-weight:600;min-width:0">${esc(p.cliente||'—')} <span class="muted" style="font-weight:400;font-size:13px">· N° ${esc(numOrden(p))}</span></span>
           <span class="muted" style="font-size:13px;white-space:nowrap">${new Date(x.fe).toLocaleDateString("es-AR")}</span>
         </div>
         <div class="muted" style="font-size:13px;margin-top:3px">${esc(empresaObj(p.empresa).nombre)} · ${p.metodo==='correo'?'Correo':'Cadete'}${p.ciudad?(' · '+esc(p.ciudad)):''}${p.cadete?(' · '+esc(p.cadete)):''}</div>
         <div class="muted" style="font-size:13px;margin-top:3px">${esc(p.items||'—')}</div>
       </div>`; }).join(""):empty('check','No hay entregas en este período.')}`;
+}
+const INFORME_TEL="5493571542025";   // WhatsApp donde se manda el informe (3571 54-2025)
+function waNumero(tel){ const d=(tel||"").replace(/\D/g,""); if(!d) return ""; return d.startsWith("54")?d:("549"+d); }
+function enviarRepartoWA(){
+  const arr=soloPedidos().filter(p=>p.metodo==="cadete" && ["preparado","asignado","en_reparto"].includes(p.estado));
+  if(!arr.length){ toast("No hay pedidos de cadete para repartir"); return; }
+  arr.sort((a,b)=>(anilloDe(a).n==null?99:anilloDe(a).n)-(anilloDe(b).n==null?99:anilloDe(b).n));
+  const hoy=new Date().toLocaleDateString("es-AR");
+  let txt="Reparto Flex Mensajería · "+hoy+" ("+arr.length+" pedidos)\n\n";
+  arr.forEach(p=>{ const an=anilloDe(p);
+    txt+="N° "+numOrden(p)+"  ["+an.label+"]\n"+(p.cliente||"")+"\n"+(p.dir||"")+(p.ciudad?(" - "+p.ciudad):"")+"\nTel: "+(p.tel||"-")+"\n\n"; });
+  if(!CADETERIA_TEL){ const t=prompt("WhatsApp de Flex Mensajería (con código de área, ej: 3571542025):",""); if(!t){ toast("Falta el WhatsApp de Flex"); return; } CADETERIA_TEL=t; }
+  window.open("https://wa.me/"+waNumero(CADETERIA_TEL)+"?text="+encodeURIComponent(txt),"_blank");
+}
+function enviarInformeWA(){
+  const arr=entregadosEn(ENT_DESDE,ENT_HASTA);
+  if(!arr.length){ toast("No hay entregas para informar"); return; }
+  const hoy=new Date().toLocaleDateString("es-AR");
+  let txt="Informe de entregas "+hoy+" ("+arr.length+" pedidos)\n\n";
+  arr.forEach(x=>{ const p=x.p, an=anilloDe(p);
+    txt+="- N° "+numOrden(p)+"  "+(p.cliente||"")+"  ("+an.label+(p.cadete?(" · "+p.cadete):"")+")\n"; });
+  window.open("https://wa.me/"+INFORME_TEL+"?text="+encodeURIComponent(txt),"_blank");
 }
 function imprimirEntregas(){
   const arr=entregadosEn(ENT_DESDE,ENT_HASTA);
@@ -740,6 +957,31 @@ function imprimirEntregas(){
     '<h1>Resumen de entregas</h1><p>'+periodo+' · '+arr.length+' entregas · '+resumen+'</p>'+
     '<table><thead><tr><th class="c">#</th><th>Fecha</th><th>Cliente</th><th>Empresa</th><th>Destino</th><th>Método</th><th>Productos</th></tr></thead><tbody>'+filas+'</tbody></table>'+
     '<scr'+'ipt>window.onload=function(){setTimeout(function(){window.print()},300)}<\/scr'+'ipt></body></html>');
+  w.document.close();
+}
+/* Comprobante: lo que el gestor preparó y le entrega al cadete (con firma) */
+function imprimirComprobante(){
+  const arr=soloPedidos().filter(p=>p.cadete && ["asignado","en_reparto","entregado","confirmado"].includes(p.estado));
+  if(!arr.length){ toast("No hay pedidos asignados a un cadete todavía"); return; }
+  const byCad={}; arr.forEach(p=>{ (byCad[p.cadete]=byCad[p.cadete]||[]).push(p); });
+  const hoy=new Date().toLocaleDateString("es-AR");
+  const secciones=Object.entries(byCad).map(([cad,peds])=>{
+    const filas=peds.map((p,i)=>{ const an=anilloDe(p); const nItems=parseItems(p.items).reduce((s,it)=>s+(it.cant||1),0);
+      return `<tr><td class="c">${i+1}</td><td>${esc(numOrden(p))}</td><td>${esc(p.cliente||'—')}</td><td>${esc(an.label)}</td><td>${esc((p.ciudad||'')+(p.provincia?(', '+p.provincia):''))}</td><td class="c">${nItems}</td><td></td></tr>`; }).join("");
+    return `<div class="hoja"><h1>Comprobante de entrega al cadete</h1>
+      <p>Fecha: ${hoy} · Cadete: <b>${esc(cad)}</b> · ${peds.length} pedidos</p>
+      <table><thead><tr><th class="c">#</th><th>N° orden</th><th>Cliente</th><th>Zona</th><th>Destino</th><th class="c">Bultos</th><th class="c">OK</th></tr></thead><tbody>${filas}</tbody></table>
+      <div class="firmas"><div>Entregó (gestor)<br><br>__________________</div><div>Recibí conforme (cadete)<br><br>__________________</div></div></div>`;
+  }).join("");
+  const w=window.open("","_blank","width=900,height=920"); if(!w){ toast("Permití las ventanas emergentes"); return; }
+  w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Comprobante cadete</title>'+
+    '<style>body{font-family:Arial,sans-serif;padding:22px;color:#000}h1{font-size:19px;margin:0 0 4px}'+
+    'p{font-size:12px;color:#333;margin:0 0 14px}table{width:100%;border-collapse:collapse;font-size:12px}'+
+    'th,td{border:1px solid #999;padding:7px 9px;text-align:left}th{background:#2c3e50;color:#fff}'+
+    '.c{text-align:center}tbody tr:nth-child(even) td{background:#f2f4f7}'+
+    '.firmas{display:flex;justify-content:space-between;margin-top:26mm;font-size:12px;text-align:center}'+
+    '.firmas div{width:45%}.hoja{page-break-before:always}.hoja:first-child{page-break-before:auto}@page{size:A4;margin:14mm}</style></head><body>'+
+    secciones+'<scr'+'ipt>window.onload=function(){setTimeout(function(){window.print()},300)}<\/scr'+'ipt></body></html>');
   w.document.close();
 }
 function imputacionEmp(st,desde,hasta){
@@ -861,7 +1103,7 @@ async function crearPedido(d){
   const r=sugerirRuta(d.provincia,d.ciudad);
   const emp=empresaObj(d.empresa);
   const id=await DB.create({tipo:"pedido",empresa:emp.id,canal:d.canal||emp.canalDefault,ref:d.ref||"",
-    cliente:d.cliente,tel:d.tel||"",dir:d.dir||"",ciudad:d.ciudad||"",provincia:d.provincia||"",
+    cliente:d.cliente,tel:d.tel||"",dir:d.dir||"",ciudad:d.ciudad||"",provincia:d.provincia||"",cp:d.cp||"",
     items:d.items||"",origen:d.origen||r.origen,metodo:d.metodo||r.metodo,
     correo:d.correo||"",tracking:d.tracking||"",cadete:"",estado:"pendiente",creado:Date.now(),
     eventos:[{estado:"pendiente",ts:Date.now(),nota:"Pedido creado"}]});
@@ -1132,6 +1374,9 @@ function vistaOperador(){
       <button class="btn ghost" onclick="imprimirLote()">${icon('printer')} Imprimir etiquetas</button>
       <button class="btn ghost" onclick="hojaEnvios()">${icon('printer')} Hoja de envíos</button>
       <button class="btn ghost" onclick="pantallaEntregas()">${icon('check')} Resumen de entregas</button>
+      <button class="btn ghost" onclick="imprimirComprobante()">${icon('truck')} Comprobante cadete</button>
+      <button class="btn ghost" onclick="enviarRepartoWA()">${icon('truck')} Enviar reparto a Flex</button>
+      <button class="btn ghost" onclick="pantallaCobro()">${icon('box')} Facturar</button>
     </div>
     <div class="filters">
       ${["todos","activos","cadete","correo","pendiente","preparado","entregado","confirmado","anulado"]
@@ -1158,13 +1403,14 @@ function toggleExp(id){ EXP_PED[id]=!EXP_PED[id]; vistaOperador(); }
 function cardOperador(p){
   const e=estObj(p.estado), exp=!!EXP_PED[p.id];
   const dest=(p.ciudad||"")+(p.provincia?(", "+p.provincia):"");
+  const an=anilloDe(p);
   const head=`<div class="ord-head" onclick="toggleExp('${p.id}')">
       <div style="min-width:0;flex:1">
         <div class="ord-name">
           <span class="ord-cli">${esc(p.cliente||'—')}</span>
           <span class="badge" style="flex:0 0 auto"><span class="dot" style="background:${e.color}"></span>${e.label}</span>
         </div>
-        <div class="ord-sub">${esc(empresaObj(p.empresa).nombre)} · ${p.metodo==='correo'?'Correo':'Cadete'}${dest?(' · '+esc(dest)):''}</div>
+        <div class="ord-sub"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${anilloColor(an.n)};margin-right:5px;vertical-align:-1px"></span>${esc(an.label)} · N° ${esc(numOrden(p))} · ${p.metodo==='correo'?'Correo':'Cadete'}${dest?(' · '+esc(dest)):''}</div>
       </div>
       <span class="ord-chev">${exp?'▲':'▼'}</span>
     </div>`;
@@ -1431,13 +1677,18 @@ function parsePDF(text){
     let cli="",m=b.match(/Entregar a:\s*(.+)/); if(m) cli=m[1].trim();
     else { const ei=L.findIndex(l=>/^Enviar a:/.test(l)); if(ei>=0) for(let j=ei+1;j<L.length;j++){ if(L[j]){ cli=L[j]; break; } } }
     let tel=""; m=b.match(/Tel[eé]fono:\s*(.+)/); if(m) tel=m[1].trim(); if(/no informado/i.test(tel)) tel="";
-    let prov="",loc="",dir="";
-    for(let j=0;j<L.length;j++){ const mm=L[j].match(/^(.*),\s*([^,]+),\s*\d{3,4}$/);
-      if(mm){ loc=mm[1].split(",").pop().trim(); prov=mm[2].trim(); if(j>0) dir=L[j-1]; break; } }
-    const retiro=/Direcci[oó]n de retiro/i.test(b);
+    let prov="",loc="",dir="",cp="";
+    for(let j=0;j<L.length;j++){ const mm=L[j].match(/^(.*),\s*([^,]+),\s*(\d{3,4})$/);
+      if(mm){ loc=mm[1].split(",").pop().trim(); prov=mm[2].trim(); cp=mm[3]; if(j>0) dir=L[j-1]; break; } }
+    const retiro=/Direcci[oó]n de retiro/i.test(b) || /a sucursal/i.test(b);
+    const an=anilloDe({provincia:prov, ciudad:loc, dir});
     const r=sugerirRuta(prov,loc);
-    out.push({empresa:IMP_EMPRESA, ref:"#"+mref[1], cliente:cli, tel, dir, ciudad:loc, provincia:prov,
-      items, metodo:"correo", origen:r.origen, correo:retiro?"Punto de retiro":"Correo Argentino"});
+    let metodo,correo;
+    if(retiro){ metodo="correo"; correo="Punto de retiro"; }        // retira en sucursal
+    else if(llegaCadete({provincia:prov,ciudad:loc,dir})){ metodo="cadete"; correo=""; }   // CABA / Zona 1-3 => cadete
+    else { metodo="correo"; correo="Correo Argentino"; }             // BA sin cadete u otra provincia => correo
+    out.push({empresa:IMP_EMPRESA, ref:"#"+mref[1], cliente:cli, tel, dir, ciudad:loc, provincia:prov, cp,
+      items, metodo, origen:r.origen, correo});
   });
   return out;
 }
@@ -1638,7 +1889,7 @@ function etiquetasPend(){ printLabels(soloPedidos().filter(p=>p.estado==="pendie
 /* ---------- OPERADOR · Stock ---------- */
 function vistaStock(){
   const st=stockState(), pick=pickingConsolidado();
-  const desc=st.descontar===true;
+  const desc=st.descontar!==false;
   const imp=imputacion(st);
   const impE=imputacionEmp(st,STOCK_DESDE,STOCK_HASTA);
   const q=(STOCK_Q||"").toLowerCase().trim();
@@ -1668,6 +1919,24 @@ function vistaStock(){
       <button class="btn block" style="margin-top:10px" onclick="registrarMov()">Registrar</button>
     </div>
     <div class="card" style="margin-bottom:16px">
+      <div style="font-weight:600;margin-bottom:2px">Precios de reparto</div>
+      <div class="hint" style="margin-bottom:10px">Cargá lo que te cobra <b>Flex</b> por zona. A la marca le cobrás ese costo + el margen. Correo es solo gestión (la etiqueta ya la paga el cliente).</div>
+      <div class="label">Costo de Flex (CABA y zonas)</div>
+      <div class="row" style="gap:10px;flex-wrap:wrap;margin-bottom:12px">
+        ${[["caba","CABA"],["1","Zona 1"],["2","Zona 2"],["3","Zona 3"]].map(([k,lbl])=>`<div class="field" style="flex:1;min-width:74px"><span class="label">${lbl}</span>
+          <div class="row" style="align-items:center;gap:3px"><span class="muted">$</span>
+          <input id="zc_${k}" type="number" inputmode="numeric" value="${zonaCosto()[k]||''}" style="${inp};padding:7px"></div></div>`).join("")}
+      </div>
+      <div class="row" style="gap:10px;flex-wrap:wrap">
+        <div class="field" style="flex:1;min-width:110px"><span class="label">Margen (tu ganancia)</span>
+          <div class="row" style="align-items:center;gap:3px"><span class="muted">$</span><input id="zc_margen" type="number" inputmode="numeric" value="${margenReparto()}" style="${inp};padding:7px"></div></div>
+        <div class="field" style="flex:1;min-width:110px"><span class="label">Correo (gestión)</span>
+          <div class="row" style="align-items:center;gap:3px"><span class="muted">$</span><input id="zc_correo" type="number" inputmode="numeric" value="${correoGestion()}" style="${inp};padding:7px"></div></div>
+      </div>
+      <div class="hint" style="margin-top:8px">Ej: Zona 2 cuesta ${fmtAr(zonaCosto()[2]||0)} + margen ${fmtAr(margenReparto())} = le cobrás <b>${fmtAr((zonaCosto()[2]||0)+margenReparto())}</b>. Correo: <b>${fmtAr(correoGestion())}</b>.</div>
+      <button class="btn ghost" style="margin-top:12px" onclick="guardarPreciosZona()">Guardar precios</button>
+    </div>
+    <div class="card" style="margin-bottom:16px">
       <div class="row" style="justify-content:space-between;align-items:center;gap:12px">
         <div>
           <div style="font-weight:600">Descontar del stock al preparar</div>
@@ -1681,6 +1950,7 @@ function vistaStock(){
       <button class="btn ghost" onclick="guardarMinimos()">Guardar mínimos</button>
       <button class="btn ghost" onclick="imprimirStock()">${icon('printer')} Imprimir A4</button>
       <button class="btn ghost" onclick="imprimirReposicion()">${icon('printer')} Planilla de reposición</button>
+      <button class="btn ghost" onclick="pantallaSalidas()">${icon('box')} Lo que salió</button>
     </div>
     <div class="label">Lo que queda · stock compartido <span class="muted" style="font-weight:400">(cuando baja de 5, pedís 5 · lo pone ${esc(empresaObj(STOCK_DUENO).nombre)})</span></div>
     <input id="stockQ" autocomplete="off" placeholder="🔍 Buscar producto…" value="${esc(STOCK_Q||'')}" oninput="STOCK_Q=this.value;clearTimeout(window.__sq);window.__sq=setTimeout(vistaStock,250)" style="${inp};margin-bottom:10px">
@@ -1758,6 +2028,14 @@ async function ajustarStock(nombreEnc){
   toast(nombre.split(" ").slice(0,2).join(" ")+" → "+target);
   vistaStock();
 }
+async function guardarPreciosZona(){
+  const st=stockState(); const c={...zonaCosto()}; const num=id=>{ const el=$("#"+id); const v=el?parseInt((el.value||"").replace(/\D/g,""),10):NaN; return isNaN(v)?null:v; };
+  ["caba","1","2","3"].forEach(k=>{ const v=num("zc_"+k); if(v!=null) c[k]=v; });
+  st.zonas=c;
+  const m=num("zc_margen"); if(m!=null) st.margen=m;
+  const g=num("zc_correo"); if(g!=null) st.correoGestion=g;
+  await persistStock(st); toast("Precios guardados"); vistaStock();
+}
 async function guardarMinimos(){ const min={...stockState().min};
   PRODUCTOS.forEach((p,i)=>{ const el=$("#mn_"+i); if(el && el.value!=null && el.value!=="") min[p.nombre]=+el.value; });
   await setMin(min); toast("Mínimos guardados"); }
@@ -1766,11 +2044,58 @@ function pantallaCargarStock(txt){
   app().innerHTML=`
     <button class="btn sm ghost" onclick="OPVIEW='stock';vistaOperador()">← Volver</button>
     <div class="title" style="margin-top:14px">Cargar stock</div>
-    <div class="subtitle">Pegá una línea por producto, así: <b>nombre = cantidad</b>. Yo lo cruzo con tu catálogo.</div>
-    <textarea id="csTxt" style="width:100%;padding:9px;border:1px solid var(--border);border-radius:10px;font:inherit;background:var(--bg);min-height:200px;margin-top:12px" placeholder="Bisglicinato de Magnesio 500 mg (60 capsulas) = 15
+    <div class="subtitle">Leé el <b>PDF del remito</b>, o pegá una línea por producto (<b>nombre = cantidad</b>). Yo lo cruzo con tu catálogo.</div>
+    <input type="file" id="remitoPDF" accept="application/pdf" style="display:none" onchange="leerRemitoPDF(this.files[0])">
+    <button class="btn block" style="margin-top:12px" onclick="document.getElementById('remitoPDF').click()"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:6px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>Leer PDF de remito</button>
+    <div class="hint" style="margin:10px 0 4px">Tiene que ser el <b>PDF</b> del remito (no una foto). Después revisás abajo y confirmás.</div>
+    <textarea id="csTxt" style="width:100%;padding:9px;border:1px solid var(--border);border-radius:10px;font:inherit;background:var(--bg);min-height:170px;margin-top:8px" placeholder="Bisglicinato de Magnesio 500 mg (60 capsulas) = 15
 Omega 3 (60 capsulas) = 20">${esc(txt||"")}</textarea>
     <button class="btn block" style="margin-top:12px" onclick="previsualizarCarga()">Ver qué se va a cargar</button>
     <div id="csPrev"></div>`;
+}
+/* Lee el texto de un PDF por filas (sin cortar en columnas) */
+async function pdfTextoPlano(file){
+  const buf=await file.arrayBuffer();
+  const pdf=await pdfjsLib.getDocument({data:buf}).promise;
+  const lineas=[];
+  for(let p=1;p<=pdf.numPages;p++){
+    const page=await pdf.getPage(p);
+    const tc=await page.getTextContent();
+    const items=tc.items.map(it=>({x:it.transform[4],y:it.transform[5],s:it.str})).filter(it=>it.s.trim());
+    items.sort((a,b)=>(Math.round(b.y/3)-Math.round(a.y/3))||(a.x-b.x));
+    let cy=null,line=[];
+    items.forEach(it=>{ const yy=Math.round(it.y/3);
+      if(cy===null||yy===cy){ line.push(it.s); } else { lineas.push(line.join(" ")); line=[it.s]; } cy=yy; });
+    if(line.length) lineas.push(line.join(" "));
+  }
+  return lineas.join("\n");
+}
+/* Extrae producto + cantidad de un remito (ancla en el código PLN y la cantidad final) */
+function parseRemito(text){
+  const out=[]; const bloques=(text||"").split(/(?=\bPLN\d+)/i);
+  bloques.forEach(b=>{
+    if(!/\bPLN\d+/i.test(b)) return;
+    const nums=[...b.matchAll(/(\d+(?:[.,]\d{1,2})?)/g)].map(m=>m[1]);
+    let cant=null;
+    for(let i=nums.length-1;i>=0;i--){ const v=Math.round(parseFloat(nums[i].replace(",","."))); if(v>0 && v<10000){ cant=v; break; } }
+    let nombre=b.replace(/^[\s\S]*?PLN\d+\s*/i,"").replace(/\s*\d+(?:[.,]\d{1,2})?\s*$/,"").replace(/\s+/g," ").trim();
+    if(nombre && cant) out.push({nombre, cant});
+  });
+  return out;
+}
+async function leerRemitoPDF(file){
+  if(!file) return;
+  if(typeof pdfjsLib==="undefined"){ toast("El lector de PDF no cargó, probá de nuevo"); return; }
+  pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+  toast("Leyendo el remito…");
+  try{
+    const texto=await pdfTextoPlano(file);
+    const items=parseRemito(texto);
+    if(!items.length){ toast("No reconocí productos. ¿Es el PDF del remito?"); return; }
+    const box=$("#csTxt"); if(box) box.value=items.map(i=>i.nombre+" = "+i.cant).join("\n");
+    previsualizarCarga();
+    toast(items.length+" productos leídos del remito");
+  }catch(e){ toast("No pude leer el PDF del remito"); }
 }
 function parseCarga(){
   return ($("#csTxt").value||"").split(/\n/).map(l=>l.trim()).filter(Boolean).map(l=>{
@@ -1863,7 +2188,7 @@ function vistaPreparacion(){
       <div class="who">${esc(p.cliente)}</div>
       <div><span class="tag">Items</span> ${esc(p.items||'—')}</div>
       <div class="acts">
-        <button class="btn sm green" onclick="avanzar('${p.id}','preparado')">Marcar preparado</button>
+        <button class="btn sm green" onclick="pantallaPreparar('${p.id}')">${icon('box')} Preparar</button>
         <button class="btn sm ghost" onclick="imprimirEtiqueta('${p.id}')">${icon('printer')}Etiqueta</button>
       </div></div>`).join("")||empty('check','Todo preparado.')}`;
   const box=$("#scanBox");
@@ -1879,6 +2204,71 @@ function procesarScan(code){
   PICK[k]=Math.min((PICK[k]||0)+1,row.cant);
   toast(prod.nombre+"  "+PICK[k]+"/"+row.cant);
   vistaPreparacion();
+}
+
+/* ===== Preparar un pedido escaneando sus productos ===== */
+let PREP_ID=null, PREP_SCAN={};
+function itemsPedido(p){
+  const out=[];
+  parseItems(p.items||"").forEach(it=>{
+    if(esKit(it.nombre)){
+      const comps=componentesKit(it.nombre);
+      if(comps.length>=2){ comps.forEach(c=>{ const prod=mejorProducto(c);
+        out.push({nombre:c+"  (kit)", cant:it.cant||1, prodNombre:prod?prod.nombre:c, kit:true}); }); return; }
+    }
+    const prod=mejorProducto(it.nombre);
+    out.push({nombre:it.nombre, cant:it.cant||1, prodNombre:prod?prod.nombre:it.nombre});
+  });
+  return out;
+}
+function pantallaPreparar(id){
+  const p=PEDIDOS.find(x=>x.id===id);
+  if(!p){ PREP_ID=null; OPVIEW='preparacion'; return vistaOperador(); }
+  PREP_ID=id;
+  const items=itemsPedido(p);
+  const total=items.reduce((s,i)=>s+i.cant,0);
+  const hechas=items.reduce((s,i)=>s+Math.min(PREP_SCAN[i.prodNombre]||0,i.cant),0);
+  const completo=items.length>0 && items.every(i=>(PREP_SCAN[i.prodNombre]||0)>=i.cant);
+  const cam=`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:6px"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>`;
+  app().innerHTML=`
+    <button class="btn sm ghost" onclick="PREP_ID=null;PREP_SCAN={};OPVIEW='preparacion';vistaOperador()">← Volver</button>
+    <div class="title" style="margin-top:14px">Preparar pedido</div>
+    <div class="subtitle">${esc(p.cliente||'—')} · N° ${esc(numOrden(p))} · ${esc(empresaObj(p.empresa).nombre)}</div>
+    <button class="btn block" style="margin:14px 0" onclick="escanearParaPedido()">${cam}Escanear producto con la cámara</button>
+    <div class="card">
+      <div class="row" style="justify-content:space-between"><span class="label" style="margin:0">Productos del pedido</span><b style="color:${completo?'var(--green)':'inherit'}">${hechas}/${total}</b></div>
+      ${items.map(it=>{ const done=Math.min(PREP_SCAN[it.prodNombre]||0,it.cant), ok=done>=it.cant;
+        return `<div class="row" style="justify-content:space-between;align-items:center;padding:12px 0;border-top:.5px solid var(--border);gap:10px">
+          <span class="row" style="gap:8px;min-width:0;color:${ok?'var(--green)':'inherit'}">${ok?icon('check'):icon('box')}<span style="min-width:0;font-size:14px">${esc(it.nombre)}</span></span>
+          <span class="row" style="gap:6px;align-items:center;flex:0 0 auto">
+            <button class="btn sm ghost" onclick="tocarItem('${encodeURIComponent(it.prodNombre)}',-1)">−</button>
+            <b style="min-width:42px;text-align:center;color:${ok?'var(--green)':'var(--text-2)'}">${done}/${it.cant}</b>
+            <button class="btn sm ghost" onclick="tocarItem('${encodeURIComponent(it.prodNombre)}',1)">+</button>
+          </span></div>`; }).join("")}
+    </div>
+    <button class="btn block ${completo?'green':''}" style="margin-top:16px;${completo?'':'opacity:.55'}" onclick="${completo?`marcarListo('${id}')`:`toast('Faltan productos por escanear')`}">${completo?'✓ Pedido listo':'Faltan productos'}</button>
+    <button class="btn ghost block" style="margin-top:10px" onclick="imprimirEtiqueta('${id}')">${icon('printer')} Imprimir etiqueta</button>`;
+}
+function escanearParaPedido(){ abrirEscaner(scanPrep,{continuo:true,hint:"Escaneá los productos del pedido"}); }
+function scanPrep(code){
+  const p=PEDIDOS.find(x=>x.id===PREP_ID); if(!p) return;
+  const prod=prodPorBarcode(code);
+  if(!prod){ toast("Código no reconocido"); return; }
+  const it=itemsPedido(p).find(i=>i.prodNombre===prod.nombre);
+  if(!it){ toast(prod.nombre.split(" ")[0]+" no es de este pedido"); return; }
+  const cur=PREP_SCAN[it.prodNombre]||0;
+  if(cur>=it.cant){ toast(it.nombre.split(" ").slice(0,2).join(" ")+" ya completo"); return; }
+  PREP_SCAN[it.prodNombre]=cur+1;
+  toast("✓ "+prod.nombre.split(" ").slice(0,2).join(" ")+" "+(cur+1)+"/"+it.cant);
+  pantallaPreparar(PREP_ID);
+}
+function tocarItem(enc,delta){ const n=decodeURIComponent(enc);
+  PREP_SCAN[n]=Math.max(0,(PREP_SCAN[n]||0)+delta); pantallaPreparar(PREP_ID); }
+async function marcarListo(id){
+  await avanzar(id,'preparado');   // marca preparado y descuenta del stock (descuento activado)
+  PREP_ID=null; PREP_SCAN={};
+  toast("Pedido listo ✅");
+  OPVIEW='preparacion'; vistaOperador();
 }
 
 /* ---------- CADETE ---------- */
@@ -2099,7 +2489,10 @@ const ETQ_CSS=`
 .etq-bc-t{text-align:center;font-size:3.2mm;font-weight:800;letter-spacing:.22em;margin-top:.5mm}
 .etq-foot{display:flex;align-items:center;gap:3mm;margin-top:2mm;border-top:.7mm solid #000;padding-top:2mm}
 .etq-qr{width:18mm;height:18mm;flex:none}
-.etq-foot-t{font-size:3mm;font-weight:700;flex:1;line-height:1.3}`;
+.etq-foot-t{font-size:3mm;font-weight:700;flex:1;line-height:1.3}
+.etq-anillo{width:15mm;height:15mm;border-radius:50%;color:#fff;font-weight:800;font-size:4.2mm;
+  display:flex;align-items:center;justify-content:center;flex:0 0 auto;margin-bottom:1mm}
+.etq-anillo small{font-size:2.2mm;font-weight:700}`;
 function etiquetaBody(p){
   const origen=p.origen==="riotercero"?"RÍO TERCERO":"BUENOS AIRES";
   const metodo=p.metodo==="correo"?("CORREO · "+(p.correo||"")):"CADETE / FLEX";
@@ -2108,26 +2501,30 @@ function etiquetaBody(p){
   const esCABA=p.metodo!=="correo";
   const fecha=p.despacho||new Date().toLocaleDateString("es-AR");
   const qr=LABEL_QR?("https://api.qrserver.com/v1/create-qr-code/?size=160x160&margin=0&data="+encodeURIComponent(linkCliente(p.id))):"";
+  const an=anilloDe(p);
   return `<div class="etq">
     <div class="etq-h">
       <div>
         <div class="etq-brand"><svg width="4.4mm" height="4.4mm" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-.6mm;margin-right:1.2mm"><path d="M3 8l9-5 9 5v8l-9 5-9-5V8z"/><path d="M3 8l9 5 9-5M12 13v8"/></svg>${esc(marca)}</div>
         <div class="etq-sub">${remitente?("Envía: "+esc(remitente)+" · "):""}${origen}</div>
       </div>
-      <div class="etq-id">${esc(p.id)}</div>
+      <div style="text-align:right;display:flex;flex-direction:column;align-items:flex-end">
+        <div class="etq-anillo" style="background:${anilloColor(an.n)}">${an.n===0?"CABA":(an.n>=1&&an.n<=3?("<span>"+an.n+"<br><small>zona</small></span>"):"<small>rev.</small>")}</div>
+        <div class="etq-id">${esc(numOrden(p))}</div>
+      </div>
     </div>
     <div class="etq-met">${esc(metodo)}</div>
     <div class="etq-meta">Despacho ${esc(fecha)}${p.cadete?(" · Cadete: "+esc(p.cadete)):""}</div>
     <div class="etq-lbl">DESTINATARIO</div>
     <div class="etq-name">${esc(p.cliente)}</div>
-    <div class="etq-addr">${esc(p.dir)}<br>${esc(p.ciudad)}, ${esc(p.provincia)}</div>
+    <div class="etq-addr">${esc(p.dir)}<br>${esc(p.ciudad)}, ${esc(p.provincia)} · <b>${esc(an.label)}</b></div>
     <div class="etq-tel">Tel: ${esc(p.tel||"-")}</div>
     ${p.nota?`<div class="etq-nota"><b>Nota:</b> ${esc(p.nota)}</div>`:""}
     ${esCABA?`<div class="etq-items"><span class="etq-lbl">CONTENIDO</span>${parseItems(p.items).map(it=>`<div class="etq-it"><span class="etq-chk"></span><b>${it.cant}×</b>${esc(it.nombre)}</div>`).join("")||esc(p.items||"-")}</div>`:""}
     ${p.metodo==="correo"?`<div class="etq-track"><span class="t-c">${esc(p.correo||"CORREO")}</span><span class="t-n">${esc(p.tracking||"s/ número")}</span></div>`:""}
     <div class="etq-spacer"></div>
     ${barcodeSVG(p.id,44)}
-    <div class="etq-bc-t">${esc(p.id)}</div>
+    <div class="etq-bc-t">${esc(numOrden(p))}</div>
     <div class="etq-foot">
       ${qr?`<img class="etq-qr" src="${qr}" onerror="this.style.display='none'">`:""}
       <div class="etq-foot-t">Seguimiento en vivo${qr?"<br>escaneá el QR":""}${p.ref?("<br>Ref: "+esc(p.ref)):""}</div>
@@ -2172,7 +2569,7 @@ function pantallaEtiquetas(){
         <label style="display:flex;gap:12px;align-items:flex-start;cursor:pointer;flex:1;min-width:0;margin:0">
           <input type="checkbox" ${SEL_ETQ[p.id]?'checked':''} onchange="toggleEtq('${p.id}')" style="width:22px;height:22px;margin-top:2px;flex:0 0 auto;accent-color:var(--accent)">
           <span style="min-width:0">
-            <span style="font-weight:600;display:block">${esc(p.cliente||'—')} <span class="muted" style="font-weight:400">· ${esc(empresaObj(p.empresa).nombre)}</span></span>
+            <span style="font-weight:600;display:block">${esc(p.cliente||'—')} <span class="muted" style="font-weight:400">· N° ${esc(numOrden(p))}</span></span>
             <span class="muted" style="font-size:13px;display:block;margin-top:2px">${esc(p.dir||'')}${p.ciudad?(' — '+esc(p.ciudad)):''}</span>
             <span class="muted" style="font-size:13px;display:block;margin-top:2px">${esc(p.items||'—')}</span>
           </span>
