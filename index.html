@@ -433,7 +433,7 @@ const CANALES = [
 const empresaObj = id => EMPRESAS.find(e=>e.id===id) || EMPRESAS[0];
 const canalObj   = id => CANALES.find(c=>c.id===id) || CANALES[0];
 const canalDe    = p => (p&&p.canal) || empresaObj(p&&p.empresa).canalDefault;
-const costoEnvio = p => canalObj(canalDe(p)).costo;
+const costoEnvio = p => precioCat(catPedido(p));   // precio por zona (costo Flex + margen; correo = gestión)
 const STOCK_DUENO = "labs";   // Labs pone el stock compartido; las demás empresas le pagan lo que sacan
 /* Zonas de reparto reales (precio editable). Buenos Aires → cadete por zona; otra provincia → correo */
 let ZONAS = {
@@ -449,11 +449,11 @@ function precioCat(cat){ const c=zonaCosto();     // lo que le cobrás a la marc
   if(cat==="correo") return correoGestion();
   if(["caba","1","2","3"].includes(cat)) return (c[cat]||0)+margenReparto();
   return 0; }
-function llegaCadete(p){ const an=anilloDe(p); return an.n>=0 && an.n<=3; }   // CABA o Zona 1/2/3
+function llegaCadete(p){ const an=anilloDe(p); return [0,1,2,3].includes(an.n); }   // CABA o Zona 1/2/3 (null/9 => correo)
 function anilloDe(p){
   const prov=(p.provincia||"").toLowerCase();
   const txt=((p.ciudad||"")+" "+(p.dir||"")).toLowerCase();
-  if(/capital|c\.a\.b\.a|autónoma|autonoma/.test(prov)) return {n:0,label:"CABA"};
+  if(/\bcaba\b|capital|c\.a\.b\.a|autónoma|autonoma/.test(prov)) return {n:0,label:"CABA"};
   if(!/buenos aires/.test(prov)) return {n:null,label:"Correo"};   // otra provincia => correo
   for(const z of [1,2,3]){ if(ZONAS[z].locs.some(nn=>txt.includes(nn))) return {n:z,label:"Zona "+z}; }
   return {n:9,label:"BA sin cadete → correo"};    // Buenos Aires donde no llega el cadete => correo
@@ -511,7 +511,7 @@ function matchNombre(a,b){ const T=s=>(s||"").toLowerCase().replace(/[^a-z0-9á�
 /* Elige el producto del catálogo que MEJOR coincide con el nombre de un item (para descontar del correcto).
    Prioriza coincidencia exacta y castiga los productos con palabras de más (kits/variantes). */
 function mejorProducto(nombreItem){
-  const norm=s=>(s||"").toLowerCase().replace(/[^a-z0-9áéíóúñ ]/g," ").replace(/\s+/g," ").trim();
+  const norm=s=>(s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9ñ ]/g," ").replace(/\s+/g," ").trim();
   const words=s=>norm(s).split(" ").filter(w=>w.length>=3);
   const ni=norm(nombreItem), wi=words(nombreItem);
   if(!ni) return null;
@@ -822,6 +822,18 @@ function cobroReparto(desde,hasta){
   return arr;
 }
 async function marcarPagado(id){ await DB.update(id,{pagado:true,pagadoTs:Date.now()}); toast("Marcado como pagado ✅"); pantallaCobro(); }
+/* Corrige el método de los pedidos YA guardados con la regla actual (CABA/BA -> cadete; retiro/otra prov -> correo) */
+async function recalcularRutas(){
+  let n=0;
+  for(const p of soloPedidos()){
+    if(p.estado==="anulado" || p.pagado) continue;
+    if((p.correo||"")==="Punto de retiro") continue;               // retiro en sucursal queda correo
+    const debe=llegaCadete(p)?"cadete":"correo";
+    if(p.metodo!==debe){ await DB.update(p.id,{metodo:debe, correo:debe==="correo"?(p.correo||"Correo Argentino"):""}); n++; }
+  }
+  toast(n?("Corregí "+n+" pedido"+(n===1?"":"s")):"Ya estaba todo bien");
+  vistaOperador();
+}
 async function marcarImpago(id){ await DB.update(id,{pagado:false}); toast("Marcado como impago"); pantallaCobro(); }
 function pantallaCobro(){
   const filas=cobroReparto(COB_DESDE,COB_HASTA);
@@ -1375,6 +1387,7 @@ function vistaOperador(){
       <button class="btn ghost" onclick="hojaEnvios()">${icon('printer')} Hoja de envíos</button>
       <button class="btn ghost" onclick="pantallaEntregas()">${icon('check')} Resumen de entregas</button>
       <button class="btn ghost" onclick="imprimirComprobante()">${icon('truck')} Comprobante cadete</button>
+      <button class="btn ghost" onclick="recalcularRutas()">${icon('route')} Recalcular rutas</button>
       <button class="btn ghost" onclick="enviarRepartoWA()">${icon('truck')} Enviar reparto a Flex</button>
       <button class="btn ghost" onclick="pantallaCobro()">${icon('box')} Facturar</button>
     </div>
@@ -1600,31 +1613,46 @@ function procesarImport(){
   if(!IMP_FILAS.length){ toast("No detecté filas. Revisá que haya una fila de encabezados."); return; }
   mostrarPreviewImport();
 }
+let IMP_SEL={};
+function toggleImp(i){ IMP_SEL[i]=!IMP_SEL[i]; mostrarPreviewImport(); }
+function selImp(v){ IMP_SEL={}; IMP_FILAS.forEach((f,i)=>IMP_SEL[i]=v); mostrarPreviewImport(); }
 function mostrarPreviewImport(){
-  const cadete=IMP_FILAS.filter(f=>f.metodo!=='correo').length;
-  const correo=IMP_FILAS.length-cadete;
+  if(Object.keys(IMP_SEL).length===0) IMP_FILAS.forEach((f,i)=>IMP_SEL[i]=true);   // por defecto todos marcados
+  const sel=IMP_FILAS.filter((f,i)=>IMP_SEL[i]);
+  const cadete=sel.filter(f=>f.metodo!=='correo').length;
+  const correo=sel.length-cadete;
   $("#impPrev").innerHTML=`
     <div class="card" style="margin-top:14px">
       <div class="hero" style="margin-bottom:14px;padding:18px 20px">
         <span class="label" style="margin-bottom:6px">${empresaObj(IMP_EMPRESA).nombre}</span>
-        <div style="font-size:30px;font-weight:700;letter-spacing:-.02em">${IMP_FILAS.length} pedidos</div>
-        <div class="c" style="margin-top:6px">${cadete} por cadete (CABA) · ${correo} por correo</div>
+        <div style="font-size:30px;font-weight:700;letter-spacing:-.02em">${sel.length} de ${IMP_FILAS.length} pedidos</div>
+        <div class="c" style="margin-top:6px">${cadete} por cadete · ${correo} por correo</div>
       </div>
-      ${IMP_FILAS.map(f=>{ const esCorr=f.metodo==='correo';
-        return `<div style="padding:10px 0;border-top:.5px solid var(--border)">
-          <b>${esc(f.cliente)}</b> ${f.ref?('· '+esc(f.ref)):''}
-          <span class="chip ${esCorr?'correo':'cadete'}" style="margin-left:6px">${esCorr?('Correo'+(f.correo?' · '+esc(f.correo):'')):'Cadete'} · ${f.origen==='bsas'?'Bs As':'RT'}</span>
-          <div class="muted" style="font-size:14px">${esc(f.dir)} — ${esc(f.ciudad)}, ${esc(f.provincia)}</div>
-          <div class="muted" style="font-size:14px">${esc(f.items||'—')}</div>
+      <div class="hint" style="margin-bottom:8px">Destildá los envíos que NO quieras hacer. Solo se guardan los marcados.</div>
+      <div class="row" style="gap:8px;margin-bottom:6px">
+        <button class="btn sm ghost" onclick="selImp(true)">Marcar todos</button>
+        <button class="btn sm ghost" onclick="selImp(false)">Ninguno</button>
+      </div>
+      ${IMP_FILAS.map((f,i)=>{ const esCorr=f.metodo==='correo';
+        return `<div style="padding:10px 0;border-top:.5px solid var(--border);display:flex;gap:10px;align-items:flex-start;${IMP_SEL[i]?'':'opacity:.45'}">
+          <input type="checkbox" ${IMP_SEL[i]?'checked':''} onchange="toggleImp(${i})" style="width:22px;height:22px;margin-top:2px;flex:0 0 auto;accent-color:var(--accent)">
+          <div style="min-width:0">
+            <b>${esc(f.cliente)}</b> ${f.ref?('· '+esc(f.ref)):''}
+            <span class="chip ${esCorr?'correo':'cadete'}" style="margin-left:6px">${esCorr?('Correo'+(f.correo?' · '+esc(f.correo):'')):'Cadete'}</span>
+            <div class="muted" style="font-size:14px">${esc(f.dir)} — ${esc(f.ciudad)}, ${esc(f.provincia)}</div>
+            <div class="muted" style="font-size:14px">${esc(f.items||'—')}</div>
+          </div>
         </div>`; }).join("")}
-      <button class="btn block green" style="margin-top:14px" onclick="confirmarImport()">Guardar ${IMP_FILAS.length} pedidos</button>
-      <button class="btn block ghost" style="margin-top:8px" onclick="IMP_FILAS=[];formImportar()">Cancelar</button>
+      <button class="btn block green" style="margin-top:14px" onclick="confirmarImport()">Guardar ${sel.length} pedido${sel.length===1?'':'s'}</button>
+      <button class="btn block ghost" style="margin-top:8px" onclick="IMP_FILAS=[];IMP_SEL={};formImportar()">Cancelar</button>
     </div>`;
 }
 async function confirmarImport(){
-  for(const f of IMP_FILAS){ f.canal=f.canal||IMP_CANAL; await crearPedido(f); }
-  toast(IMP_FILAS.length+" pedidos importados");
-  IMP_FILAS=[]; OPVIEW="pedidos"; vistaOperador();
+  const sel=IMP_FILAS.filter((f,i)=>IMP_SEL[i]);
+  if(!sel.length){ toast("Marcá al menos un pedido"); return; }
+  for(const f of sel){ f.canal=f.canal||IMP_CANAL; await crearPedido(f); }
+  toast(sel.length+" pedidos importados");
+  IMP_FILAS=[]; IMP_SEL={}; OPVIEW="pedidos"; vistaOperador();
 }
 /* ---- Importar PDF de preparación de Tienda Nube (separa columnas por posición) ---- */
 async function leerPDF(file){
@@ -2053,6 +2081,24 @@ Omega 3 (60 capsulas) = 20">${esc(txt||"")}</textarea>
     <button class="btn block" style="margin-top:12px" onclick="previsualizarCarga()">Ver qué se va a cargar</button>
     <div id="csPrev"></div>`;
 }
+/* Lee el texto de un PDF en el ORDEN NATURAL del documento (ideal para remitos de una columna) */
+async function pdfTextoRemito(file){
+  const buf=await file.arrayBuffer();
+  const pdf=await pdfjsLib.getDocument({data:buf}).promise;
+  let out="";
+  for(let p=1;p<=pdf.numPages;p++){
+    const page=await pdf.getPage(p);
+    const tc=await page.getTextContent();
+    let lastY=null;
+    tc.items.forEach(it=>{ if(!it.str||!it.str.trim()){ return; }
+      const y=Math.round(it.transform[5]);
+      if(lastY!==null && Math.abs(y-lastY)>2) out+="\n";
+      else if(out && !out.endsWith("\n")) out+=" ";
+      out+=it.str.trim(); lastY=y; });
+    out+="\n";
+  }
+  return out;
+}
 /* Lee el texto de un PDF por filas (sin cortar en columnas) */
 async function pdfTextoPlano(file){
   const buf=await file.arrayBuffer();
@@ -2075,10 +2121,12 @@ function parseRemito(text){
   const out=[]; const bloques=(text||"").split(/(?=\bPLN\d+)/i);
   bloques.forEach(b=>{
     if(!/\bPLN\d+/i.test(b)) return;
-    const nums=[...b.matchAll(/(\d+(?:[.,]\d{1,2})?)/g)].map(m=>m[1]);
-    let cant=null;
-    for(let i=nums.length-1;i>=0;i--){ const v=Math.round(parseFloat(nums[i].replace(",","."))); if(v>0 && v<10000){ cant=v; break; } }
-    let nombre=b.replace(/^[\s\S]*?PLN\d+\s*/i,"").replace(/\s*\d+(?:[.,]\d{1,2})?\s*$/,"").replace(/\s+/g," ").trim();
+    // La cantidad viene con decimales (ej "15.00", "5.00") en la columna Cantidad
+    const qm=b.match(/(\d+)[.,]\d{2}(?!\d)/);
+    let cant = qm ? Math.round(parseFloat(qm[1])) : null;
+    if(cant==null){ const ints=[...b.matchAll(/(\d{1,4})/g)].map(m=>+m[1]).filter(v=>v>0&&v<10000); cant=ints.length?ints[ints.length-1]:null; }
+    // nombre = sacar el código PLN y la cantidad; dejar el resto (incluye "(60 Capsulas)")
+    let nombre=b.replace(/^[\s\S]*?PLN\d+\s*/i,"").replace(/\d+[.,]\d{2}(?!\d)/,"").replace(/\s+/g," ").trim();
     if(nombre && cant) out.push({nombre, cant});
   });
   return out;
@@ -2089,7 +2137,7 @@ async function leerRemitoPDF(file){
   pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
   toast("Leyendo el remito…");
   try{
-    const texto=await pdfTextoPlano(file);
+    const texto=await pdfTextoRemito(file);
     const items=parseRemito(texto);
     if(!items.length){ toast("No reconocí productos. ¿Es el PDF del remito?"); return; }
     const box=$("#csTxt"); if(box) box.value=items.map(i=>i.nombre+" = "+i.cant).join("\n");
