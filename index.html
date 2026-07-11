@@ -667,6 +667,27 @@ const fmt=ts=>{ if(!ts)return""; const d=new Date(ts);
   return d.toLocaleDateString("es-AR",{day:"2-digit",month:"2-digit"})+" "+d.toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"}); };
 const soloPedidos=()=>PEDIDOS.filter(p=>!p.tipo||p.tipo==="pedido");
 const numOrden=p=>{ const r=((p&&p.ref)||"").trim(); if(r) return r.startsWith("#")?r:("#"+r); return (p&&p.id)||""; };   // N° de orden con # adelante
+/* ===== Etiqueta PDF del correo (la que genera Tienda Nube) ===== */
+function leerArchivoBase64(file){ return new Promise((res,rej)=>{ const r=new FileReader();
+  r.onload=()=>res(String(r.result).split(",")[1]||""); r.onerror=rej; r.readAsDataURL(file); }); }
+async function archivoEtiqueta(file){
+  if(!file) return null;
+  if(file.size>700*1024){ alert("Ese PDF pesa mucho ("+Math.round(file.size/1024)+" KB). Tiene que ser menor a 700 KB."); return null; }
+  const b64=await leerArchivoBase64(file);
+  return {etiquetaPdf:b64, etiquetaPdfNombre:file.name||"etiqueta-correo.pdf"};
+}
+async function adjuntarEtiquetaCorreo(id,file){
+  const dat=await archivoEtiqueta(file); if(!dat) return;
+  await DB.update(id,dat); toast("Etiqueta del correo adjuntada 📎"); vistaOperador();
+}
+function abrirEtiquetaPDF(p){
+  try{
+    const bin=atob(p.etiquetaPdf); const arr=new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
+    const url=URL.createObjectURL(new Blob([arr],{type:"application/pdf"}));
+    window.open(url,"_blank");
+  }catch(e){ toast("No pude abrir el PDF adjunto"); }
+}
 /* Código corto para reportes: LABS#0004554 / NUTRI#... / FULLMI#... según la empresa */
 function codigoOrden(p){
   const pre = p.empresa==="labs" ? "LABS" : p.empresa==="nutrivibe" ? "NUTRI" : "FULLMI";
@@ -1123,6 +1144,7 @@ async function crearPedido(d){
   const emp=empresaObj(d.empresa);
   const id=await DB.create({tipo:"pedido",empresa:emp.id,canal:d.canal||emp.canalDefault,ref:d.ref||"",
     cliente:d.cliente,tel:d.tel||"",dir:d.dir||"",ciudad:d.ciudad||"",provincia:d.provincia||"",cp:d.cp||"",
+    etiquetaPdf:d.etiquetaPdf||"",etiquetaPdfNombre:d.etiquetaPdfNombre||"",
     items:d.items||"",origen:d.origen||r.origen,metodo:d.metodo||r.metodo,
     correo:d.correo||"",tracking:d.tracking||"",cadete:"",estado:"pendiente",creado:Date.now(),
     eventos:[{estado:"pendiente",ts:Date.now(),nota:"Pedido creado"}]});
@@ -1451,6 +1473,10 @@ function cardOperador(p){
   acts+=`<button class="btn sm ghost" onclick="imprimirEtiqueta('${p.id}')">${icon('printer')}Etiqueta</button>`;
   acts+=`<button class="btn sm ghost" onclick="copiarLink('${p.id}')">Link</button>`;
   acts+=`<button class="btn sm green" onclick="waCliente('${p.id}')">WhatsApp</button>`;
+  if(p.metodo==="correo"){
+    if(p.etiquetaPdf) acts+=`<button class="btn sm ghost" style="color:var(--green)" onclick='abrirEtiquetaPDF(PEDIDOS.find(x=>x.id==="${p.id}"))'>📎 Etiqueta correo ✓</button>`;
+    else acts+=`<label class="btn sm ghost" style="cursor:pointer">📎 Adjuntar PDF correo<input type="file" accept="application/pdf" style="display:none" onchange="adjuntarEtiquetaCorreo('${p.id}',this.files[0])"></label>`;
+  }
   if(p.estado==="anulado") acts+=`<button class="btn sm ghost" onclick="reactivarPedido('${p.id}')">Reactivar</button>`;
   else if(p.estado!=="confirmado") acts+=`<button class="btn sm ghost" style="color:var(--red)" onclick="anularPedido('${p.id}')">Anular</button>`;
   const ruta=(p.origen==="riotercero"?"Río Tercero":"Bs As")+" · "+(p.metodo==="correo"?("Correo"+(p.correo?(" "+esc(p.correo)):"")):"Cadete");
@@ -1624,11 +1650,15 @@ let IMP_SEL={};
 function toggleImp(i){ IMP_SEL[i]=!IMP_SEL[i]; mostrarPreviewImport(); }
 function selImp(v){ IMP_SEL={}; IMP_FILAS.forEach((f,i)=>IMP_SEL[i]=v); mostrarPreviewImport(); }
 function setImpMetodo(i,val){ const f=IMP_FILAS[i]; if(!f) return;
-  if(val==="cadete"){ f.metodo="cadete"; f.correo=""; }
+  if(val==="cadete"){ f.metodo="cadete"; f.correo=""; f.etiquetaPdf=""; f.etiquetaPdfNombre=""; }
   else if(val==="sucursal"){ f.metodo="correo"; f.correo="Punto de retiro"; }
   else { f.metodo="correo"; f.correo="Correo Argentino"; }
   mostrarPreviewImport(); }
 function impVal(f){ return f.metodo==="cadete"?"cadete":((f.correo||"")==="Punto de retiro"?"sucursal":"correo"); }
+async function adjuntarEtiquetaImport(i,file){
+  const dat=await archivoEtiqueta(file); if(!dat) return;
+  Object.assign(IMP_FILAS[i],dat); toast("Etiqueta del correo adjuntada 📎"); mostrarPreviewImport();
+}
 function mostrarPreviewImport(){
   if(Object.keys(IMP_SEL).length===0) IMP_FILAS.forEach((f,i)=>IMP_SEL[i]=true);   // por defecto todos marcados
   const sel=IMP_FILAS.filter((f,i)=>IMP_SEL[i]);
@@ -1647,20 +1677,24 @@ function mostrarPreviewImport(){
         <button class="btn sm ghost" onclick="selImp(true)">Marcar todos</button>
         <button class="btn sm ghost" onclick="selImp(false)">Ninguno</button>
       </div>
-      ${IMP_FILAS.map((f,i)=>{ const an=anilloDe(f); const elegis=(an.n===9)||((f.correo||"")==="Punto de retiro");
+      ${IMP_FILAS.map((f,i)=>{ const an=anilloDe(f); const elegis=(an.n===9)||((f.correo||"")==="Punto de retiro"); const esCorreo=f.metodo==="correo";
         return `<div style="padding:10px 0;border-top:.5px solid var(--border);display:flex;gap:10px;align-items:flex-start;${IMP_SEL[i]?'':'opacity:.45'}">
           <input type="checkbox" ${IMP_SEL[i]?'checked':''} onchange="toggleImp(${i})" style="width:22px;height:22px;margin-top:2px;flex:0 0 auto;accent-color:var(--accent)">
           <div style="min-width:0;flex:1">
-            <b>${esc(f.cliente)}</b> ${f.ref?('· '+esc(f.ref.startsWith('#')?f.ref:('#'+f.ref))):''}
+            <b>${esc(f.cliente)}</b> ${f.ref?('· '+esc(f.ref.startsWith('#')?f.ref:('#'+f.ref))):''} · <b style="letter-spacing:.02em">${esc((f.ciudad||'').toUpperCase())}</b>
             <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${anilloColor(an.n)};margin:0 3px 0 6px;vertical-align:-1px"></span><span class="muted" style="font-size:13px">${esc(an.label)}</span>
             ${elegis?`<span class="chip" style="margin-left:6px;background:#fff3cd;color:#7a5a00">elegís vos</span>`:''}
+            ${f.etiquetaPdf?`<span class="chip" style="margin-left:6px;background:#d9f2e5;color:#0f6b40;font-weight:700">📎 ETIQUETA CORREO</span>`:''}
             <div class="muted" style="font-size:14px">${esc(f.dir)} — ${esc(f.ciudad)}, ${esc(f.provincia)}</div>
             <div class="muted" style="font-size:14px">${esc(f.items||'—')}</div>
-            <select onchange="setImpMetodo(${i},this.value)" style="${selStyle};margin-top:6px">
-              <option value="cadete" ${impVal(f)==='cadete'?'selected':''}>🚴 Cadete (Flex)</option>
-              <option value="correo" ${impVal(f)==='correo'?'selected':''}>📮 Correo a domicilio</option>
-              <option value="sucursal" ${impVal(f)==='sucursal'?'selected':''}>🏤 Correo a sucursal</option>
-            </select>
+            <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px">
+              <select onchange="setImpMetodo(${i},this.value)" style="${selStyle}">
+                <option value="cadete" ${impVal(f)==='cadete'?'selected':''}>🚴 Cadete (Flex)</option>
+                <option value="correo" ${impVal(f)==='correo'?'selected':''}>📮 Correo a domicilio</option>
+                <option value="sucursal" ${impVal(f)==='sucursal'?'selected':''}>🏤 Correo a sucursal</option>
+              </select>
+              ${esCorreo?`<label class="btn sm ghost" style="cursor:pointer;flex:0 0 auto">${f.etiquetaPdf?'📎 Cambiar PDF':'📎 PDF correo'}<input type="file" accept="application/pdf" style="display:none" onchange="adjuntarEtiquetaImport(${i},this.files[0])"></label>`:''}
+            </div>
           </div>
         </div>`; }).join("")}
       <button class="btn block green" style="margin-top:14px" onclick="confirmarImport()">Guardar ${sel.length} pedido${sel.length===1?'':'s'}</button>
@@ -1758,6 +1792,9 @@ function formNuevo(edit){
       </div>`}
       <div class="two">
         <div class="field"><span class="label">Cliente</span><input id="f_cli" value="${esc(p.cliente||'')}" placeholder="Nombre y apellido"></div>
+        <div class="field"><span class="label">N° de orden (Tienda Nube)</span><input id="f_ref" inputmode="numeric" value="${esc((p.ref||'').replace('#',''))}" placeholder="Ej: 4554"></div>
+      </div>
+      <div class="two">
         <div class="field"><span class="label">Teléfono</span><input id="f_tel" inputmode="tel" value="${esc(p.tel||'')}" placeholder="11 5678 9000"></div>
       </div>
       <div class="field"><span class="label">Dirección</span><input id="f_dir" value="${esc(p.dir||'')}" placeholder="Calle, número, piso/depto"></div>
@@ -1792,7 +1829,8 @@ async function guardarNuevo(){
   const cliente=$("#f_cli").value.trim();
   if(!cliente){ toast("Falta el nombre del cliente"); return; }
   const metodo=$("#f_metodo").value;
-  await crearPedido({ empresa:$("#f_emp").value, canal:$("#f_canal").value, cliente, tel:$("#f_tel").value.trim(),
+  const refN=($("#f_ref")?$("#f_ref").value:"").trim().replace(/\D/g,"");
+  await crearPedido({ empresa:$("#f_emp").value, canal:$("#f_canal").value, cliente, ref:refN?("#"+refN):"", tel:$("#f_tel").value.trim(),
     dir:$("#f_dir").value.trim(), ciudad:$("#f_ciu").value.trim(), provincia:$("#f_prov").value,
     items:$("#f_items").value.trim(), origen:$("#f_origen").value, metodo,
     correo: metodo==="correo"?$("#f_correo").value:"", tracking: metodo==="correo"?$("#f_track").value.trim():"" });
@@ -1802,7 +1840,8 @@ async function guardarEdicion(id){
   const cliente=$("#f_cli").value.trim();
   if(!cliente){ toast("Falta el nombre del cliente"); return; }
   const metodo=$("#f_metodo").value;
-  await DB.update(id,{ cliente, tel:$("#f_tel").value.trim(), dir:$("#f_dir").value.trim(),
+  const refV=($("#f_ref")?$("#f_ref").value:"").trim().replace(/\D/g,"");
+  await DB.update(id,{ cliente, ref:refV?("#"+refV):"", tel:$("#f_tel").value.trim(), dir:$("#f_dir").value.trim(),
     ciudad:$("#f_ciu").value.trim(), provincia:$("#f_prov").value, items:$("#f_items").value.trim(),
     origen:$("#f_origen").value, metodo, correo: metodo==="correo"?$("#f_correo").value:"",
     tracking: metodo==="correo"?$("#f_track").value.trim():"" });
@@ -2192,12 +2231,12 @@ async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
   try{
-    for(const it of items){ await pushMov(it.prod,"entrada",it.cant,"Carga de stock"); }
-    const chk=nivel(items[0].prod, stockState());
-    if(chk<=0){ alert("⚠️ La carga no se guardó en la base. Puede ser un problema de permisos de Firebase o de conexión. Avisale a Claude con una captura."); return; }
+    const st=stockState(); const ts=Date.now();
+    items.forEach(it=>{ st.movs.push({ts,prod:it.prod,tipo:"entrada",cant:Math.abs(+it.cant||0),motivo:"Carga de stock"}); });
+    await persistStock(st);   // UNA sola escritura con todo
     toast(items.length+" productos cargados al stock ✅");
   }catch(e){ alert("⚠️ No pude guardar el stock en la base: "+(e&&e.message||e)+"\n\nSacale captura a este mensaje y pasásela a Claude."); return; }
-  window.__carga=null; OPVIEW="stock"; vistaOperador();
+  window.__carga=null; OPVIEW="stock"; setTimeout(()=>vistaOperador(),600);
 }
 function ordenCompra(){ imprimirReposicion(); }
 function imprimirReposicion(){
@@ -2620,6 +2659,7 @@ function printLabels(arr){
 function imprimirEtiqueta(id){
   const p=PEDIDOS.find(x=>x.id===id) || ((SIM&&SIM.id===id)?SIM:null);
   if(!p){ toast("No encontré el pedido"); return; }
+  if(p.etiquetaPdf){ abrirEtiquetaPDF(p); return; }   // usa la etiqueta del correo (Tienda Nube)
   printLabels([p]);
 }
 function imprimirLote(){ pantallaEtiquetas(); }
@@ -2641,7 +2681,7 @@ function pantallaEtiquetas(){
         <label style="display:flex;gap:12px;align-items:flex-start;cursor:pointer;flex:1;min-width:0;margin:0">
           <input type="checkbox" ${SEL_ETQ[p.id]?'checked':''} onchange="toggleEtq('${p.id}')" style="width:22px;height:22px;margin-top:2px;flex:0 0 auto;accent-color:var(--accent)">
           <span style="min-width:0">
-            <span style="font-weight:600;display:block">${esc(p.cliente||'—')} <span class="muted" style="font-weight:400">· N° ${esc(numOrden(p))}</span></span>
+            <span style="font-weight:600;display:block">${esc(p.cliente||'—')} <span class="muted" style="font-weight:400">· N° ${esc(numOrden(p))}</span>${p.etiquetaPdf?` <span class="chip" style="background:#d9f2e5;color:#0f6b40;font-weight:700">📎 ETIQUETA CORREO</span>`:''}</span>
             <span class="muted" style="font-size:13px;display:block;margin-top:2px">${esc(p.dir||'')}${p.ciudad?(' — '+esc(p.ciudad)):''}</span>
             <span class="muted" style="font-size:13px;display:block;margin-top:2px">${esc(p.items||'—')}</span>
           </span>
@@ -2655,7 +2695,11 @@ function pantallaEtiquetas(){
 function toggleEtq(id){ SEL_ETQ[id]=!SEL_ETQ[id]; pantallaEtiquetas(); }
 function selEtq(v){ SEL_ETQ={}; if(v) etqImprimibles().forEach(p=>SEL_ETQ[p.id]=true); pantallaEtiquetas(); }
 function imprimirSeleccionadas(){ const arr=soloPedidos().filter(p=>SEL_ETQ[p.id]);
-  if(!arr.length){ toast("Marcá al menos una etiqueta"); return; } printLabels(arr); }
+  if(!arr.length){ toast("Marcá al menos una etiqueta"); return; }
+  const conPdf=arr.filter(p=>p.etiquetaPdf), sinPdf=arr.filter(p=>!p.etiquetaPdf);
+  if(sinPdf.length) printLabels(sinPdf);                       // nuestras etiquetas
+  conPdf.forEach(p=>abrirEtiquetaPDF(p));                      // las del correo (PDF de Tienda Nube)
+  if(conPdf.length) toast(conPdf.length+" con etiqueta del correo (se abren aparte)"); }
 
 /* =========================================================================
    9) SIMULACIÓN DEL CICLO COMPLETO (modo demostración, no toca tus datos)
