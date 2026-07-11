@@ -666,7 +666,14 @@ const esc=s=>String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",
 const fmt=ts=>{ if(!ts)return""; const d=new Date(ts);
   return d.toLocaleDateString("es-AR",{day:"2-digit",month:"2-digit"})+" "+d.toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"}); };
 const soloPedidos=()=>PEDIDOS.filter(p=>!p.tipo||p.tipo==="pedido");
-const numOrden=p=>(p&&p.ref)?p.ref:(p&&p.id||"");   // N° de orden de Tienda Nube; si no hay, el interno
+const numOrden=p=>{ const r=((p&&p.ref)||"").trim(); if(r) return r.startsWith("#")?r:("#"+r); return (p&&p.id)||""; };   // N° de orden con # adelante
+/* Código corto para reportes: LABS#0004554 / NUTRI#... / FULLMI#... según la empresa */
+function codigoOrden(p){
+  const pre = p.empresa==="labs" ? "LABS" : p.empresa==="nutrivibe" ? "NUTRI" : "FULLMI";
+  const num = ((p&&p.ref)||"").replace(/\D/g,"");
+  if(num) return pre+"#"+num.padStart(7,"0");
+  return pre+"#"+String(p&&p.id||"").slice(-6).toUpperCase();
+}
 const soloReabas=()=>PEDIDOS.filter(p=>p.tipo==="reabastecimiento");
 /* --- Stock con kardex de movimientos (idea adaptada de InvenTree) --- */
 function stockRecord(){ return PEDIDOS.find(p=>p.tipo==="stock"); }
@@ -816,7 +823,7 @@ function cobroReparto(desde,hasta){
   proc.forEach(p=>{ const e=p.empresa; if(!byEmp[e]) byEmp[e]={empresa:e,pedidos:[],total:0,costo:0};
     const c=catPedido(p), precio=precioCat(c), costo=(zonaCosto()[c]||0);
     byEmp[e].total+=precio; byEmp[e].costo+=costo;
-    byEmp[e].pedidos.push({id:p.id, ref:numOrden(p), cliente:p.cliente||"—", cat:c, zona:COB_ET[c], destino:(p.ciudad||"")+(p.provincia?(", "+p.provincia):""), precio, pagado:!!p.pagado}); });
+    byEmp[e].pedidos.push({id:p.id, ref:codigoOrden(p), cliente:p.cliente||"—", cat:c, zona:COB_ET[c], destino:(p.ciudad||"")+(p.provincia?(", "+p.provincia):""), precio, pagado:!!p.pagado}); });
   const arr=Object.values(byEmp);
   arr.forEach(f=>{ f.ganancia=f.total-f.costo; f.pedidos.sort((a,b)=>a.zona.localeCompare(b.zona)||a.ref.localeCompare(b.ref)); });
   return arr;
@@ -860,7 +867,7 @@ function pantallaCobro(){
         </div>
         <div class="muted" style="font-size:12px;margin-bottom:4px">Tu ganancia: ${fmtAr(f.ganancia)}</div>
         ${f.pedidos.map(pe=>`<div class="row" style="justify-content:space-between;align-items:center;gap:8px;padding:9px 0;border-top:.5px solid var(--border)">
-          <span style="min-width:0"><b>N° ${esc(pe.ref)}</b> · ${esc(pe.cliente)}<br><span class="muted" style="font-size:12.5px">${esc(pe.zona)} · ${fmtAr(pe.precio)}</span></span>
+          <span style="min-width:0"><b>${esc(pe.ref)}</b> · ${esc(pe.cliente)}<br><span class="muted" style="font-size:12.5px">${esc(pe.zona)} · ${fmtAr(pe.precio)}</span></span>
           ${pe.pagado
             ? `<button class="btn sm ghost" style="flex:0 0 auto;color:var(--green)" onclick="marcarImpago('${pe.id}')">✓ Pagado</button>`
             : `<button class="btn sm ghost" style="flex:0 0 auto" onclick="marcarPagado('${pe.id}')">Marcar pagado</button>`}
@@ -874,7 +881,7 @@ function pantallaCobro(){
 function textoCobro(f){
   const hoy=new Date().toLocaleDateString("es-AR");
   let t="Resumen de cuenta - "+empresaObj(f.empresa).nombre+" ("+hoy+")\nServicio de preparación y envío - Fullminet\n\n";
-  f.pedidos.forEach(pe=>{ t+="N° "+pe.ref+" - "+pe.cliente+" ("+pe.zona+"): "+(pe.precio?fmtAr(pe.precio):"-")+"\n"; });
+  f.pedidos.forEach(pe=>{ t+=pe.ref+" - "+pe.cliente+" ("+pe.zona+"): "+(pe.precio?fmtAr(pe.precio):"-")+"\n"; });
   t+="\nTOTAL A COBRAR: "+fmtAr(f.total);
   return t;
 }
@@ -1616,11 +1623,18 @@ function procesarImport(){
 let IMP_SEL={};
 function toggleImp(i){ IMP_SEL[i]=!IMP_SEL[i]; mostrarPreviewImport(); }
 function selImp(v){ IMP_SEL={}; IMP_FILAS.forEach((f,i)=>IMP_SEL[i]=v); mostrarPreviewImport(); }
+function setImpMetodo(i,val){ const f=IMP_FILAS[i]; if(!f) return;
+  if(val==="cadete"){ f.metodo="cadete"; f.correo=""; }
+  else if(val==="sucursal"){ f.metodo="correo"; f.correo="Punto de retiro"; }
+  else { f.metodo="correo"; f.correo="Correo Argentino"; }
+  mostrarPreviewImport(); }
+function impVal(f){ return f.metodo==="cadete"?"cadete":((f.correo||"")==="Punto de retiro"?"sucursal":"correo"); }
 function mostrarPreviewImport(){
   if(Object.keys(IMP_SEL).length===0) IMP_FILAS.forEach((f,i)=>IMP_SEL[i]=true);   // por defecto todos marcados
   const sel=IMP_FILAS.filter((f,i)=>IMP_SEL[i]);
   const cadete=sel.filter(f=>f.metodo!=='correo').length;
   const correo=sel.length-cadete;
+  const selStyle="padding:6px 8px;border:1px solid var(--border);border-radius:9px;font:inherit;background:var(--bg);font-size:13px";
   $("#impPrev").innerHTML=`
     <div class="card" style="margin-top:14px">
       <div class="hero" style="margin-bottom:14px;padding:18px 20px">
@@ -1628,19 +1642,25 @@ function mostrarPreviewImport(){
         <div style="font-size:30px;font-weight:700;letter-spacing:-.02em">${sel.length} de ${IMP_FILAS.length} pedidos</div>
         <div class="c" style="margin-top:6px">${cadete} por cadete · ${correo} por correo</div>
       </div>
-      <div class="hint" style="margin-bottom:8px">Destildá los envíos que NO quieras hacer. Solo se guardan los marcados.</div>
+      <div class="hint" style="margin-bottom:8px">Destildá los que NO hagas. Con el selector elegís cómo va cada uno (cadete / correo / sucursal).</div>
       <div class="row" style="gap:8px;margin-bottom:6px">
         <button class="btn sm ghost" onclick="selImp(true)">Marcar todos</button>
         <button class="btn sm ghost" onclick="selImp(false)">Ninguno</button>
       </div>
-      ${IMP_FILAS.map((f,i)=>{ const esCorr=f.metodo==='correo';
+      ${IMP_FILAS.map((f,i)=>{ const an=anilloDe(f); const elegis=(an.n===9)||((f.correo||"")==="Punto de retiro");
         return `<div style="padding:10px 0;border-top:.5px solid var(--border);display:flex;gap:10px;align-items:flex-start;${IMP_SEL[i]?'':'opacity:.45'}">
           <input type="checkbox" ${IMP_SEL[i]?'checked':''} onchange="toggleImp(${i})" style="width:22px;height:22px;margin-top:2px;flex:0 0 auto;accent-color:var(--accent)">
-          <div style="min-width:0">
-            <b>${esc(f.cliente)}</b> ${f.ref?('· '+esc(f.ref)):''}
-            <span class="chip ${esCorr?'correo':'cadete'}" style="margin-left:6px">${esCorr?('Correo'+(f.correo?' · '+esc(f.correo):'')):'Cadete'}</span>
+          <div style="min-width:0;flex:1">
+            <b>${esc(f.cliente)}</b> ${f.ref?('· '+esc(f.ref.startsWith('#')?f.ref:('#'+f.ref))):''}
+            <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${anilloColor(an.n)};margin:0 3px 0 6px;vertical-align:-1px"></span><span class="muted" style="font-size:13px">${esc(an.label)}</span>
+            ${elegis?`<span class="chip" style="margin-left:6px;background:#fff3cd;color:#7a5a00">elegís vos</span>`:''}
             <div class="muted" style="font-size:14px">${esc(f.dir)} — ${esc(f.ciudad)}, ${esc(f.provincia)}</div>
             <div class="muted" style="font-size:14px">${esc(f.items||'—')}</div>
+            <select onchange="setImpMetodo(${i},this.value)" style="${selStyle};margin-top:6px">
+              <option value="cadete" ${impVal(f)==='cadete'?'selected':''}>🚴 Cadete (Flex)</option>
+              <option value="correo" ${impVal(f)==='correo'?'selected':''}>📮 Correo a domicilio</option>
+              <option value="sucursal" ${impVal(f)==='sucursal'?'selected':''}>🏤 Correo a sucursal</option>
+            </select>
           </div>
         </div>`; }).join("")}
       <button class="btn block green" style="margin-top:14px" onclick="confirmarImport()">Guardar ${sel.length} pedido${sel.length===1?'':'s'}</button>
@@ -2171,8 +2191,12 @@ function previsualizarCarga(){
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
-  for(const it of items){ await pushMov(it.prod,"entrada",it.cant,"Carga de stock"); }
-  toast(items.length+" productos cargados al stock");
+  try{
+    for(const it of items){ await pushMov(it.prod,"entrada",it.cant,"Carga de stock"); }
+    const chk=nivel(items[0].prod, stockState());
+    if(chk<=0){ alert("⚠️ La carga no se guardó en la base. Puede ser un problema de permisos de Firebase o de conexión. Avisale a Claude con una captura."); return; }
+    toast(items.length+" productos cargados al stock ✅");
+  }catch(e){ alert("⚠️ No pude guardar el stock en la base: "+(e&&e.message||e)+"\n\nSacale captura a este mensaje y pasásela a Claude."); return; }
   window.__carga=null; OPVIEW="stock"; vistaOperador();
 }
 function ordenCompra(){ imprimirReposicion(); }
