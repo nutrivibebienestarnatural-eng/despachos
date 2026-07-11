@@ -697,7 +697,32 @@ function codigoOrden(p){
 }
 const soloReabas=()=>PEDIDOS.filter(p=>p.tipo==="reabastecimiento");
 /* --- Stock con kardex de movimientos (idea adaptada de InvenTree) --- */
-function stockRecord(){ return PEDIDOS.find(p=>p.tipo==="stock"); }
+function stockRecord(){
+  const docs=PEDIDOS.filter(p=>p.tipo==="stock");
+  if(docs.length<=1) return docs[0];
+  return docs.slice().sort((a,b)=>((b.movs||[]).length-(a.movs||[]).length))[0];   // el que más movimientos tiene
+}
+function stockDuplicados(){ return PEDIDOS.filter(p=>p.tipo==="stock").length; }
+/* Fusiona todos los registros de stock duplicados en uno solo (los extra quedan anulados) */
+async function repararStock(){
+  const docs=PEDIDOS.filter(p=>p.tipo==="stock");
+  if(docs.length<=1){ toast("El stock está sano (un solo registro)"); return; }
+  const main=stockRecord();
+  const movs=[...(main.movs||[])], vistos=new Set(movs.map(m=>m.ts+"|"+m.prod+"|"+m.tipo+"|"+m.cant));
+  let min={...(main.min||{})}, zonas=main.zonas, margen=main.margen, correoGestion=main.correoGestion, descontar=main.descontar;
+  for(const d of docs){ if(d.id===main.id) continue;
+    (d.movs||[]).forEach(m=>{ const k=m.ts+"|"+m.prod+"|"+m.tipo+"|"+m.cant; if(!vistos.has(k)){ vistos.add(k); movs.push(m); } });
+    min=Object.assign({},d.min||{},min); if(zonas==null)zonas=d.zonas; if(margen==null)margen=d.margen;
+    if(correoGestion==null)correoGestion=d.correoGestion; if(descontar==null)descontar=d.descontar;
+  }
+  movs.sort((a,b)=>(a.ts||0)-(b.ts||0));
+  const data={min,movs}; if(zonas!=null)data.zonas=zonas; if(margen!=null)data.margen=margen;
+  if(correoGestion!=null)data.correoGestion=correoGestion; if(descontar!=null)data.descontar=descontar;
+  await DB.update(main.id,data);
+  for(const d of docs){ if(d.id!==main.id) await DB.update(d.id,{tipo:"stock_viejo",movs:[]}); }
+  toast("Stock reparado: "+(docs.length-1)+" registro(s) duplicado(s) fusionado(s) ✅");
+  setTimeout(()=>vistaOperador(),700);
+}
 function stockState(){
   const r=stockRecord()||{}; let min={...(r.min||{})}, movs=(r.movs||[]).slice();
   if(r.data){ for(const k in r.data){ const v=r.data[k]||{};   // migra formato viejo
@@ -1989,6 +2014,11 @@ function vistaStock(){
   const grid="display:grid;grid-template-columns:1fr 56px 56px 44px 60px;gap:8px;align-items:center;padding:9px 0;border-top:.5px solid var(--border)";
   app().innerHTML=`
     ${segOp('stock')}
+    ${stockDuplicados()>1?`<div class="card" style="margin-bottom:14px;border:1.5px solid var(--red);background:#fdf1f1">
+      <div style="font-weight:700;color:var(--red)">⚠️ Hay ${stockDuplicados()} registros de stock duplicados</div>
+      <div class="hint" style="margin:6px 0 10px">Por eso puede que veas el stock en 0. Tocá el botón y los junto en uno solo (no se pierde nada).</div>
+      <button class="btn block" onclick="repararStock()">🔧 Reparar stock ahora</button>
+    </div>`:''}
     <div class="title">Stock</div>
     <div class="subtitle">${PRODUCTOS.length} productos · ${reponer.length} por reponer</div>
     <div class="card" style="margin-bottom:16px">
