@@ -424,6 +424,7 @@ const EMPRESAS = [
   { id:"labs",      nombre:"Labs Nutrition", canalDefault:"tiendanube",
     review:"https://search.google.com/local/writereview?placeid=ChIJ7busWp5vzZURXziOZFmcOhI" },
   { id:"nutrivibe", nombre:"Nutrivibe",      canalDefault:"ml_flex", review:"" },
+  { id:"sc",        nombre:"SC.CANDLE",      canalDefault:"tiendanube", review:"", fragil:true },   // velas: siempre FRÁGIL
 ];
 /* CANALES de venta (independientes de la empresa). costo = tarifa fija de envío */
 const CANALES = [
@@ -598,8 +599,9 @@ function initDB(){
     firebase.initializeApp(FIREBASE_CONFIG);
     const col=firebase.firestore().collection("pedidos");
     DB={ modo:"firebase",
-      subscribe(cb){ col.orderBy("creado","desc").onSnapshot(s=>cb(s.docs.map(d=>({id:d.id,...d.data()})))); },
-      async create(o){ return (await col.add(o)).id; },
+      subscribe(cb){ col.onSnapshot(s=>{ const a=s.docs.map(d=>({id:d.id,...d.data()}));
+        a.sort((x,y)=>(y.creado||0)-(x.creado||0)); cb(a); }); },   // sin orderBy: los docs sin fecha (stock) también llegan
+      async create(o){ if(o.creado==null) o.creado=Date.now(); return (await col.add(o)).id; },
       async update(id,patch){ await col.doc(id).update(patch); },
       async get(id){ const d=await col.doc(id).get(); return d.exists?{id:d.id,...d.data()}:null; } };
   } else {
@@ -690,7 +692,7 @@ function abrirEtiquetaPDF(p){
 }
 /* Código corto para reportes: LABS#0004554 / NUTRI#... / FULLMI#... según la empresa */
 function codigoOrden(p){
-  const pre = p.empresa==="labs" ? "LABS" : p.empresa==="nutrivibe" ? "NUTRI" : "FULLMI";
+  const pre = p.empresa==="labs" ? "LABS" : p.empresa==="nutrivibe" ? "NUTRI" : p.empresa==="sc" ? "SC" : "FULLMI";
   const num = ((p&&p.ref)||"").replace(/\D/g,"");
   if(num) return pre+"#"+num.padStart(7,"0");
   return pre+"#"+String(p&&p.id||"").slice(-6).toUpperCase();
@@ -703,6 +705,37 @@ function stockRecord(){
   return docs.slice().sort((a,b)=>((b.movs||[]).length-(a.movs||[]).length))[0];   // el que más movimientos tiene
 }
 function stockDuplicados(){ return PEDIDOS.filter(p=>p.tipo==="stock").length; }
+/* Vaciar TODO el stock para empezar de cero (los pedidos no se tocan; conserva precios/config) */
+async function vaciarStock(){
+  if(!confirm("¿Vaciar TODO el stock?\n\nSe borran todos los movimientos (cargas y salidas). Los pedidos y los precios NO se tocan.")) return;
+  if(!confirm("¿Seguro? Esto no se puede deshacer.\n\nDespués cargás el remito UNA sola vez y queda limpio.")) return;
+  try{
+    const docs=PEDIDOS.filter(p=>p.tipo==="stock");
+    if(!docs.length){ toast("No hay stock que vaciar"); return; }
+    const main=stockRecord();
+    for(const d of docs){
+      if(d.id===main.id) await DB.update(d.id,{movs:[]});
+      else await DB.update(d.id,{tipo:"stock_viejo",movs:[]});
+    }
+    toast("Stock en cero ✅ Ahora cargá el remito una sola vez.");
+  }catch(e){ alert("⚠️ No pude vaciar el stock: "+(e&&e.message||e)); }
+  setTimeout(()=>vistaOperador(),700);
+}
+/* Diagnóstico: prueba conexión, lectura y escritura, y muestra el resultado claro */
+async function diagnosticoStock(){
+  let r="🩺 DIAGNÓSTICO · versión "+APP_VERSION+"\n\n";
+  r+="Datos: "+(DB.modo==="firebase"?"Firebase (nube) ✅":"⚠️ MODO LOCAL: solo este navegador, revisá la configuración")+"\n";
+  try{ const u=(typeof firebase!=="undefined"&&firebase.auth&&firebase.auth().currentUser); r+="Usuario: "+(u?(u.email+" ✅"):"⚠️ SIN LOGIN (las escrituras pueden fallar)")+"\n"; }catch(e){}
+  const docs=PEDIDOS.filter(p=>p.tipo==="stock");
+  r+="Registros de stock: "+docs.length+(docs.length>1?" ⚠️ (duplicados: usá Reparar)":"")+"\n";
+  const st=stockRecord();
+  r+="Movimientos en el registro activo: "+((st&&st.movs&&st.movs.length)||0)+"\n";
+  try{
+    if(st){ await DB.update(st.id,{_ping:Date.now()}); r+="Prueba de escritura: ✅ OK\n"; }
+    else { const id=await DB.create({tipo:"stock",min:{},movs:[]}); r+="Prueba de escritura (creación): ✅ OK\n"; }
+  }catch(e){ r+="Prueba de escritura: ❌ FALLÓ → "+(e&&e.message||e)+"\n"; }
+  alert(r+"\nSacale captura a este cartel y pasásela a Claude si algo está en ⚠️/❌.");
+}
 /* Fusiona todos los registros de stock duplicados en uno solo (los extra quedan anulados) */
 async function repararStock(){
   const docs=PEDIDOS.filter(p=>p.tipo==="stock");
@@ -1169,7 +1202,7 @@ async function crearPedido(d){
   const emp=empresaObj(d.empresa);
   const id=await DB.create({tipo:"pedido",empresa:emp.id,canal:d.canal||emp.canalDefault,ref:d.ref||"",
     cliente:d.cliente,tel:d.tel||"",dir:d.dir||"",ciudad:d.ciudad||"",provincia:d.provincia||"",cp:d.cp||"",
-    etiquetaPdf:d.etiquetaPdf||"",etiquetaPdfNombre:d.etiquetaPdfNombre||"",
+    etiquetaPdf:d.etiquetaPdf||"",etiquetaPdfNombre:d.etiquetaPdfNombre||"",nota:d.nota||"",
     items:d.items||"",origen:d.origen||r.origen,metodo:d.metodo||r.metodo,
     correo:d.correo||"",tracking:d.tracking||"",cadete:"",estado:"pendiente",creado:Date.now(),
     eventos:[{estado:"pendiente",ts:Date.now(),nota:"Pedido creado"}]});
@@ -1828,6 +1861,7 @@ function formNuevo(edit){
         <div class="field"><span class="label">Provincia</span><select id="f_prov">${provOpts}</select></div>
       </div>
       <div class="field"><span class="label">Items</span><textarea id="f_items" placeholder="Ej: 2x Magnesio · 1x Omega 3">${esc(p.items||'')}</textarea></div>
+      <div class="field"><span class="label">Nota para la etiqueta (sale en negrita)</span><input id="f_nota" value="${esc(p.nota||'')}" placeholder="Ej: DEJAR EN CABINA DE VIGILANCIA"></div>
       <div class="two">
         <div class="field"><span class="label">Origen del envío</span>
           <select id="f_origen">
@@ -1855,7 +1889,7 @@ async function guardarNuevo(){
   if(!cliente){ toast("Falta el nombre del cliente"); return; }
   const metodo=$("#f_metodo").value;
   const refN=($("#f_ref")?$("#f_ref").value:"").trim().replace(/\D/g,"");
-  await crearPedido({ empresa:$("#f_emp").value, canal:$("#f_canal").value, cliente, ref:refN?("#"+refN):"", tel:$("#f_tel").value.trim(),
+  await crearPedido({ empresa:$("#f_emp").value, canal:$("#f_canal").value, cliente, ref:refN?("#"+refN):"", nota:($("#f_nota")?$("#f_nota").value:"").trim(), tel:$("#f_tel").value.trim(),
     dir:$("#f_dir").value.trim(), ciudad:$("#f_ciu").value.trim(), provincia:$("#f_prov").value,
     items:$("#f_items").value.trim(), origen:$("#f_origen").value, metodo,
     correo: metodo==="correo"?$("#f_correo").value:"", tracking: metodo==="correo"?$("#f_track").value.trim():"" });
@@ -1866,7 +1900,7 @@ async function guardarEdicion(id){
   if(!cliente){ toast("Falta el nombre del cliente"); return; }
   const metodo=$("#f_metodo").value;
   const refV=($("#f_ref")?$("#f_ref").value:"").trim().replace(/\D/g,"");
-  await DB.update(id,{ cliente, ref:refV?("#"+refV):"", tel:$("#f_tel").value.trim(), dir:$("#f_dir").value.trim(),
+  await DB.update(id,{ cliente, ref:refV?("#"+refV):"", nota:($("#f_nota")?$("#f_nota").value:"").trim(), tel:$("#f_tel").value.trim(), dir:$("#f_dir").value.trim(),
     ciudad:$("#f_ciu").value.trim(), provincia:$("#f_prov").value, items:$("#f_items").value.trim(),
     origen:$("#f_origen").value, metodo, correo: metodo==="correo"?$("#f_correo").value:"",
     tracking: metodo==="correo"?$("#f_track").value.trim():"" });
@@ -2014,6 +2048,7 @@ function vistaStock(){
   const grid="display:grid;grid-template-columns:1fr 56px 56px 44px 60px;gap:8px;align-items:center;padding:9px 0;border-top:.5px solid var(--border)";
   app().innerHTML=`
     ${segOp('stock')}
+    <div class="muted" style="font-size:11.5px;margin-bottom:8px">Versión ${APP_VERSION} · Registro de stock: ${(stockRecord()&&stockRecord().id)?esc(String(stockRecord().id).slice(-6)):'—'} · ${((stockRecord()||{}).movs||[]).length} movimientos</div>
     ${stockDuplicados()>1?`<div class="card" style="margin-bottom:14px;border:1.5px solid var(--red);background:#fdf1f1">
       <div style="font-weight:700;color:var(--red)">⚠️ Hay ${stockDuplicados()} registros de stock duplicados</div>
       <div class="hint" style="margin:6px 0 10px">Por eso puede que veas el stock en 0. Tocá el botón y los junto en uno solo (no se pierde nada).</div>
@@ -2068,6 +2103,8 @@ function vistaStock(){
       <button class="btn ghost" onclick="imprimirStock()">${icon('printer')} Imprimir A4</button>
       <button class="btn ghost" onclick="imprimirReposicion()">${icon('printer')} Planilla de reposición</button>
       <button class="btn ghost" onclick="pantallaSalidas()">${icon('box')} Lo que salió</button>
+      <button class="btn ghost" onclick="diagnosticoStock()">🩺 Diagnóstico</button>
+      ${ROL==='admin'?`<button class="btn ghost" style="color:var(--red)" onclick="vaciarStock()">🧹 Vaciar stock</button>`:''}
     </div>
     <div class="label">Lo que queda · stock compartido <span class="muted" style="font-weight:400">(cuando baja de 5, pedís 5 · lo pone ${esc(empresaObj(STOCK_DUENO).nombre)})</span></div>
     <input id="stockQ" autocomplete="off" placeholder="🔍 Buscar producto…" value="${esc(STOCK_Q||'')}" oninput="STOCK_Q=this.value;clearTimeout(window.__sq);window.__sq=setTimeout(vistaStock,250)" style="${inp};margin-bottom:10px">
@@ -2257,6 +2294,7 @@ function previsualizarCarga(){
     ${okN?`<button class="btn block" style="margin-top:12px" onclick="confirmarCarga()">${icon('check')} Cargar ${okN} al stock</button>`:''}
     <div class="hint" style="margin-top:8px">Los ⚠ no los cargo. Si querés, corregí el nombre y volvé a "Ver".</div>`;
 }
+const APP_VERSION="v12jul-B";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
@@ -2264,8 +2302,15 @@ async function confirmarCarga(){
     const st=stockState(); const ts=Date.now();
     items.forEach(it=>{ st.movs.push({ts,prod:it.prod,tipo:"entrada",cant:Math.abs(+it.cant||0),motivo:"Carga de stock"}); });
     await persistStock(st);   // UNA sola escritura con todo
-    toast(items.length+" productos cargados al stock ✅");
-  }catch(e){ alert("⚠️ No pude guardar el stock en la base: "+(e&&e.message||e)+"\n\nSacale captura a este mensaje y pasásela a Claude."); return; }
+    // VERIFICACIÓN REAL: releer del servidor y confirmar que quedaron
+    const main=stockRecord();
+    if(main && DB.get){
+      const srv=await DB.get(main.id);
+      const n=(srv && srv.movs && srv.movs.length)||0;
+      if(n>=items.length){ alert("✅ CARGA CONFIRMADA POR EL SERVIDOR\n\nEl registro de stock tiene "+n+" movimientos guardados en Firebase.\nVersión de la app: "+APP_VERSION); }
+      else { alert("⚠️ El servidor devolvió "+n+" movimientos (esperaba al menos "+items.length+").\nVersión: "+APP_VERSION+"\nSacá captura y pasásela a Claude."); return; }
+    } else { toast(items.length+" productos cargados ✅"); }
+  }catch(e){ alert("⚠️ No pude guardar el stock en la base: "+(e&&e.message||e)+"\nVersión: "+APP_VERSION+"\n\nSacale captura a este mensaje."); return; }
   window.__carga=null; OPVIEW="stock"; setTimeout(()=>vistaOperador(),600);
 }
 function ordenCompra(){ imprimirReposicion(); }
@@ -2611,7 +2656,7 @@ const ETQ_CSS=`
 .etq-met{margin:2.5mm 0 1.2mm;font-size:3mm;font-weight:800;letter-spacing:.08em;border:.5mm solid #000;
   display:inline-block;padding:1mm 2.5mm;border-radius:1.5mm}
 .etq-meta{font-size:2.9mm;font-weight:600;margin-bottom:2mm}
-.etq-nota{font-size:3.2mm;font-weight:600;margin:1mm 0;padding:1mm 2mm;border-left:.7mm solid #000}
+.etq-nota{font-size:4mm;font-weight:900;margin:1.5mm 0;padding:1.6mm 2mm;border:.8mm solid #000;text-transform:uppercase;letter-spacing:.2mm}
 .etq-lbl{font-size:2.6mm;font-weight:800;letter-spacing:.1em}
 .etq-name{font-size:5.4mm;font-weight:800;line-height:1.1;margin-top:.5mm}
 .etq-addr{font-size:4mm;font-weight:600;line-height:1.3;margin:1mm 0 .5mm}
@@ -2643,10 +2688,18 @@ function etiquetaBody(p){
   const fecha=p.despacho||new Date().toLocaleDateString("es-AR");
   const qr=LABEL_QR?("https://api.qrserver.com/v1/create-qr-code/?size=160x160&margin=0&data="+encodeURIComponent(linkCliente(p.id))):"";
   const an=anilloDe(p);
+  const esSC=p.empresa==="sc";
+  const logoSC=`<div style="text-align:left;margin-bottom:.6mm">
+      <svg width="34mm" height="11mm" viewBox="0 0 340 110" xmlns="http://www.w3.org/2000/svg">
+        <line x1="0" y1="40" x2="95" y2="40" stroke="#000" stroke-width="3"/>
+        <text x="170" y="52" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="52" letter-spacing="4" fill="#000">SC</text>
+        <line x1="245" y1="40" x2="340" y2="40" stroke="#000" stroke-width="3"/>
+        <text x="170" y="92" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="21" letter-spacing="9" fill="#000">CANDLE COMPANY</text>
+      </svg></div>`;
   return `<div class="etq">
     <div class="etq-h">
       <div>
-        <div class="etq-brand"><svg width="4.4mm" height="4.4mm" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-.6mm;margin-right:1.2mm"><path d="M3 8l9-5 9 5v8l-9 5-9-5V8z"/><path d="M3 8l9 5 9-5M12 13v8"/></svg>${esc(marca)}</div>
+        ${esSC?logoSC:`<div class="etq-brand"><svg width="4.4mm" height="4.4mm" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-.6mm;margin-right:1.2mm"><path d="M3 8l9-5 9 5v8l-9 5-9-5V8z"/><path d="M3 8l9 5 9-5M12 13v8"/></svg>${esc(marca)}</div>`}
         <div class="etq-sub">${remitente?("Envía: "+esc(remitente)+" · "):""}${origen}</div>
       </div>
       <div style="text-align:right;display:flex;flex-direction:column;align-items:flex-end">
@@ -2655,12 +2708,13 @@ function etiquetaBody(p){
       </div>
     </div>
     <div class="etq-met">${esc(metodo)}</div>
+    ${esSC?`<div style="border:1.2mm solid #000;padding:1.6mm 2mm;text-align:center;font-weight:900;font-size:6mm;letter-spacing:1.5mm;margin:1.5mm 0">⚠ FRÁGIL ⚠<div style="font-size:2.8mm;letter-spacing:.4mm;font-weight:700;margin-top:.5mm">MANIPULAR CON CUIDADO · NO GOLPEAR · ESTE LADO ARRIBA</div></div>`:''}
     <div class="etq-meta">Despacho ${esc(fecha)}${p.cadete?(" · Cadete: "+esc(p.cadete)):""}</div>
     <div class="etq-lbl">DESTINATARIO</div>
     <div class="etq-name">${esc(p.cliente)}</div>
     <div class="etq-addr">${esc(p.dir)}<br>${esc(p.ciudad)}, ${esc(p.provincia)} · <b>${esc(an.label)}</b></div>
     <div class="etq-tel">Tel: ${esc(p.tel||"-")}</div>
-    ${p.nota?`<div class="etq-nota"><b>Nota:</b> ${esc(p.nota)}</div>`:""}
+    ${p.nota?`<div class="etq-nota">⚠ ${esc(p.nota)}</div>`:""}
     ${esCABA?`<div class="etq-items"><span class="etq-lbl">CONTENIDO</span>${parseItems(p.items).map(it=>`<div class="etq-it"><span class="etq-chk"></span><b>${it.cant}×</b>${esc(it.nombre)}</div>`).join("")||esc(p.items||"-")}</div>`:""}
     ${p.metodo==="correo"?`<div class="etq-track"><span class="t-c">${esc(p.correo||"CORREO")}</span><span class="t-n">${esc(p.tracking||"s/ número")}</span></div>`:""}
     <div class="etq-spacer"></div>
