@@ -461,7 +461,12 @@ function anilloDe(p){
 }
 function anilloColor(n){ return n===0?"#8a44ad":n===1?"#1d9e75":n===2?"#0a84ff":n===3?"#e6a100":n===9?"#e5484d":"#8a8a8e"; }
 /* Kits: "Nmn + Resveratrol Pack X2" → escanear 2 productos (Nmn y Resveratrol) */
-function esKit(nombre){ return /\bpack\b|\bcombo\b|\bkit\b|\bx\d\b|\+/i.test(nombre||""); }
+/* KITS ESPECIALES: composición manual (cuando el nombre no alcanza). Agregá acá los kits nuevos. */
+const KITS_DEF=[
+  {match:/kit\s+integral/i, comps:[{n:"Multi Magnesio 500 mg - 5 Magnesio en 1 (60 capsulas)", c:3}]},   // Kit Integral = 3 Multi Magnesio
+];
+function kitEspecial(nombre){ return KITS_DEF.find(k=>k.match.test(nombre||"")); }
+function esKit(nombre){ return !!kitEspecial(nombre) || /\bpack\b|\bcombo\b|\bkit\b|\bx\d\b|\+/i.test(nombre||""); }
 function componentesKit(nombre){
   let base=(nombre||"").replace(/\(.*?\)/g," ").replace(/pack.*$/i," ").replace(/\bx\d+\b/ig," ").trim();
   return base.split("+").map(s=>s.trim()).filter(s=>s.length>2);
@@ -2429,6 +2434,9 @@ let PREP_ID=null, PREP_SCAN={};
 function itemsPedido(p){
   const out=[];
   parseItems(p.items||"").forEach(it=>{
+    const ke=kitEspecial(it.nombre);
+    if(ke){ ke.comps.forEach(cmp=>{ const prod=mejorProducto(cmp.n);
+        out.push({nombre:cmp.n+"  (kit)", cant:(it.cant||1)*cmp.c, prodNombre:prod?prod.nombre:cmp.n, kit:true}); }); return; }
     if(esKit(it.nombre)){
       const comps=componentesKit(it.nombre);
       if(comps.length>=2){ comps.forEach(c=>{ const prod=mejorProducto(c);
