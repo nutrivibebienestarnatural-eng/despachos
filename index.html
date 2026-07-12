@@ -561,6 +561,7 @@ const EST = {
   entregado: {label:"Entregado",            desc:"Llegó al cliente",                           color:"var(--green)"},
   confirmado:{label:"Confirmado por cliente",desc:"El cliente confirmó la recepción",          color:"var(--green)"},
   anulado:   {label:"Anulado",              desc:"Pedido anulado, no se despacha",            color:"var(--red)"},
+  finalizado:{label:"Finalizado",           desc:"Entregado y cobrado. Cerrado.",              color:"#5a5a5e"},
 };
 const FLUJO_CADETE = ["pendiente","preparado","asignado","en_reparto","entregado","confirmado"];
 const FLUJO_CORREO = ["pendiente","preparado","despachado","en_camino","entregado","confirmado"];
@@ -906,7 +907,7 @@ function fechaEntrega(p){
   return ev?ev.ts:(p.creado||Date.now());
 }
 function entregadosEn(desde,hasta){
-  return soloPedidos().filter(p=>["entregado","confirmado"].includes(p.estado))
+  return soloPedidos().filter(p=>["entregado","confirmado","finalizado"].includes(p.estado))
     .map(p=>({p, fe:fechaEntrega(p)}))
     .filter(x=>enRango(x.fe,desde,hasta))
     .sort((a,b)=>b.fe-a.fe);
@@ -917,10 +918,19 @@ function catPedido(p){ if(p.metodo==="correo") return "correo"; const an=anilloD
   if(an.n===0) return "caba"; if(an.n>=1&&an.n<=3) return String(an.n); return "correo"; }
 const COB_ET={caba:"CABA","1":"Zona 1","2":"Zona 2","3":"Zona 3",correo:"Correo",revisar:"A revisar"};
 let COB_VERPAGADOS=false;
+function facturable(p){
+  if(p.estado==="finalizado"||p.estado==="anulado") return false;
+  if(p.metodo==="correo") return ["despachado","en_camino","entregado","confirmado"].includes(p.estado);  // correo: se factura al despachar
+  return ["entregado","confirmado"].includes(p.estado);                                                    // cadete: al entregar
+}
+function fechaFacturable(p){
+  const ev=(p.eventos||[]).filter(e=>["entregado","confirmado","despachado"].includes(e.estado)).pop();
+  return ev?ev.ts:(p.creado||Date.now());
+}
 function cobroReparto(desde,hasta){
-  const proc=soloPedidos().filter(p=>["entregado","confirmado"].includes(p.estado)
+  const proc=soloPedidos().filter(p=>facturable(p)
     && (COB_VERPAGADOS ? p.pagado : !p.pagado)
-    && enRango(fechaEntrega(p),desde,hasta));
+    && enRango(fechaFacturable(p),desde,hasta));
   const byEmp={};
   proc.forEach(p=>{ const e=p.empresa; if(!byEmp[e]) byEmp[e]={empresa:e,pedidos:[],total:0,costo:0};
     const c=catPedido(p), precio=precioCat(c), costo=(zonaCosto()[c]||0);
@@ -929,6 +939,17 @@ function cobroReparto(desde,hasta){
   const arr=Object.values(byEmp);
   arr.forEach(f=>{ f.ganancia=f.total-f.costo; f.pedidos.sort((a,b)=>a.zona.localeCompare(b.zona)||a.ref.localeCompare(b.ref)); });
   return arr;
+}
+async function finalizarPedido(id){
+  await DB.update(id,{estado:"finalizado",eventos:[...((PEDIDOS.find(x=>x.id===id)||{}).eventos||[]),{estado:"finalizado",ts:Date.now(),nota:"Cerrado"}]});
+  toast("Pedido finalizado ✔"); pantallaCobro();
+}
+async function finalizarPagados(){
+  const pagos=soloPedidos().filter(p=>facturable(p) && p.pagado);
+  if(!pagos.length){ toast("No hay pagados para finalizar"); return; }
+  if(!confirm("¿Finalizar "+pagos.length+" pedidos pagados?\n\nQuedan cerrados y archivados (los ves con el filtro Finalizados).")) return;
+  for(const p of pagos){ await DB.update(p.id,{estado:"finalizado",eventos:[...(p.eventos||[]),{estado:"finalizado",ts:Date.now(),nota:"Cerrado"}]}); }
+  toast(pagos.length+" pedidos finalizados ✔"); pantallaCobro();
 }
 async function marcarPagado(id){ await DB.update(id,{pagado:true,pagadoTs:Date.now()}); toast("Marcado como pagado ✅"); pantallaCobro(); }
 /* Corrige el método de los pedidos YA guardados con la regla actual (CABA/BA -> cadete; retiro/otra prov -> correo) */
@@ -959,8 +980,14 @@ function pantallaCobro(){
       <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">
         ${(COB_DESDE||COB_HASTA)?`<button class="btn sm ghost" onclick="COB_DESDE='';COB_HASTA='';pantallaCobro()">Ver todo</button>`:''}
         <button class="btn sm ${COB_VERPAGADOS?'':'ghost'}" onclick="COB_VERPAGADOS=!COB_VERPAGADOS;pantallaCobro()">${COB_VERPAGADOS?'← Ver pendientes':'Ver pagados'}</button>
+        ${COB_VERPAGADOS?`<button class="btn sm green" onclick="finalizarPagados()">✔ Finalizar todos</button>`:''}
       </div>
     </div>
+    ${(()=>{ const enCurso={}; soloPedidos().forEach(p=>{ if(["anulado","finalizado"].includes(p.estado)||facturable(p)||p.pagado) return;
+        if(!["pendiente","preparado","asignado","en_reparto"].includes(p.estado)) return;
+        enCurso[p.empresa]=(enCurso[p.empresa]||0)+1; });
+      const t=Object.entries(enCurso).map(([e,n])=>esc(empresaObj(e).nombre)+": "+n).join(" · ");
+      return t?`<div class="hint" style="margin-bottom:10px">⏳ Todavía en curso (entran a facturar al despachar/entregar): ${t}</div>`:''; })()}
     ${filas.length?filas.map(f=>`
       <div class="card" style="margin-bottom:14px">
         <div class="row" style="justify-content:space-between;align-items:baseline;margin-bottom:2px">
@@ -971,7 +998,7 @@ function pantallaCobro(){
         ${f.pedidos.map(pe=>`<div class="row" style="justify-content:space-between;align-items:center;gap:8px;padding:9px 0;border-top:.5px solid var(--border)">
           <span style="min-width:0"><b>${esc(pe.ref)}</b> · ${esc(pe.cliente)}<br><span class="muted" style="font-size:12.5px">${esc(pe.zona)} · ${fmtAr(pe.precio)}</span></span>
           ${pe.pagado
-            ? `<button class="btn sm ghost" style="flex:0 0 auto;color:var(--green)" onclick="marcarImpago('${pe.id}')">✓ Pagado</button>`
+            ? `<span class="row" style="gap:6px;flex:0 0 auto"><button class="btn sm ghost" style="color:var(--green)" onclick="marcarImpago('${pe.id}')">✓ Pagado</button><button class="btn sm ghost" onclick="finalizarPedido('${pe.id}')">✔ Finalizar</button></span>`
             : `<button class="btn sm ghost" style="flex:0 0 auto" onclick="marcarPagado('${pe.id}')">Marcar pagado</button>`}
         </div>`).join("")}
         <div class="row" style="justify-content:flex-end;gap:8px;margin-top:12px">
@@ -2335,7 +2362,7 @@ function previsualizarCarga(){
     ${okN?`<button class="btn block" style="margin-top:12px" onclick="confirmarCarga()">${icon('check')} Cargar ${okN} al stock</button>`:''}
     <div class="hint" style="margin-top:8px">Los ⚠ no los cargo. Si querés, corregí el nombre y volvé a "Ver".</div>`;
 }
-const APP_VERSION="v12jul-D";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v13jul-FINAL";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
