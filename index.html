@@ -603,6 +603,7 @@ function initDB(){
         a.sort((x,y)=>(y.creado||0)-(x.creado||0)); cb(a); }); },   // sin orderBy: los docs sin fecha (stock) también llegan
       async create(o){ if(o.creado==null) o.creado=Date.now(); return (await col.add(o)).id; },
       async update(id,patch){ await col.doc(id).update(patch); },
+      async delete(id){ await col.doc(id).delete(); },
       async get(id){ const d=await col.doc(id).get(); return d.exists?{id:d.id,...d.data()}:null; } };
   } else {
     const KEY="despacho_v6";
@@ -616,6 +617,7 @@ function initDB(){
         a.push({id,...o}); write(a); emit(); return id; },
       async update(id,patch){ const a=read(); const i=a.findIndex(p=>p.id===id);
         if(i>=0){ a[i]={...a[i],...patch}; write(a); emit(); } },
+      async delete(id){ const a=read(); const i=a.findIndex(p=>p.id===id); if(i>=0){ a.splice(i,1); write(a); emit(); } },
       async get(id){ return read().find(p=>p.id===id)||null; },
       reset(blank){ localStorage.removeItem(KEY); if(blank){localStorage.setItem("despacho_blank","1");} else {localStorage.removeItem("despacho_blank"); sembrarDemo(write,read);} emit(); } };
     if(read().length===0 && !localStorage.getItem("despacho_blank")) sembrarDemo(write,read);
@@ -735,6 +737,17 @@ async function diagnosticoStock(){
     if(st){ await DB.update(st.id,{_ping:Date.now()}); r+="Prueba de escritura: ✅ OK\n"; }
     else { const id=await DB.create({tipo:"stock",min:{},movs:[]}); r+="Prueba de escritura (creación): ✅ OK\n"; }
   }catch(e){ r+="Prueba de escritura: ❌ FALLÓ → "+(e&&e.message||e)+"\n"; }
+  try{
+    const pid=await DB.create({tipo:"pedido",empresa:"labs",canal:"tiendanube",cliente:"_PRUEBA_DIAGNOSTICO",estado:"anulado",creado:Date.now(),ref:"",dir:"",ciudad:"",provincia:"",items:"",metodo:"correo"});
+    r+="Prueba CREAR PEDIDO: ✅ OK\n";
+    try{ await DB.delete(pid); r+="Prueba ELIMINAR: ✅ OK\n"; }catch(e2){ r+="Prueba ELIMINAR: ❌ → "+(e2&&e2.message||e2)+"\n"; }
+  }catch(e){ r+="Prueba CREAR PEDIDO: ❌ FALLÓ → "+(e&&e.message||e)+"\n"; }
+  try{
+    if(typeof firebase!=="undefined" && firebase.firestore){
+      const g=await firebase.firestore().collection("usuarios").doc("gestor@fullminent.org").get();
+      r+="Usuario gestor: "+(g.exists?("rol "+(g.data().rol||"—")+" ✅"):"⚠️ NO EXISTE en usuarios (por eso no ve nada)")+"\n";
+    }
+  }catch(e){ r+="Usuario gestor: (no pude verificar: "+(e&&e.message||e)+")\n"; }
   alert(r+"\nSacale captura a este cartel y pasásela a Claude si algo está en ⚠️/❌.");
 }
 /* Fusiona todos los registros de stock duplicados en uno solo (los extra quedan anulados) */
@@ -1060,7 +1073,7 @@ function imprimirEntregas(){
 }
 /* Comprobante: lo que el gestor preparó y le entrega al cadete (con firma) */
 function imprimirComprobante(){
-  const arr=soloPedidos().filter(p=>p.cadete && ["asignado","en_reparto","entregado","confirmado"].includes(p.estado));
+  const arr=soloPedidos().filter(p=>p.cadete && ["asignado","en_reparto"].includes(p.estado));   // solo pendientes de reparto
   if(!arr.length){ toast("No hay pedidos asignados a un cadete todavía"); return; }
   const byCad={}; arr.forEach(p=>{ (byCad[p.cadete]=byCad[p.cadete]||[]).push(p); });
   const hoy=new Date().toLocaleDateString("es-AR");
@@ -1538,6 +1551,7 @@ function cardOperador(p){
   }
   if(p.estado==="anulado") acts+=`<button class="btn sm ghost" onclick="reactivarPedido('${p.id}')">Reactivar</button>`;
   else if(p.estado!=="confirmado") acts+=`<button class="btn sm ghost" style="color:var(--red)" onclick="anularPedido('${p.id}')">Anular</button>`;
+  if(ROL==='admin') acts+=`<button class="btn sm ghost" style="color:var(--red)" onclick="eliminarPedido('${p.id}')">🗑️ Eliminar</button>`;
   const ruta=(p.origen==="riotercero"?"Río Tercero":"Bs As")+" · "+(p.metodo==="correo"?("Correo"+(p.correo?(" "+esc(p.correo)):"")):"Cadete");
   return `<div class="order">${head}
     <div class="ord-body">
@@ -1763,8 +1777,11 @@ function mostrarPreviewImport(){
 async function confirmarImport(){
   const sel=IMP_FILAS.filter((f,i)=>IMP_SEL[i]);
   if(!sel.length){ toast("Marcá al menos un pedido"); return; }
-  for(const f of sel){ f.canal=f.canal||IMP_CANAL; await crearPedido(f); }
-  toast(sel.length+" pedidos importados");
+  let creados=0;
+  try{
+    for(const f of sel){ f.canal=f.canal||IMP_CANAL; await crearPedido(f); creados++; }
+  }catch(e){ alert("⚠️ IMPORTÉ "+creados+" DE "+sel.length+" Y FALLÓ\n\nError: "+(e&&e.message||e)+"\nVersión: "+APP_VERSION+"\n\nSacale captura y pasásela a Claude."); }
+  if(creados===sel.length) alert("✅ "+creados+" PEDIDOS IMPORTADOS Y GUARDADOS\nVersión: "+APP_VERSION);
   IMP_FILAS=[]; IMP_SEL={}; OPVIEW="pedidos"; vistaOperador();
 }
 /* ---- Importar PDF de preparación de Tienda Nube (separa columnas por posición) ---- */
@@ -1890,11 +1907,14 @@ async function guardarNuevo(){
   if(!cliente){ toast("Falta el nombre del cliente"); return; }
   const metodo=$("#f_metodo").value;
   const refN=($("#f_ref")?$("#f_ref").value:"").trim().replace(/\D/g,"");
-  await crearPedido({ empresa:$("#f_emp").value, canal:$("#f_canal").value, cliente, ref:refN?("#"+refN):"", nota:($("#f_nota")?$("#f_nota").value:"").trim(), tel:$("#f_tel").value.trim(),
-    dir:$("#f_dir").value.trim(), ciudad:$("#f_ciu").value.trim(), provincia:$("#f_prov").value,
-    items:$("#f_items").value.trim(), origen:$("#f_origen").value, metodo,
-    correo: metodo==="correo"?$("#f_correo").value:"", tracking: metodo==="correo"?$("#f_track").value.trim():"" });
-  toast("Pedido creado"); vistaOperador();
+  try{
+    await crearPedido({ empresa:$("#f_emp").value, canal:$("#f_canal").value, cliente, ref:refN?("#"+refN):"", nota:($("#f_nota")?$("#f_nota").value:"").trim(), tel:$("#f_tel").value.trim(),
+      dir:$("#f_dir").value.trim(), ciudad:$("#f_ciu").value.trim(), provincia:$("#f_prov").value,
+      items:$("#f_items").value.trim(), origen:$("#f_origen").value, metodo,
+      correo: metodo==="correo"?$("#f_correo").value:"", tracking: metodo==="correo"?$("#f_track").value.trim():"" });
+    toast("Pedido creado ✅");
+  }catch(e){ alert("⚠️ NO SE PUDO CREAR EL PEDIDO\n\nError: "+(e&&e.message||e)+"\nVersión: "+APP_VERSION+"\n\nSacale captura y pasásela a Claude."); return; }
+  vistaOperador();
 }
 async function guardarEdicion(id){
   const cliente=$("#f_cli").value.trim();
@@ -1913,6 +1933,18 @@ async function devolverStockPedido(id){
   const ref=p.ref||p.id; const st=stockState();
   st.movs=(st.movs||[]).filter(m=>!(m.tipo==="salida" && m.ref===ref));
   await persistStock(st);
+}
+/* Eliminar DEFINITIVO (solo admin): borra el pedido de la base */
+async function eliminarPedido(id){
+  const p=PEDIDOS.find(x=>x.id===id); if(!p) return;
+  if(!confirm("¿ELIMINAR este pedido para siempre?\n\n"+(p.cliente||"")+" · "+numOrden(p)+"\n\nNo se puede recuperar. (Si solo querés sacarlo de la lista, usá Anular)")) return;
+  if(!confirm("¿Seguro? Se borra definitivamente.")) return;
+  try{
+    if(p.stockBajado) await devolverStockPedido(id);   // devuelve el stock si estaba descontado
+    await DB.delete(id);
+    toast("Pedido eliminado 🗑️");
+  }catch(e){ alert("⚠️ No pude eliminar: "+(e&&e.message||e)); }
+  vistaOperador();
 }
 async function anularPedido(id){
   const p=PEDIDOS.find(x=>x.id===id); if(!p) return;
@@ -1960,8 +1992,7 @@ function cardReabas(p){
 /* ---------- OPERADOR · Hoja de ruta (cadete CABA) ---------- */
 function vistaRuta(){
   const stops=soloPedidos().filter(p=>p.metodo==="cadete"
-    && (p.provincia||"").toLowerCase().includes("caba")
-    && !["entregado","confirmado"].includes(p.estado));
+    && ["preparado","asignado","en_reparto"].includes(p.estado));   // solo lo activo: entregados/anulados afuera
   const ruta=rutaOptima(stops); RUTA_ACTUAL=ruta;
   const km=ruta.reduce((s,p)=>s+(p._km||0),0);
   const min=Math.round(ruta.length*5 + km/18*60);
@@ -2295,7 +2326,7 @@ function previsualizarCarga(){
     ${okN?`<button class="btn block" style="margin-top:12px" onclick="confirmarCarga()">${icon('check')} Cargar ${okN} al stock</button>`:''}
     <div class="hint" style="margin-top:8px">Los ⚠ no los cargo. Si querés, corregí el nombre y volvé a "Ver".</div>`;
 }
-const APP_VERSION="v12jul-C";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v12jul-D";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
@@ -2433,8 +2464,15 @@ function pantallaPreparar(id){
             <button class="btn sm ghost" onclick="tocarItem('${encodeURIComponent(it.prodNombre)}',1)">+</button>
           </span></div>`; }).join("")}
     </div>
-    <button class="btn block ${completo?'green':''}" style="margin-top:16px;${completo?'':'opacity:.55'}" onclick="${completo?`marcarListo('${id}')`:`toast('Faltan productos por escanear')`}">${completo?'✓ Pedido listo':'Faltan productos'}</button>
+    ${completo?`<div style="margin-top:14px;padding:12px;border-radius:12px;background:#d9f2e5;color:#0f6b40;font-weight:800;text-align:center;font-size:16px">🎉 ¡COMPLETO! Listo para imprimir la etiqueta</div>`:''}
+    <button class="btn block ${completo?'green':''}" style="margin-top:10px;${completo?'':'opacity:.55'}" onclick="${completo?`marcarListo('${id}')`:`avisarFaltantes('${id}')`}">${completo?'✓ Pedido listo':'Faltan productos'}</button>
     <button class="btn ghost block" style="margin-top:10px" onclick="imprimirEtiqueta('${id}')">${icon('printer')} Imprimir etiqueta</button>`;
+}
+function avisarFaltantes(id){
+  const p=PEDIDOS.find(x=>x.id===id); if(!p) return;
+  const faltan=itemsPedido(p).map(i=>({n:i.nombre.replace(/\s*\(kit\)$/,''), f:i.cant-Math.min(PREP_SCAN[i.prodNombre]||0,i.cant)})).filter(x=>x.f>0);
+  if(!faltan.length){ toast("Está completo ✅"); return; }
+  alert("FALTA ESCANEAR:\n\n"+faltan.map(x=>"• "+x.f+" x "+x.n).join("\n"));
 }
 function escanearParaPedido(){ abrirEscaner(scanPrep,{continuo:true,hint:"Escaneá los productos del pedido"}); }
 function scanPrep(code){
@@ -2446,7 +2484,14 @@ function scanPrep(code){
   const cur=PREP_SCAN[it.prodNombre]||0;
   if(cur>=it.cant){ toast(it.nombre.split(" ").slice(0,2).join(" ")+" ya completo"); return; }
   PREP_SCAN[it.prodNombre]=cur+1;
-  toast("✓ "+prod.nombre.split(" ").slice(0,2).join(" ")+" "+(cur+1)+"/"+it.cant);
+  const its=itemsPedido(p);
+  const completo=its.length && its.every(i=>(PREP_SCAN[i.prodNombre]||0)>=i.cant);
+  if(completo){
+    try{ navigator.vibrate && navigator.vibrate([180,80,180]); }catch(e){}
+    toast("🎉 ¡PEDIDO COMPLETO! Tocá el botón verde e imprimí la etiqueta");
+  } else {
+    toast("✓ "+prod.nombre.split(" ").slice(0,2).join(" ")+" "+(cur+1)+"/"+it.cant);
+  }
   pantallaPreparar(PREP_ID);
 }
 function tocarItem(enc,delta){ const n=decodeURIComponent(enc);
@@ -2465,7 +2510,7 @@ function vistaElegirCadete(){
     <div class="grid">${CADETES.map(c=>`<button class="role-card" onclick="CADETE_ACTIVO='${esc(c)}';render()"><h3>${esc(c)}</h3></button>`).join("")}</div>`;
 }
 function vistaCadete(){
-  const mios=soloPedidos().filter(p=>p.metodo==="cadete"&&p.cadete===CADETE_ACTIVO&&["asignado","en_reparto","entregado"].includes(p.estado));
+  const mios=soloPedidos().filter(p=>p.metodo==="cadete"&&p.cadete===CADETE_ACTIVO&&["asignado","en_reparto"].includes(p.estado));   // entregados: afuera de la ruta
   const hechos=soloPedidos().filter(p=>p.cadete===CADETE_ACTIVO&&["entregado","confirmado"].includes(p.estado)).length;
   app().innerHTML=`<div class="title">${esc(CADETE_ACTIVO)}</div>
     <div class="subtitle">${mios.length} para repartir · ${hechos} entregados</div>
