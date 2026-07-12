@@ -713,11 +713,12 @@ async function vaciarStock(){
     const docs=PEDIDOS.filter(p=>p.tipo==="stock");
     if(!docs.length){ toast("No hay stock que vaciar"); return; }
     const main=stockRecord();
-    for(const d of docs){
-      if(d.id===main.id) await DB.update(d.id,{movs:[]});
-      else await DB.update(d.id,{tipo:"stock_viejo",movs:[]});
+    toast("Limpiando "+docs.length+" registros… puede tardar 1 o 2 minutos, NO cierres la página");
+    const tareas=docs.map(d=> d.id===main.id ? {id:d.id,patch:{movs:[]}} : {id:d.id,patch:{tipo:"stock_viejo",movs:[]}});
+    for(let i=0;i<tareas.length;i+=15){                       // tandas de 15 en paralelo
+      await Promise.all(tareas.slice(i,i+15).map(t=>DB.update(t.id,t.patch)));
     }
-    toast("Stock en cero ✅ Ahora cargá el remito una sola vez.");
+    alert("✅ STOCK EN CERO\n\nSe limpiaron "+docs.length+" registros. Ahora cargá el remito UNA sola vez (Cargar stock).");
   }catch(e){ alert("⚠️ No pude vaciar el stock: "+(e&&e.message||e)); }
   setTimeout(()=>vistaOperador(),700);
 }
@@ -2294,7 +2295,7 @@ function previsualizarCarga(){
     ${okN?`<button class="btn block" style="margin-top:12px" onclick="confirmarCarga()">${icon('check')} Cargar ${okN} al stock</button>`:''}
     <div class="hint" style="margin-top:8px">Los ⚠ no los cargo. Si querés, corregí el nombre y volvé a "Ver".</div>`;
 }
-const APP_VERSION="v12jul-B";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v12jul-C";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
