@@ -463,7 +463,11 @@ function anilloColor(n){ return n===0?"#8a44ad":n===1?"#1d9e75":n===2?"#0a84ff":
 /* Kits: "Nmn + Resveratrol Pack X2" → escanear 2 productos (Nmn y Resveratrol) */
 /* KITS ESPECIALES: composición manual (cuando el nombre no alcanza). Agregá acá los kits nuevos. */
 const KITS_DEF=[
-  {match:/kit\s+integral/i, comps:[{n:"Multi Magnesio 500 mg - 5 Magnesio en 1 (60 capsulas)", c:3}]},   // Kit Integral = 3 Multi Magnesio
+  {match:/soporte\s+integral|kit\s+integral/i, comps:[{n:"Multi Magnesio 500 mg - 5 Magnesio en 1 (60 capsulas)", c:3}]},   // Soporte Integral | Multimagnesio x 3 = 3 Multi Magnesio
+  {match:/kit\s+hongo\s+candida|candida.*180/i, comps:[
+    {n:"Mega D - Hongo Candida (60 Capsulas) EX MEGA DETOX - MISMA FORMULA", c:1},
+    {n:"Bio F - Hongo Candida (60 Capsulas) EX BIO FLORATIN - MISMA FORMULA", c:1},
+    {n:"Clean F - Hongo Candida (60 Capsulas) EX FUNGI CLEAN - MISMA FORMULA", c:1}]},   // Kit Candida = Mega D + Bio F + Clean F
 ];
 function kitEspecial(nombre){ return KITS_DEF.find(k=>k.match.test(nombre||"")); }
 function esKit(nombre){ return !!kitEspecial(nombre) || /\bpack\b|\bcombo\b|\bkit\b|\bx\d\b|\+/i.test(nombre||""); }
