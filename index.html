@@ -512,10 +512,21 @@ function pickingConsolidado(){
       if(!map[k]) map[k]={nombre:it.nombre,cant:0}; map[k].cant+=it.cant; }));
   return Object.values(map).sort((a,b)=>b.cant-a.cant);
 }
-function prodPorBarcode(code){ const c=(code||"").trim(); if(!c) return null;
-  const norm=s=>String(s||"").replace(/^0+/,"");
+function prodPorBarcode(code){
+  let c=String(code||"").replace(/\D/g,"");      // solo dígitos (saca espacios, enters, prefijos de lector)
+  if(!c) return null;
+  const norm=s=>String(s||"").replace(/\D/g,"").replace(/^0+/,"");
+  const nc=norm(c);
   return PRODUCTOS.find(p=>p.barcode===c)
-      || PRODUCTOS.find(p=>p.barcode && norm(p.barcode)===norm(c)) || null; }
+      || PRODUCTOS.find(p=>p.barcode && norm(p.barcode)===nc)
+      || PRODUCTOS.find(p=>{ const nb=norm(p.barcode); return nb.length>=11 && nc.length>=11 && (nb.endsWith(nc)||nc.endsWith(nb)); })
+      || null; }
+/* Nombre "base" de un producto: sin presentación (caps/comprimidos), sin tildes — para emparejar variantes */
+function baseProducto(n){
+  return String(n||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"")
+    .replace(/\(.*?\)/g," ").replace(/\b(capsulas?|caps|comprimidos?|comp|x\s*\d+|\d+\s*(mg|mcg|gr|g|ml))\b/g," ")
+    .replace(/[^a-z0-9ñ ]/g," ").replace(/\s+/g," ").trim();
+}
 function matchNombre(a,b){ const T=s=>(s||"").toLowerCase().replace(/[^a-z0-9áéíóúñ ]/g," ").split(/\s+/).filter(w=>w.length>=3);
   const A=T(a),B=T(b); return A.some(w=>B.includes(w)); }
 /* Elige el producto del catálogo que MEJOR coincide con el nombre de un item (para descontar del correcto).
@@ -1623,6 +1634,8 @@ function cardOperador(p){
     if(p.estado==="en_camino") acts+=`<button class="btn sm green" onclick="avanzar('${p.id}','entregado')">→ Entregado</button>`;
   }
   acts+=`<button class="btn sm ghost" onclick="cambiarRuta('${p.id}')">Editar</button>`;
+  if(["pendiente","preparado","asignado","en_reparto","despachado","en_camino"].includes(p.estado))
+    acts+=`<button class="btn sm green" onclick="avanzar('${p.id}','entregado')">✅ Entregado</button>`;
   acts+=`<button class="btn sm ghost" onclick="imprimirEtiqueta('${p.id}')">${icon('printer')}Etiqueta</button>`;
   acts+=`<button class="btn sm ghost" onclick="copiarLink('${p.id}')">Link</button>`;
   acts+=`<button class="btn sm green" onclick="waCliente('${p.id}')">WhatsApp</button>`;
@@ -2562,8 +2575,11 @@ function escanearParaPedido(){ abrirEscaner(scanPrep,{continuo:true,hint:"Escane
 function scanPrep(code){
   const p=PEDIDOS.find(x=>x.id===PREP_ID); if(!p) return;
   const prod=prodPorBarcode(code);
-  if(!prod){ toast("Código no reconocido"); return; }
-  const it=itemsPedido(p).find(i=>i.prodNombre===prod.nombre);
+  if(!prod){ toast("⚠ Código "+String(code||"").replace(/\D/g,"")+" no está en el catálogo"); return; }
+  let it=itemsPedido(p).find(i=>i.prodNombre===prod.nombre);
+  if(!it){ // el frasco escaneado puede ser la otra presentación del mismo producto (caps/comprimidos)
+    it=itemsPedido(p).find(i=>baseProducto(i.prodNombre)===baseProducto(prod.nombre));
+  }
   if(!it){ toast(prod.nombre.split(" ")[0]+" no es de este pedido"); return; }
   const cur=PREP_SCAN[it.prodNombre]||0;
   if(cur>=it.cant){ toast(it.nombre.split(" ").slice(0,2).join(" ")+" ya completo"); return; }
