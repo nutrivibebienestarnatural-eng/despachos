@@ -452,6 +452,9 @@ function precioCat(cat){ const c=zonaCosto();     // lo que le cobrás a la marc
   return 0; }
 function llegaCadete(p){ const an=anilloDe(p); return [0,1,2,3].includes(an.n); }   // CABA o Zona 1/2/3 (null/9 => correo)
 function anilloDe(p){
+  if(p && p.zonaFija!=null && p.zonaFija!==""){ const n=+p.zonaFija;
+    const lbl=n===0?"CABA":n===9?"BA sin cadete → correo":n===null?"Correo":"Zona "+n;
+    return {n, label:lbl, fija:true}; }
   const prov=(p.provincia||"").toLowerCase();
   const txt=((p.ciudad||"")+" "+(p.dir||"")).toLowerCase();
   if(/\bcaba\b|capital|c\.a\.b\.a|autónoma|autonoma/.test(prov)) return {n:0,label:"CABA"};
@@ -680,7 +683,7 @@ function sembrarDemo(write,read){
    ========================================================================= */
 let PEDIDOS=[], ROL=null, CADETE_ACTIVO=null, FILTRO="todos", OPVIEW="panel", EMPLEADO=false;
 let USER=null, USERROL=null, AUTH_READY=false, SUBSCRITO=false, PREVIEW=null;
-let STOCK_DESDE="", STOCK_HASTA="", STOCK_Q="";
+let STOCK_DESDE="", STOCK_HASTA="", STOCK_Q="", STOCK_TODOS=false;
 let ENT_DESDE="", ENT_HASTA="";
 let SIM=null, SIM_STEP=0, SIM_METODO="cadete", SIM_TIMER=null;   // simulación del ciclo
 let LISTA_OP=[];   // último listado mostrado al operador (para imprimir en lote)
@@ -925,7 +928,9 @@ function entregadosEn(desde,hasta){
 }
 /* Cobro de reparto: lo que Fullminet le cobra a cada empresa según la zona */
 let COB_DESDE="", COB_HASTA="";
-function catPedido(p){ if(p.metodo==="correo") return "correo"; const an=anilloDe(p);
+function catPedido(p){
+  if(p.zonaFija!=null && p.zonaFija!==""){ const n=+p.zonaFija; return n===0?"caba":(n>=1&&n<=3)?String(n):"correo"; }
+  if(p.metodo==="correo") return "correo"; const an=anilloDe(p);
   if(an.n===0) return "caba"; if(an.n>=1&&an.n<=3) return String(an.n); return "correo"; }
 const COB_ET={caba:"CABA","1":"Zona 1","2":"Zona 2","3":"Zona 3",correo:"Correo",revisar:"A revisar"};
 let COB_VERPAGADOS=false;
@@ -994,6 +999,22 @@ function descargarArchivo(nombre,contenido,mime){
   const url=URL.createObjectURL(new Blob([contenido],{type:mime||"text/csv;charset=utf-8"}));
   const a=document.createElement("a"); a.href=url; a.download=nombre; document.body.appendChild(a); a.click();
   setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(url); },400);
+}
+/* Exporta TODAS las órdenes del sistema a un CSV (para analizar o abrir en Excel) */
+function exportarTodo(){
+  const peds=soloPedidos();
+  if(!peds.length){ toast("No hay pedidos para exportar"); return; }
+  const est=e=>((EST[e]||{}).label||e||"");
+  const head=["Codigo","N Orden","Empresa","Cliente","Telefono","Provincia","Localidad","Direccion","Metodo","Zona","Estado","Pagado","Fecha","Items (desglosado)"];
+  const filas=peds.map(p=>{
+    const items=itemsPedido(p).map(i=>i.cant+"x "+(i.prodNombre||i.nombre)).join(" | ");
+    const fecha=new Date(p.creado||Date.now()).toLocaleDateString("es-AR");
+    return [codigoOrden(p),numOrden(p),empresaObj(p.empresa).nombre,p.cliente||"",p.tel||"",p.provincia||"",p.ciudad||"",p.dir||"",
+            p.metodo||"",anilloDe(p).label,est(p.estado),p.pagado?"SI":"",fecha,items].map(csvCampo).join(",");
+  });
+  const csv="\uFEFF"+[head.join(","),...filas].join("\r\n")+"\r\n";
+  descargarArchivo("ordenes-"+new Date().toISOString().slice(0,10)+".csv", csv);
+  toast(peds.length+" órdenes exportadas ✅");
 }
 async function exportarCSVMensajeria(){
   const peds=soloPedidos().filter(p=>p.metodo==="cadete" && ["preparado","asignado","en_reparto"].includes(p.estado));
@@ -1307,7 +1328,7 @@ async function crearPedido(d){
   const emp=empresaObj(d.empresa);
   const id=await DB.create({tipo:"pedido",empresa:emp.id,canal:d.canal||emp.canalDefault,ref:d.ref||"",
     cliente:d.cliente,tel:d.tel||"",dir:d.dir||"",ciudad:d.ciudad||"",provincia:d.provincia||"",cp:d.cp||"",
-    etiquetaPdf:d.etiquetaPdf||"",etiquetaPdfNombre:d.etiquetaPdfNombre||"",nota:d.nota||"",
+    etiquetaPdf:d.etiquetaPdf||"",etiquetaPdfNombre:d.etiquetaPdfNombre||"",nota:d.nota||"",zonaFija:(d.zonaFija!=null?d.zonaFija:""),
     items:d.items||"",origen:d.origen||r.origen,metodo:d.metodo||r.metodo,
     correo:d.correo||"",tracking:d.tracking||"",cadete:"",estado:"pendiente",creado:Date.now(),
     eventos:[{estado:"pendiente",ts:Date.now(),nota:"Pedido creado"}]});
@@ -1581,6 +1602,7 @@ function vistaOperador(){
       <button class="btn ghost" onclick="imprimirComprobante()">${icon('truck')} Comprobante cadete</button>
       <button class="btn ghost" onclick="recalcularRutas()">${icon('route')} Recalcular rutas</button>
       <button class="btn ghost" onclick="exportarCSVMensajeria()">⬇ CSV mensajería</button>
+      <button class="btn ghost" onclick="exportarTodo()">⬇ Exportar todo</button>
       <button class="btn ghost" onclick="enviarRepartoWA()">${icon('truck')} Enviar reparto a Flex</button>
       <button class="btn ghost" onclick="pantallaCobro()">${icon('box')} Facturar</button>
     </div>
@@ -1956,7 +1978,7 @@ function formNuevo(edit){
     <div class="card">
       ${edit?'':`<div class="two">
         <div class="field"><span class="label">Empresa</span>
-          <select id="f_emp">${EMPRESAS.map(e=>`<option value="${e.id}">${esc(e.nombre)}</option>`).join("")}</select></div>
+          <select id="f_emp">${EMPRESAS.map(e=>`<option value="${e.id}" ${p.empresa===e.id?'selected':''}>${esc(e.nombre)}</option>`).join("")}</select></div>
         <div class="field"><span class="label">Canal</span>
           <select id="f_canal">${CANALES.map(c=>`<option value="${c.id}">${esc(c.nombre)} · ${fmtAr(c.costo)}</option>`).join("")}</select></div>
       </div>`}
@@ -1991,6 +2013,15 @@ function formNuevo(edit){
           <select id="f_correo">${CORREOS.map(c=>`<option ${p.correo===c?'selected':''}>${c}</option>`).join("")}</select></div>
         <div class="field"><span class="label">Nº seguimiento</span><input id="f_track" value="${esc(p.tracking||'')}" placeholder="opcional"></div>
       </div>
+      <div class="field"><span class="label">Zona / importe ${(()=>{const an=anilloDe(p);return an.fija?'(fijada a mano)':'(automática: '+esc(an.label)+')';})()}</span>
+        <select id="f_zona">
+          <option value="" ${(p.zonaFija==null||p.zonaFija==="")?'selected':''}>Automática por localidad</option>
+          <option value="0" ${String(p.zonaFija)==="0"?'selected':''}>CABA — ${fmtAr(precioCat("caba"))}</option>
+          <option value="1" ${String(p.zonaFija)==="1"?'selected':''}>Zona 1 — ${fmtAr(precioCat("1"))}</option>
+          <option value="2" ${String(p.zonaFija)==="2"?'selected':''}>Zona 2 — ${fmtAr(precioCat("2"))}</option>
+          <option value="3" ${String(p.zonaFija)==="3"?'selected':''}>Zona 3 — ${fmtAr(precioCat("3"))}</option>
+          <option value="9" ${String(p.zonaFija)==="9"?'selected':''}>Correo / sucursal — ${fmtAr(precioCat("correo"))}</option>
+        </select></div>
       <button class="btn block" onclick='${edit?`guardarEdicion(${JSON.stringify(p.id)})`:"guardarNuevo()"}'>${edit?'Guardar cambios':'Crear pedido'}</button>
     </div>`;
 }
@@ -2002,7 +2033,7 @@ async function guardarNuevo(){
   const metodo=$("#f_metodo").value;
   const refN=($("#f_ref")?$("#f_ref").value:"").trim().replace(/\D/g,"");
   try{
-    await crearPedido({ empresa:$("#f_emp").value, canal:$("#f_canal").value, cliente, ref:refN?("#"+refN):"", nota:($("#f_nota")?$("#f_nota").value:"").trim(), tel:$("#f_tel").value.trim(),
+    await crearPedido({ empresa:$("#f_emp").value, canal:$("#f_canal").value, cliente, ref:refN?("#"+refN):"", nota:($("#f_nota")?$("#f_nota").value:"").trim(), zonaFija:($("#f_zona")?$("#f_zona").value:""), tel:$("#f_tel").value.trim(),
       dir:$("#f_dir").value.trim(), ciudad:$("#f_ciu").value.trim(), provincia:$("#f_prov").value,
       items:$("#f_items").value.trim(), origen:$("#f_origen").value, metodo,
       correo: metodo==="correo"?$("#f_correo").value:"", tracking: metodo==="correo"?$("#f_track").value.trim():"" });
@@ -2015,7 +2046,7 @@ async function guardarEdicion(id){
   if(!cliente){ toast("Falta el nombre del cliente"); return; }
   const metodo=$("#f_metodo").value;
   const refV=($("#f_ref")?$("#f_ref").value:"").trim().replace(/\D/g,"");
-  await DB.update(id,{ cliente, ref:refV?("#"+refV):"", nota:($("#f_nota")?$("#f_nota").value:"").trim(), tel:$("#f_tel").value.trim(), dir:$("#f_dir").value.trim(),
+  await DB.update(id,{ cliente, ref:refV?("#"+refV):"", nota:($("#f_nota")?$("#f_nota").value:"").trim(), zonaFija:($("#f_zona")?$("#f_zona").value:""), tel:$("#f_tel").value.trim(), dir:$("#f_dir").value.trim(),
     ciudad:$("#f_ciu").value.trim(), provincia:$("#f_prov").value, items:$("#f_items").value.trim(),
     origen:$("#f_origen").value, metodo, correo: metodo==="correo"?$("#f_correo").value:"",
     tracking: metodo==="correo"?$("#f_track").value.trim():"" });
@@ -2166,8 +2197,9 @@ function vistaStock(){
   const impE=imputacionEmp(st,STOCK_DESDE,STOCK_HASTA);
   const q=(STOCK_Q||"").toLowerCase().trim();
   const rows=PRODUCTOS.map((p,i)=>{ const stk=nivel(p.nombre,st), mn=minDe(p.nombre,st), d=demandaDe(p,pick);
-    return {p,i,stk,mn,d,rep:pedirDe(p.nombre,st)}; })
-    .filter(r=> !q || r.p.nombre.toLowerCase().includes(q) );   // muestra TODOS; el buscador filtra
+    const tieneMov=(st.movs||[]).some(m=>m.prod===p.nombre);
+    return {p,i,stk,mn,d,rep:pedirDe(p.nombre,st),tieneMov}; })
+    .filter(r=> (q ? r.p.nombre.toLowerCase().includes(q) : (STOCK_TODOS||r.tieneMov)) );   // por defecto solo los cargados; buscador o "ver todos" muestran el resto
   const reponer=rows.filter(r=>r.rep>0);
   const movs=(st.movs||[]).slice(-12).reverse();
   const inp="width:100%;padding:7px;border:1px solid var(--border);border-radius:9px;font:inherit;background:var(--bg)";
@@ -2181,7 +2213,10 @@ function vistaStock(){
       <button class="btn block" onclick="repararStock()">🔧 Reparar stock ahora</button>
     </div>`:''}
     <div class="title">Stock</div>
-    <div class="subtitle">${PRODUCTOS.length} productos · ${reponer.length} por reponer</div>
+    <div class="subtitle">${rows.length} ${(STOCK_TODOS||q)?'productos':'productos cargados'} · ${reponer.length} por reponer</div>
+    <div class="row" style="margin:-4px 0 12px">
+      <button class="btn sm ghost" onclick="STOCK_TODOS=!STOCK_TODOS;vistaStock()">${STOCK_TODOS?'Ver solo los cargados':'Ver todos los del catálogo'}</button>
+    </div>
     <div class="card" style="margin-bottom:16px">
       <span class="label">Registrar movimiento</span>
       <div class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-end">
@@ -2243,12 +2278,17 @@ function vistaStock(){
           <span style="font-weight:800;white-space:nowrap;color:${r.stk<=r.mn?'var(--red)':'var(--text)'}">Quedan ${r.stk}</span>
         </div>
         <div class="muted" style="font-size:13px;margin-top:4px">Entraron ${f.ent} · Salieron ${f.sal}${split?` <span style="opacity:.85">(${split})</span>`:""}${r.rep>0?` · <span style="color:var(--amber);font-weight:600">pedir ${r.rep}</span>`:""}</div>
-        <div class="row" style="align-items:center;gap:6px;margin-top:6px;justify-content:space-between;flex-wrap:wrap">
-          <span class="row" style="align-items:center;gap:6px">
-            <span class="muted" style="font-size:12px">Pedir cuando falta</span>
-            <input id="mn_${r.i}" type="number" inputmode="numeric" value="${r.mn}" style="${inp};width:64px;text-align:center;padding:5px">
+        <div class="row" style="align-items:center;gap:6px;margin-top:8px;justify-content:space-between;flex-wrap:wrap">
+          <span class="row" style="align-items:center;gap:8px">
+            <button class="btn sm ghost" style="width:40px;font-size:20px;font-weight:700;padding:4px 0" onclick="ajustarUno('${encodeURIComponent(r.p.nombre)}',-1)">−</button>
+            <b style="min-width:44px;text-align:center;font-size:18px">${r.stk}</b>
+            <button class="btn sm ghost" style="width:40px;font-size:20px;font-weight:700;padding:4px 0" onclick="ajustarUno('${encodeURIComponent(r.p.nombre)}',1)">+</button>
           </span>
-          <button class="btn sm ghost" onclick="ajustarStock('${encodeURIComponent(r.p.nombre)}')">Ajustar</button>
+          <span class="row" style="align-items:center;gap:6px">
+            <span class="muted" style="font-size:12px">Pedir si falta</span>
+            <input id="mn_${r.i}" type="number" inputmode="numeric" value="${r.mn}" style="${inp};width:56px;text-align:center;padding:5px">
+            <button class="btn sm ghost" onclick="ajustarStock('${encodeURIComponent(r.p.nombre)}')">Fijar</button>
+          </span>
         </div>
       </div>`; }).join("")||empty('box', q?('No encontré productos con "'+esc(STOCK_Q)+'".'):'Cargá stock con el botón de arriba para empezar.')}
     </div>
@@ -2295,6 +2335,13 @@ async function registrarMov(){
   toast((tipo==="salida"?"−":"+")+cant+" "+prod);
 }
 /* Corrige el stock de un producto a la cantidad real (arregla errores de carga) */
+async function ajustarUno(nombreEnc,delta){
+  const nombre=decodeURIComponent(nombreEnc);
+  const actual=nivel(nombre,stockState());
+  if(delta<0 && actual<=0){ toast("Ya está en 0"); return; }
+  await pushMov(nombre, delta>0?"entrada":"salida", 1, "Ajuste manual");
+  vistaStock();
+}
 async function ajustarStock(nombreEnc){
   const nombre=decodeURIComponent(nombreEnc);
   const actual=nivel(nombre,stockState());
