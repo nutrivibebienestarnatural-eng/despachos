@@ -1976,12 +1976,24 @@ function formNuevo(edit){
     <div class="title" style="margin-top:14px">${edit?'Editar pedido':'Nuevo pedido'}</div>
     <div class="subtitle">${edit?'Corregí los datos y guardá — la etiqueta sale con lo nuevo':'Cargá el pedido a mano'}</div>
     <div class="card">
-      ${edit?'':`<div class="two">
-        <div class="field"><span class="label">Empresa</span>
-          <select id="f_emp">${EMPRESAS.map(e=>`<option value="${e.id}" ${p.empresa===e.id?'selected':''}>${esc(e.nombre)}</option>`).join("")}</select></div>
-        <div class="field"><span class="label">Canal</span>
-          <select id="f_canal">${CANALES.map(c=>`<option value="${c.id}">${esc(c.nombre)} · ${fmtAr(c.costo)}</option>`).join("")}</select></div>
-      </div>`}
+      <div class="card" style="background:var(--surface-2);border:1px solid var(--accent);margin-bottom:14px">
+        <div style="font-weight:700;margin-bottom:8px">📦 Envío y facturación</div>
+        <div class="two">
+          <div class="field"><span class="label">Quién envía (remitente)</span>
+            <select id="f_emp">${EMPRESAS.map(e=>`<option value="${e.id}" ${p.empresa===e.id?'selected':''}>${esc(e.nombre)}</option>`).join("")}</select></div>
+          <div class="field"><span class="label">Zona / importe</span>
+            <select id="f_zona">
+              <option value="" ${(p.zonaFija==null||p.zonaFija==="")?'selected':''}>Automática (${esc(anilloDe(p).label)})</option>
+              <option value="0" ${String(p.zonaFija)==="0"?'selected':''}>CABA — ${fmtAr(precioCat("caba"))}</option>
+              <option value="1" ${String(p.zonaFija)==="1"?'selected':''}>Zona 1 — ${fmtAr(precioCat("1"))}</option>
+              <option value="2" ${String(p.zonaFija)==="2"?'selected':''}>Zona 2 — ${fmtAr(precioCat("2"))}</option>
+              <option value="3" ${String(p.zonaFija)==="3"?'selected':''}>Zona 3 — ${fmtAr(precioCat("3"))}</option>
+              <option value="9" ${String(p.zonaFija)==="9"?'selected':''}>Correo / sucursal — ${fmtAr(precioCat("correo"))}</option>
+            </select></div>
+        </div>
+        ${edit?'':`<div class="field" style="margin-top:8px"><span class="label">Canal</span>
+          <select id="f_canal">${CANALES.map(c=>`<option value="${c.id}">${esc(c.nombre)} · ${fmtAr(c.costo)}</option>`).join("")}</select></div>`}
+      </div>
       <div class="two">
         <div class="field"><span class="label">Cliente</span><input id="f_cli" value="${esc(p.cliente||'')}" placeholder="Nombre y apellido"></div>
         <div class="field"><span class="label">N° de orden (Tienda Nube)</span><input id="f_ref" inputmode="numeric" value="${esc((p.ref||'').replace('#',''))}" placeholder="Ej: 4554"></div>
@@ -2013,15 +2025,6 @@ function formNuevo(edit){
           <select id="f_correo">${CORREOS.map(c=>`<option ${p.correo===c?'selected':''}>${c}</option>`).join("")}</select></div>
         <div class="field"><span class="label">Nº seguimiento</span><input id="f_track" value="${esc(p.tracking||'')}" placeholder="opcional"></div>
       </div>
-      <div class="field"><span class="label">Zona / importe ${(()=>{const an=anilloDe(p);return an.fija?'(fijada a mano)':'(automática: '+esc(an.label)+')';})()}</span>
-        <select id="f_zona">
-          <option value="" ${(p.zonaFija==null||p.zonaFija==="")?'selected':''}>Automática por localidad</option>
-          <option value="0" ${String(p.zonaFija)==="0"?'selected':''}>CABA — ${fmtAr(precioCat("caba"))}</option>
-          <option value="1" ${String(p.zonaFija)==="1"?'selected':''}>Zona 1 — ${fmtAr(precioCat("1"))}</option>
-          <option value="2" ${String(p.zonaFija)==="2"?'selected':''}>Zona 2 — ${fmtAr(precioCat("2"))}</option>
-          <option value="3" ${String(p.zonaFija)==="3"?'selected':''}>Zona 3 — ${fmtAr(precioCat("3"))}</option>
-          <option value="9" ${String(p.zonaFija)==="9"?'selected':''}>Correo / sucursal — ${fmtAr(precioCat("correo"))}</option>
-        </select></div>
       <button class="btn block" onclick='${edit?`guardarEdicion(${JSON.stringify(p.id)})`:"guardarNuevo()"}'>${edit?'Guardar cambios':'Crear pedido'}</button>
     </div>`;
 }
@@ -2046,7 +2049,7 @@ async function guardarEdicion(id){
   if(!cliente){ toast("Falta el nombre del cliente"); return; }
   const metodo=$("#f_metodo").value;
   const refV=($("#f_ref")?$("#f_ref").value:"").trim().replace(/\D/g,"");
-  await DB.update(id,{ cliente, ref:refV?("#"+refV):"", nota:($("#f_nota")?$("#f_nota").value:"").trim(), zonaFija:($("#f_zona")?$("#f_zona").value:""), tel:$("#f_tel").value.trim(), dir:$("#f_dir").value.trim(),
+  await DB.update(id,{ cliente, empresa:($("#f_emp")?$("#f_emp").value:undefined), ref:refV?("#"+refV):"", nota:($("#f_nota")?$("#f_nota").value:"").trim(), zonaFija:($("#f_zona")?$("#f_zona").value:""), tel:$("#f_tel").value.trim(), dir:$("#f_dir").value.trim(),
     ciudad:$("#f_ciu").value.trim(), provincia:$("#f_prov").value, items:$("#f_items").value.trim(),
     origen:$("#f_origen").value, metodo, correo: metodo==="correo"?$("#f_correo").value:"",
     tracking: metodo==="correo"?$("#f_track").value.trim():"" });
