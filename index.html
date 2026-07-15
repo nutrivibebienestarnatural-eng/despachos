@@ -1775,22 +1775,32 @@ function pickCanal(b){ IMP_CANAL=b.dataset.c;
 /* Trae los pedidos directo de Tienda Nube vía la función /api/tiendanube */
 async function traerTiendaNube(){
   toast("Buscando pedidos en Tienda Nube…");
+  let data;
   try{
     const r=await fetch("/api/tiendanube?empresa="+encodeURIComponent(IMP_EMPRESA));
-    const data=await r.json().catch(()=>({}));
+    data=await r.json().catch(()=>({}));
     if(!r.ok){ toast(data.error||("Error "+r.status)); return; }
-    const existentes=new Set(soloPedidos().map(p=>p.ref).filter(Boolean));
-    IMP_FILAS=(data.pedidos||[]).filter(f=>!f.ref||!existentes.has(f.ref)).map(f=>{
+  }catch(e){ toast("No me pude conectar. ¿Ya configuraste la API? (ver instrucciones)"); return; }
+
+  const existentes=new Set(soloPedidos().map(p=>p.ref).filter(Boolean));
+  const crudos=(data.pedidos||[]).filter(f=>f&&(!f.ref||!existentes.has(f.ref)));
+  const filas=[]; let fallidos=0;
+  for(const f of crudos){                                   // uno por uno: si uno viene roto, se saltea y sigue
+    try{
       f.empresa=IMP_EMPRESA; f.canal=IMP_CANAL||"tiendanube";
-      const r=sugerirRuta(f.provincia,f.ciudad); f.origen=r.origen;
+      f.cliente=f.cliente||""; f.dir=f.dir||""; f.ciudad=f.ciudad||""; f.provincia=f.provincia||""; f.items=f.items||"";
+      const rr=sugerirRuta(f.provincia,f.ciudad); f.origen=(rr&&rr.origen)||"bsas";
       if(f.retiro){ f.metodo="correo"; f.correo="Punto de retiro"; }         // retira en sucursal
       else if(llegaCadete(f)){ f.metodo="cadete"; f.correo=""; }             // CABA / Zona 1-3 (por CP) => Cardinal
       else { f.metodo="correo"; f.correo="Correo Argentino"; }               // resto => correo (lo hacés vos)
-      return f;
-    });
-    if(!IMP_FILAS.length){ toast("No hay pedidos nuevos en Tienda Nube"); return; }
-    mostrarPreviewImport();
-  }catch(e){ toast("No me pude conectar. ¿Ya configuraste la API? (ver instrucciones)"); }
+      filas.push(f);
+    }catch(err){ fallidos++; console.warn("Pedido salteado:", f&&f.ref, err); }
+  }
+  IMP_FILAS=filas;
+  if(!IMP_FILAS.length){ toast("No hay pedidos nuevos para importar"); return; }
+  try{ mostrarPreviewImport(); }
+  catch(err){ console.error("Error al mostrar el preview:", err); toast("Traje "+IMP_FILAS.length+" pedidos pero falló mostrarlos (mirá la consola)"); return; }
+  toast("Trajo "+IMP_FILAS.length+" pedidos"+(fallidos?(" · "+fallidos+" salteados"):""));
 }
 /* Le avisa a Tienda Nube que el pedido salió (marca enviado + manda el tracking si lo hay) */
 async function marcarEnviadoTN(id){
@@ -2514,7 +2524,7 @@ function previsualizarCarga(){
     ${okN?`<button class="btn block" style="margin-top:12px" onclick="confirmarCarga()">${icon('check')} Cargar ${okN} al stock</button>`:''}
     <div class="hint" style="margin-top:8px">Los ⚠ no los cargo. Si querés, corregí el nombre y volvé a "Ver".</div>`;
 }
-const APP_VERSION="v15jul-tiendanube";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v15jul-tn2";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
