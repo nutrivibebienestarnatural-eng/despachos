@@ -1903,12 +1903,14 @@ async function adjuntarEtiquetaImport(i,file){
   Object.assign(IMP_FILAS[i],dat); toast("Etiqueta del correo adjuntada 📎"); mostrarPreviewImport();
 }
 function mostrarPreviewImport(){
+  if(!$("#impPrev")) formImportar();          // si la vista se re-dibujó durante la búsqueda, la reconstruyo
+  const cont=$("#impPrev"); if(!cont){ toast("Traje "+IMP_FILAS.length+" pedidos. Entrá a Importar pedidos para verlos."); return; }
   if(Object.keys(IMP_SEL).length===0) IMP_FILAS.forEach((f,i)=>IMP_SEL[i]=true);   // por defecto todos marcados
   const sel=IMP_FILAS.filter((f,i)=>IMP_SEL[i]);
   const cadete=sel.filter(f=>f.metodo!=='correo').length;
   const correo=sel.length-cadete;
   const selStyle="padding:6px 8px;border:1px solid var(--border);border-radius:9px;font:inherit;background:var(--bg);font-size:13px";
-  $("#impPrev").innerHTML=`
+  cont.innerHTML=`
     <div class="card" style="margin-top:14px">
       <div class="hero" style="margin-bottom:14px;padding:18px 20px">
         <span class="label" style="margin-bottom:6px">${empresaObj(IMP_EMPRESA).nombre}</span>
@@ -2524,7 +2526,7 @@ function previsualizarCarga(){
     ${okN?`<button class="btn block" style="margin-top:12px" onclick="confirmarCarga()">${icon('check')} Cargar ${okN} al stock</button>`:''}
     <div class="hint" style="margin-top:8px">Los ⚠ no los cargo. Si querés, corregí el nombre y volvé a "Ver".</div>`;
 }
-const APP_VERSION="v15jul-tn2";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v15jul-tn3";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
