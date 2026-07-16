@@ -162,6 +162,7 @@ textarea{resize:vertical;min-height:66px;font-size:15px;line-height:1.5}
 .ord-name{display:flex;align-items:center;gap:8px;min-width:0}
 .ord-cli{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ord-sub{color:var(--text-2);font-size:12.5px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dia-h{font-size:12px;font-weight:800;color:var(--text-2);text-transform:capitalize;letter-spacing:.02em;margin:18px 0 8px;padding-left:2px}
 .ord-chev{flex:0 0 auto;color:var(--text-3);font-size:15px;font-weight:800;width:20px;text-align:center}
 .ord-body{margin-top:13px;border-top:.5px solid var(--border);padding-top:12px}
 .order .top{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap}
@@ -280,7 +281,7 @@ const FIREBASE_CONFIG = {
   measurementId: "G-C4MEPBGVW6"
 };
 
-const CADETES = ["Cardinal"];   // mensajería que reparte CABA + Buenos Aires (no correo)
+const CADETES = ["Cardinal","Claudia"];   // quienes reparten CABA + Buenos Aires (no correo)
 let CADETERIA_TEL = "";                 // WhatsApp de Cardinal (mensajería) para mandarles el reparto
 const CORREOS = ["Andreani","OCA","Correo Argentino","Vía Cargo","Cruz del Sur"];
 /* Catálogo de productos. El campo `barcode` es lo que lee el lector:
@@ -1626,25 +1627,38 @@ function vistaOperador(){
           <span class="muted" style="font-variant-numeric:tabular-nums">${g.n} × ${fmtAr(g.costo)} = <b style="color:var(--text)">${fmtAr(g.total)}</b></span>
         </div>`).join("")}
     </div>`}
-    <div class="row" style="margin-bottom:14px">
+    <div class="row" style="margin-bottom:12px">
       <button class="btn" onclick="formImportar()">${icon('upload')} Importar pedidos</button>
       <button class="btn ghost" onclick="formNuevo()">${icon('plus')} Pedido manual</button>
-      <button class="btn ghost" onclick="imprimirLote()">${icon('printer')} Imprimir etiquetas</button>
-      <button class="btn ghost" onclick="hojaEnvios()">${icon('printer')} Hoja de envíos</button>
-      <button class="btn ghost" onclick="pantallaEntregas()">${icon('check')} Resumen de entregas</button>
-      <button class="btn ghost" onclick="imprimirComprobante()">${icon('truck')} Comprobante cadete</button>
-      <button class="btn ghost" onclick="recalcularRutas()">${icon('route')} Recalcular rutas</button>
-      <button class="btn ghost" onclick="exportarCSVMensajeria()">⬇ CSV mensajería</button>
-      <button class="btn ghost" onclick="exportarTodo()">⬇ Exportar todo</button>
-      <button class="btn ghost" onclick="enviarRepartoWA()">${icon('truck')} Enviar reparto a Cardinal</button>
-      <button class="btn ghost" onclick="pantallaCobro()">${icon('box')} Facturar</button>
+      <button class="btn ghost" onclick="toggleAcc()">${ACC_OPEN?'▲ Menos':'⋯ Más acciones'}</button>
     </div>
+    ${ACC_OPEN?`<div class="card" style="margin-bottom:16px;padding:14px 16px">
+      <div class="label" style="margin:0 0 8px">🖨️ Imprimir</div>
+      <div class="row" style="margin-bottom:14px">
+        <button class="btn ghost sm" onclick="imprimirLote()">Etiquetas de envío</button>
+        <button class="btn ghost sm" onclick="pickeoPend()">Etiquetas de pickeo</button>
+        <button class="btn ghost sm" onclick="hojaEnvios()">Hoja de envíos</button>
+        <button class="btn ghost sm" onclick="imprimirComprobante()">Comprobante cadete</button>
+      </div>
+      <div class="label" style="margin:0 0 8px">📤 Exportar / Cardinal</div>
+      <div class="row" style="margin-bottom:14px">
+        <button class="btn ghost sm" onclick="exportarCSVMensajeria()">CSV mensajería (Cardinal)</button>
+        <button class="btn ghost sm" onclick="enviarRepartoWA()">Enviar reparto a Cardinal</button>
+        <button class="btn ghost sm" onclick="exportarTodo()">Exportar todo</button>
+      </div>
+      <div class="label" style="margin:0 0 8px">⚙️ Otros</div>
+      <div class="row">
+        <button class="btn ghost sm" onclick="pantallaCobro()">Facturar</button>
+        <button class="btn ghost sm" onclick="pantallaEntregas()">Resumen de entregas</button>
+        <button class="btn ghost sm" onclick="recalcularRutas()">Recalcular rutas</button>
+      </div>
+    </div>`:''}
     <div class="filters">
       ${["todos","activos","cadete","correo","pendiente","preparado","entregado","confirmado","anulado"]
         .map(f=>`<button class="${FILTRO===f?'on':''}" onclick="setFiltro('${f}')">${({todos:'Todos',activos:'Activos',cadete:'Cadete',correo:'Correo',anulado:'Anulados'})[f]||estObj(f).label}</button>`).join("")}
       ${EMPRESAS.map(e=>`<button class="${FILTRO==='emp:'+e.id?'on':''}" onclick="setFiltro('emp:${e.id}')">${esc(e.nombre)}</button>`).join("")}
     </div>
-    <div class="cardgrid">${lista.map(cardOperador).join("")||empty('box','Sin pedidos en este filtro.')}</div>
+    <div class="cardgrid">${listaPorFecha(lista)}</div>
     ${DB.modo==="demo"?`<div class="center" style="margin-top:24px">
       <span class="muted" style="font-size:13px">Modo demo · </span>
       <button class="btn sm ghost" onclick="resetDatos(false)">Recargar ejemplo (35)</button>
@@ -1661,56 +1675,73 @@ function resetDatos(blank){
 
 let EXP_PED={};
 function toggleExp(id){ EXP_PED[id]=!EXP_PED[id]; vistaOperador(); }
+let EXP_ACT={};
+function toggleActs(id){ EXP_ACT[id]=!EXP_ACT[id]; vistaOperador(); }
+let ACC_OPEN=false;
+function toggleAcc(){ ACC_OPEN=!ACC_OPEN; vistaOperador(); }
+function fmtFechaCorta(ts){ if(!ts) return ""; return new Date(ts).toLocaleDateString("es-AR",{day:"2-digit",month:"2-digit"}); }
+function fechaDia(ts){ if(!ts) return "Sin fecha"; const d=new Date(ts); d.setHours(0,0,0,0); const h=new Date(); h.setHours(0,0,0,0);
+  const diff=Math.round((h-d)/86400000);
+  if(diff===0) return "Hoy"; if(diff===1) return "Ayer";
+  return d.toLocaleDateString("es-AR",{weekday:"short",day:"2-digit",month:"2-digit"}); }
+function listaPorFecha(lista){
+  const arr=lista.slice().sort((a,b)=>(b.creado||0)-(a.creado||0));   // más nuevos arriba
+  if(!arr.length) return empty('box','Sin pedidos en este filtro.');
+  let html="", ult="";
+  arr.forEach(p=>{ const d=fechaDia(p.creado); if(d!==ult){ html+=`<div class="dia-h">${esc(d)}</div>`; ult=d; } html+=cardOperador(p); });
+  return html;
+}
+function accionPrincipal(p){   // el botón del paso siguiente, a la derecha de la fila
+  if(p.estado==="pendiente") return `<button class="btn sm" onclick="event.stopPropagation();avanzar('${p.id}','preparado')">Preparar</button>`;
+  if(p.metodo==="correo"&&p.estado==="preparado") return `<button class="btn sm" onclick="event.stopPropagation();despachar('${p.id}')">Despachar</button>`;
+  if(["preparado","asignado","en_reparto","despachado","en_camino"].includes(p.estado)) return `<button class="btn sm green" onclick="event.stopPropagation();avanzar('${p.id}','entregado')">Entregar</button>`;
+  return "";
+}
 function cardOperador(p){
   const e=estObj(p.estado), exp=!!EXP_PED[p.id];
   const dest=(p.ciudad||"")+(p.provincia?(", "+p.provincia):"");
   const an=anilloDe(p);
+  const emp=p.empresa?empresaObj(p.empresa).nombre:"";
+  const quien=p.metodo==="correo"?"Correo":(p.cadete||"sin asignar");
   const head=`<div class="ord-head" onclick="toggleExp('${p.id}')">
       <div style="min-width:0;flex:1">
-        <div class="ord-name">
-          <span class="ord-cli">${esc(p.cliente||'—')}</span>
-          <span class="badge" style="flex:0 0 auto"><span class="dot" style="background:${e.color}"></span>${e.label}</span>
-        </div>
-        <div class="ord-sub"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${anilloColor(an.n)};margin-right:5px;vertical-align:-1px"></span>${esc(an.label)} · N° ${esc(numOrden(p))} · ${p.metodo==='correo'?'Correo':'Cadete'}${dest?(' · '+esc(dest)):''}</div>
+        <div class="ord-name"><span class="ord-cli">${esc(p.cliente||'—')}</span></div>
+        <div class="ord-sub"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${anilloColor(an.n)};margin-right:5px;vertical-align:-1px"></span>N° ${esc(numOrden(p))}${emp?(' · '+esc(emp)):''}${p.creado?(' · '+fmtFechaCorta(p.creado)):''} · ${esc(quien)}</div>
       </div>
-      <span class="ord-chev">${exp?'▲':'▼'}</span>
+      <div style="display:flex;align-items:center;gap:7px;flex:0 0 auto">
+        ${accionPrincipal(p)}
+        <span class="badge"><span class="dot" style="background:${e.color}"></span>${e.label}</span>
+        <span class="ord-chev">${exp?'▲':'▼'}</span>
+      </div>
     </div>`;
   if(!exp) return `<div class="order compact">${head}</div>`;
   let acts="";
-  if(p.metodo==="cadete"){
-    if(p.estado==="pendiente") acts+=`<button class="btn sm" onclick="avanzar('${p.id}','preparado')">→ Preparado</button>`;
-    if(p.estado==="preparado") acts+=selectCadete(p);
-    if(p.estado==="asignado")  acts+=selectCadete(p);
-  }
-  if(p.metodo==="correo"){
-    if(p.estado==="pendiente") acts+=`<button class="btn sm" onclick="avanzar('${p.id}','preparado')">→ Preparado</button>`;
-    if(p.estado==="preparado") acts+=`<button class="btn sm" onclick="despachar('${p.id}')">→ Despachar al correo</button>`;
-    if(p.estado==="despachado")acts+=`<button class="btn sm" onclick="avanzar('${p.id}','en_camino')">→ En camino</button>`;
-    if(p.estado==="en_camino") acts+=`<button class="btn sm green" onclick="avanzar('${p.id}','entregado')">→ Entregado</button>`;
-  }
-  acts+=`<button class="btn sm ghost" onclick="cambiarRuta('${p.id}')">Editar</button>`;
-  if(p.tnId && !p.tnAvisado && ["preparado","asignado","en_reparto","despachado","en_camino","entregado","confirmado"].includes(p.estado))
-    acts+=`<button class="btn sm ghost" onclick="marcarEnviadoTN('${p.id}')">🛍️ Avisar enviado a Tienda Nube</button>`;
-  if(["pendiente","preparado","asignado","en_reparto","despachado","en_camino"].includes(p.estado))
-    acts+=`<button class="btn sm green" onclick="avanzar('${p.id}','entregado')">✅ Entregado</button>`;
-  acts+=`<button class="btn sm ghost" onclick="imprimirEtiqueta('${p.id}')">${icon('printer')}Etiqueta</button>`;
-  acts+=`<button class="btn sm ghost" onclick="copiarLink('${p.id}')">Link</button>`;
+  if(["pendiente","preparado","asignado","en_reparto"].includes(p.estado)) acts+=selectReparto(p);
   acts+=`<button class="btn sm green" onclick="waCliente('${p.id}')">WhatsApp</button>`;
+  acts+=`<button class="btn sm ghost" onclick="imprimirPickeo('${p.id}')">${icon('printer')} Pickeo</button>`;
+  let mas="";
+  mas+=`<button class="btn sm ghost" onclick="cambiarRuta('${p.id}')">Editar</button>`;
+  mas+=`<button class="btn sm ghost" onclick="imprimirEtiqueta('${p.id}')">${icon('printer')} Etiqueta</button>`;
+  if(p.tnId && !p.tnAvisado && ["preparado","asignado","en_reparto","despachado","en_camino","entregado","confirmado"].includes(p.estado))
+    mas+=`<button class="btn sm ghost" onclick="marcarEnviadoTN('${p.id}')">🛍️ Avisar a Tienda Nube</button>`;
+  mas+=`<button class="btn sm ghost" onclick="copiarLink('${p.id}')">Link</button>`;
   if(p.metodo==="correo"){
-    if(p.etiquetaPdf) acts+=`<button class="btn sm ghost" style="color:var(--green)" onclick='abrirEtiquetaPDF(PEDIDOS.find(x=>x.id==="${p.id}"))'>📎 Etiqueta correo ✓</button>`;
-    else acts+=`<label class="btn sm ghost" style="cursor:pointer">📎 Adjuntar PDF correo<input type="file" accept="application/pdf" style="display:none" onchange="adjuntarEtiquetaCorreo('${p.id}',this.files[0])"></label>`;
+    if(p.etiquetaPdf) mas+=`<button class="btn sm ghost" style="color:var(--green)" onclick='abrirEtiquetaPDF(PEDIDOS.find(x=>x.id==="${p.id}"))'>📎 Etiqueta correo ✓</button>`;
+    else mas+=`<label class="btn sm ghost" style="cursor:pointer">📎 Adjuntar PDF correo<input type="file" accept="application/pdf" style="display:none" onchange="adjuntarEtiquetaCorreo('${p.id}',this.files[0])"></label>`;
   }
-  if(p.estado==="anulado") acts+=`<button class="btn sm ghost" onclick="reactivarPedido('${p.id}')">Reactivar</button>`;
-  else if(p.estado!=="confirmado") acts+=`<button class="btn sm ghost" style="color:var(--red)" onclick="anularPedido('${p.id}')">Anular</button>`;
-  if(ROL==='admin') acts+=`<button class="btn sm ghost" style="color:var(--red)" onclick="eliminarPedido('${p.id}')">🗑️ Eliminar</button>`;
+  if(p.estado==="anulado") mas+=`<button class="btn sm ghost" onclick="reactivarPedido('${p.id}')">Reactivar</button>`;
+  else if(p.estado!=="confirmado") mas+=`<button class="btn sm ghost" style="color:var(--red)" onclick="anularPedido('${p.id}')">Anular</button>`;
+  if(ROL==='admin') mas+=`<button class="btn sm ghost" style="color:var(--red)" onclick="eliminarPedido('${p.id}')">🗑️ Eliminar</button>`;
+  const exA=!!EXP_ACT[p.id];
   const ruta=(p.origen==="riotercero"?"Río Tercero":"Bs As")+" · "+(p.metodo==="correo"?("Correo"+(p.correo?(" "+esc(p.correo)):"")):"Cadete");
   return `<div class="order">${head}
     <div class="ord-body">
-      <div class="who">${esc(p.id)} · ${esc(p.tel||"—")}${p.ref?(' · '+esc(p.ref)):''}</div>
+      <div class="who">${esc(p.tel||"—")}${p.ref?(' · '+esc(p.ref)):''}</div>
       <div class="addr">${esc(p.dir||'')} — ${esc(p.ciudad||'')}, ${esc(p.provincia||'')}</div>
       <div><span class="tag">Items</span> ${esc(p.items||"—")}</div>
       <div style="margin-top:6px"><span class="tag">Ruta</span> ${ruta}${p.cadete?(" · "+esc(p.cadete)):""}${p.tracking?(" · seg. "+esc(p.tracking)):""} · <b>${fmtAr(costoEnvio(p))}</b></div>
-      <div class="acts">${acts}</div>
+      <div class="acts">${acts}<button class="btn sm ghost" onclick="toggleActs('${p.id}')">${exA?'▲ Menos':'⋯ Más'}</button></div>
+      ${exA?`<div class="acts" style="margin-top:7px;padding-top:9px;border-top:.5px solid var(--border)">${mas}</div>`:''}
     </div>
   </div>`;
 }
@@ -1718,6 +1749,22 @@ function selectCadete(p){
   return `<select onchange="if(this.value)asignarCadete('${p.id}',this.value)" style="max-width:190px">
     <option value="">${p.cadete?('Cadete: '+esc(p.cadete)):'Asignar cadete…'}</option>
     ${CADETES.map(c=>`<option ${p.cadete===c?'selected':''}>${esc(c)}</option>`).join("")}</select>`;
+}
+/* Selector para asignar cada orden a Cardinal / Claudia / Correo (editable en cualquier momento) */
+function selectReparto(p){
+  const esCorreo=p.metodo==="correo";
+  const actual=esCorreo?"Correo":(p.cadete||"sin asignar");
+  return `<select onchange="if(this.value)asignarReparto('${p.id}',this.value)" style="max-width:210px">
+    <option value="">Reparto: ${esc(actual)} ▾</option>
+    ${CADETES.map(c=>`<option value="${esc(c)}" ${!esCorreo&&p.cadete===c?'selected':''}>🚴 ${esc(c)}</option>`).join("")}
+    <option value="__correo" ${esCorreo?'selected':''}>📮 Correo (lo hacés vos)</option>
+  </select>`;
+}
+async function asignarReparto(id,tipo){
+  const p=PEDIDOS.find(x=>x.id===id)||await DB.get(id); if(!p) return;
+  if(tipo==="__correo"){ await DB.update(id,{metodo:"correo",cadete:"",correo:p.correo||"Correo Argentino"}); toast("Asignado a Correo"); }
+  else { await DB.update(id,{metodo:"cadete",cadete:tipo,correo:""}); toast("Asignado a "+tipo); }
+  render();
 }
 function despachar(id){
   const p=PEDIDOS.find(x=>x.id===id); if(!p)return;
@@ -2547,7 +2594,7 @@ function previsualizarCarga(){
     ${okN?`<button class="btn block" style="margin-top:12px" onclick="confirmarCarga()">${icon('check')} Cargar ${okN} al stock</button>`:''}
     <div class="hint" style="margin-top:8px">Los ⚠ no los cargo. Si querés, corregí el nombre y volvé a "Ver".</div>`;
 }
-const APP_VERSION="v16jul-prep";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v16jul-barra";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
