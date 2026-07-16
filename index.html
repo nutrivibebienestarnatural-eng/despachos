@@ -527,9 +527,10 @@ function parseItems(t){ return (t||"").split(/·|,|\n|;/).map(s=>s.trim()).filte
   const m=s.match(/^(\d+)\s*[xX]\s*(.+)$/); return m?{cant:+m[1],nombre:m[2].trim()}:{cant:1,nombre:s}; }); }
 function pickingConsolidado(){
   const map={};
-  PEDIDOS.filter(p=>(!p.tipo||p.tipo==="pedido")&&p.estado==="pendiente").forEach(p=>
-    parseItems(p.items).forEach(it=>{ const k=it.nombre.toLowerCase();
-      if(!map[k]) map[k]={nombre:it.nombre,cant:0}; map[k].cant+=it.cant; }));
+  PEDIDOS.filter(p=>(!p.tipo||p.tipo==="pedido")&&p.estado==="pendiente").forEach(p=>{
+    try{ itemsPedido(p).forEach(it=>{ const nombre=it.prodNombre||it.nombre; const k=nombre.toLowerCase();
+      if(!map[k]) map[k]={nombre, cant:0}; map[k].cant+=(it.cant||0); }); }catch(e){}   // itemsPedido abre los kits
+  });
   return Object.values(map).sort((a,b)=>b.cant-a.cant);
 }
 function prodPorBarcode(code){
@@ -748,6 +749,16 @@ function stockRecord(){
   return docs.slice().sort((a,b)=>((b.movs||[]).length-(a.movs||[]).length))[0];   // el que más movimientos tiene
 }
 function stockDuplicados(){ return PEDIDOS.filter(p=>p.tipo==="stock").length; }
+/* Pedidos IGNORADOS: los que destildaste a propósito. Se guardan en la nube para no traerlos nunca más. */
+function ignoradosRecord(){ return PEDIDOS.find(p=>p.tipo==="ignorados"); }
+function ignoradosSet(){ const r=ignoradosRecord(); return new Set((r&&r.refs)||[]); }
+async function agregarIgnorados(refs){
+  const nuevos=(refs||[]).filter(Boolean);
+  if(!nuevos.length) return;
+  const r=ignoradosRecord();
+  const arr=[...new Set(((r&&r.refs)||[]).concat(nuevos))];
+  if(r) await DB.update(r.id,{refs:arr}); else await DB.create({tipo:"ignorados",refs:arr});
+}
 /* Vaciar TODO el stock para empezar de cero (los pedidos no se tocan; conserva precios/config) */
 async function vaciarStock(){
   if(!confirm("¿Vaciar TODO el stock?\n\nSe borran todos los movimientos (cargas y salidas). Los pedidos y los precios NO se tocan.")) return;
@@ -1493,7 +1504,7 @@ function goHome(){ stopPlay();
 /* ---------- OPERADOR ---------- */
 function segOp(active){
   if(ROL!=="admin" || PREVIEW) return "";   // operador (o admin previsualizando) no ve pestañas
-  const tabs=[["panel","Panel"],["pedidos","Pedidos"],["preparacion","Preparación"],["stock","Stock"],["ruta","Ruta"],["deposito","Depósito"]];
+  const tabs=[["panel","Panel"],["pedidos","Pedidos"],["preparacion","Preparación"],["stock","Stock"],["informes","Informes"],["ruta","Ruta"],["deposito","Depósito"]];
   return `<div class="row" style="justify-content:space-between;margin-bottom:14px"><div class="seg">${
     tabs.map(t=>`<button class="${active===t[0]?'on':''}" ${active===t[0]?'':`onclick="OPVIEW='${t[0]}';vistaOperador()"`}>${t[1]}</button>`).join("")
   }</div></div>`;
@@ -1539,6 +1550,7 @@ function vistaPanel(){
       ${tile('stock','panel','Stock','Inventario y compras',reponer||null)}
       ${tile('ruta','route','Ruta','Hoja de ruta CABA',rutaStops)}
       ${tile('deposito','truck','Depósito','Reabastecimientos',reabas||null)}
+      ${tile('informes','panel','Informes','Ventas, zonas y stock',null)}
       ${tile('pedidos','plus','Importar','Subí CSV o PDF',null)}
     </div>
     ${EMPLEADO?'':`
@@ -1567,6 +1579,7 @@ function vistaOperador(){
   if(OPVIEW==="ruta") return vistaRuta();
   if(OPVIEW==="preparacion") return vistaPreparacion();
   if(OPVIEW==="stock") return vistaStock();
+  if(OPVIEW==="informes") return vistaInformes();
   const ped=soloPedidos();
   const hoy=new Date(); hoy.setHours(0,0,0,0);
   const entregadosHoy=ped.filter(p=>(p.eventos||[]).some(e=>e.estado==="entregado"&&e.ts>=hoy.getTime())).length;
@@ -1735,8 +1748,10 @@ function formImportar(){
         ${CANALES.map(c=>`<button class="${c.id===IMP_CANAL?'on':''}" data-c="${c.id}" onclick="pickCanal(this)">${esc(c.nombre)}</button>`).join("")}
       </div>
       ${IMP_CANAL==='tiendanube'?`
+        <label class="label" style="display:block;margin-bottom:6px">Traer pedidos desde (fecha)</label>
+        <input type="date" id="impDesde" value="${IMP_DESDE}" onchange="setImpDesde(this.value)" style="width:100%;padding:11px 12px;border:1px solid var(--border);border-radius:11px;font:inherit;background:var(--bg);margin-bottom:10px">
         <button class="btn block" onclick="traerTiendaNube()">${icon('store')} Traer pedidos de Tienda Nube</button>
-        <div class="hint" style="margin:8px 0 14px;text-align:center">Automático: trae los pedidos pagados sin despachar. (Requiere la API configurada)</div>
+        <div class="hint" style="margin:8px 0 14px;text-align:center">Trae los pedidos pagados sin despachar, desde la fecha elegida. No trae los que ya importaste ni los que descartaste.</div>
         <div style="text-align:center;color:var(--text-3);font-size:13px;margin-bottom:14px">— o subí el archivo —</div>`:''}
       <label id="dropZone" class="dropzone" for="impFile">
         <input type="file" id="impFile" accept=".csv,.pdf,text/csv,application/pdf" style="display:none" onchange="importarAuto(this.files&&this.files[0])">
@@ -1766,6 +1781,8 @@ let IMP_EMPRESA=(typeof localStorage!=="undefined"&&localStorage.getItem("imp_em
 if(!EMPRESAS.some(e=>e.id===IMP_EMPRESA)) IMP_EMPRESA=EMPRESAS[0].id;
 let IMP_CANAL=(typeof localStorage!=="undefined"&&localStorage.getItem("imp_canal"))||empresaObj(IMP_EMPRESA).canalDefault;
 if(!CANALES.some(c=>c.id===IMP_CANAL)) IMP_CANAL=CANALES[0].id;
+let IMP_DESDE=(typeof localStorage!=="undefined"&&localStorage.getItem("imp_desde"))||"";
+function setImpDesde(v){ IMP_DESDE=v||""; try{ localStorage.setItem("imp_desde",IMP_DESDE); }catch(e){} }
 function pickEmpresa(b){ IMP_EMPRESA=b.dataset.e;
   try{ localStorage.setItem("imp_empresa",IMP_EMPRESA); }catch(e){}
   formImportar(); }
@@ -1777,13 +1794,15 @@ async function traerTiendaNube(){
   toast("Buscando pedidos en Tienda Nube…");
   let data;
   try{
-    const r=await fetch("/api/tiendanube?empresa="+encodeURIComponent(IMP_EMPRESA));
+    const q="/api/tiendanube?empresa="+encodeURIComponent(IMP_EMPRESA)+(IMP_DESDE?("&desde="+encodeURIComponent(IMP_DESDE)):"");
+    const r=await fetch(q);
     data=await r.json().catch(()=>({}));
     if(!r.ok){ toast(data.error||("Error "+r.status)); return; }
   }catch(e){ toast("No me pude conectar. ¿Ya configuraste la API? (ver instrucciones)"); return; }
 
   const existentes=new Set(soloPedidos().map(p=>p.ref).filter(Boolean));
-  const crudos=(data.pedidos||[]).filter(f=>f&&(!f.ref||!existentes.has(f.ref)));
+  const ignorados=ignoradosSet();
+  const crudos=(data.pedidos||[]).filter(f=>f&&(!f.ref||(!existentes.has(f.ref)&&!ignorados.has(f.ref))));
   const filas=[]; let fallidos=0;
   for(const f of crudos){                                   // uno por uno: si uno viene roto, se saltea y sigue
     try{
@@ -1949,10 +1968,12 @@ function mostrarPreviewImport(){
 async function confirmarImport(){
   const sel=IMP_FILAS.filter((f,i)=>IMP_SEL[i]);
   if(!sel.length){ toast("Marcá al menos un pedido"); return; }
+  const descartados=IMP_FILAS.filter((f,i)=>!IMP_SEL[i]).map(f=>f.ref).filter(Boolean);   // los que destildaste
   let creados=0;
   try{
     for(const f of sel){ f.canal=f.canal||IMP_CANAL; await crearPedido(f); creados++; }
   }catch(e){ alert("⚠️ IMPORTÉ "+creados+" DE "+sel.length+" Y FALLÓ\n\nError: "+(e&&e.message||e)+"\nVersión: "+APP_VERSION+"\n\nSacale captura y pasásela a Claude."); }
+  try{ await agregarIgnorados(descartados); }catch(e){}   // que no vuelvan a aparecer
   if(creados===sel.length) alert("✅ "+creados+" PEDIDOS IMPORTADOS Y GUARDADOS\nVersión: "+APP_VERSION);
   IMP_FILAS=[]; IMP_SEL={}; OPVIEW="pedidos"; vistaOperador();
 }
@@ -2526,7 +2547,7 @@ function previsualizarCarga(){
     ${okN?`<button class="btn block" style="margin-top:12px" onclick="confirmarCarga()">${icon('check')} Cargar ${okN} al stock</button>`:''}
     <div class="hint" style="margin-top:8px">Los ⚠ no los cargo. Si querés, corregí el nombre y volvé a "Ver".</div>`;
 }
-const APP_VERSION="v15jul-tn3";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v16jul-prep";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
@@ -2572,6 +2593,82 @@ function imprimirReposicion(){
 }
 
 /* ---------- OPERADOR · Preparación (picking + escaneo) ---------- */
+let INF_PERIODO="7d";
+function infDesde(){ const d=new Date();
+  if(INF_PERIODO==="hoy"){ d.setHours(0,0,0,0); return d.getTime(); }
+  if(INF_PERIODO==="7d"){ d.setDate(d.getDate()-7); return d.getTime(); }
+  if(INF_PERIODO==="30d"){ d.setDate(d.getDate()-30); return d.getTime(); }
+  return 0; }
+function setInfPeriodo(p){ INF_PERIODO=p; vistaOperador(); }
+function vistaInformes(){
+  const desde=infDesde();
+  const peds=soloPedidos().filter(p=>p.estado!=="anulado" && (p.creado||0)>=desde && (p.cliente||"")!=="_PRUEBA_DIAGNOSTICO");
+  let unidades=0; peds.forEach(p=>{ try{ unidades+=itemsPedido(p).reduce((s,i)=>s+(i.cant||0),0); }catch(e){} });
+  const aCobrar=peds.reduce((s,p)=>s+costoEnvio(p),0);
+  const zc=zonaCosto(); const esCadeteCat=c=>["caba","1","2","3"].includes(c);
+  const aCardinal=peds.reduce((s,p)=>{ const c=catPedido(p); return s+(esCadeteCat(c)?(zc[c]||0):0); },0);
+  const cats=[["caba","CABA",0],["1","Zona 1",1],["2","Zona 2",2],["3","Zona 3",3],["correo","Correo",null]];
+  const porZona=cats.map(([c,lbl,anillo])=>{ const g=peds.filter(p=>catPedido(p)===c);
+    return {c,lbl,anillo,n:g.length, cobrar:g.reduce((s,p)=>s+costoEnvio(p),0), cardinal:esCadeteCat(c)?g.reduce((s,p)=>s+(zc[c]||0),0):0}; }).filter(z=>z.n>0);
+  const dias=[]; for(let i=6;i>=0;i--){ const d=new Date(); d.setHours(0,0,0,0); d.setDate(d.getDate()-i);
+    const ini=d.getTime(), fin=ini+86400000;
+    dias.push({ lbl:d.toLocaleDateString("es-AR",{weekday:"short",day:"numeric"}), n:soloPedidos().filter(p=>(p.creado||0)>=ini&&(p.creado||0)<fin&&p.estado!=="anulado").length }); }
+  const maxDia=Math.max(1,...dias.map(d=>d.n));
+  const acc={}; peds.forEach(p=>{ try{ itemsPedido(p).forEach(it=>{ const k=it.prodNombre||it.nombre; acc[k]=(acc[k]||0)+(it.cant||0); }); }catch(e){} });
+  const top=Object.entries(acc).sort((a,b)=>b[1]-a[1]).slice(0,10);
+  const st=stockState(); const bajo=PRODUCTOS.map(pr=>({nombre:pr.nombre,falta:pedirDe(pr.nombre,st),nivel:nivel(pr.nombre,st)})).filter(x=>x.falta>0).sort((a,b)=>b.falta-a.falta).slice(0,12);
+  const perBtn=(k,l)=>`<button class="${INF_PERIODO===k?'on':''}" ${INF_PERIODO===k?'':`onclick="setInfPeriodo('${k}')"`}>${l}</button>`;
+  app().innerHTML=`
+    ${segOp('informes')}
+    <div class="title">Informes</div>
+    <div class="row" style="margin:6px 0 14px"><div class="seg">${perBtn('hoy','Hoy')}${perBtn('7d','7 días')}${perBtn('30d','30 días')}${perBtn('todo','Todo')}</div></div>
+    <div class="kpis">
+      <div class="kpi">${icon('store')}<div class="n">${peds.length}</div><div class="l">Pedidos</div></div>
+      <div class="kpi">${icon('box')}<div class="n">${unidades}</div><div class="l">Unidades</div></div>
+      <div class="kpi"><div class="n" style="color:var(--accent)">${fmtAr(aCobrar)}</div><div class="l">A cobrar (envíos)</div></div>
+      <div class="kpi"><div class="n" style="color:#e5484d">${fmtAr(aCardinal)}</div><div class="l">A pagar Cardinal</div></div>
+    </div>
+    <div class="card" style="margin-top:14px">
+      <span class="label">Por zona</span>
+      ${porZona.length?porZona.map(z=>`
+        <div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-top:.5px solid var(--border)">
+          <span style="width:11px;height:11px;border-radius:50%;background:${anilloColor(z.anillo)};flex:0 0 auto"></span>
+          <div style="flex:1;min-width:0"><b>${z.lbl}</b> · ${z.n} pedido${z.n===1?'':'s'}</div>
+          <div style="text-align:right;font-size:13px">
+            <div>cobrás <b>${fmtAr(z.cobrar)}</b></div>
+            ${z.cardinal?`<div class="muted">Cardinal ${fmtAr(z.cardinal)}</div>`:''}
+          </div>
+        </div>`).join(""):'<div class="hint" style="margin:8px 0 0">Sin pedidos en el período.</div>'}
+    </div>
+    <div class="card" style="margin-top:14px">
+      <span class="label">Pedidos por día (últimos 7)</span>
+      <div style="display:flex;align-items:flex-end;gap:6px;height:112px;margin-top:12px">
+        ${dias.map(d=>`<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;justify-content:flex-end;height:100%">
+          <div style="font-size:12px;font-weight:700">${d.n||''}</div>
+          <div style="width:100%;background:var(--accent);border-radius:6px 6px 0 0;height:${Math.round(d.n/maxDia*76)+3}px;opacity:${d.n?1:.15}"></div>
+          <div class="muted" style="font-size:11px;text-transform:capitalize;text-align:center">${esc(d.lbl)}</div>
+        </div>`).join("")}
+      </div>
+    </div>
+    <div class="card" style="margin-top:14px">
+      <span class="label">Productos más pedidos</span>
+      ${top.length?top.map(([n,c],i)=>`<div style="display:flex;gap:10px;padding:8px 0;border-top:.5px solid var(--border)">
+        <span class="muted" style="width:18px;flex:0 0 auto">${i+1}</span><div style="flex:1;min-width:0">${esc(n)}</div><b style="flex:0 0 auto">${c}</b></div>`).join(""):'<div class="hint" style="margin:8px 0 0">Sin datos en el período.</div>'}
+    </div>
+    <div class="card" style="margin-top:14px">
+      <span class="label">Stock a reponer</span>
+      ${bajo.length?bajo.map(x=>`<div style="display:flex;gap:10px;align-items:center;padding:8px 0;border-top:.5px solid var(--border)">
+        <div style="flex:1;min-width:0">${esc(x.nombre)}</div><span class="muted" style="font-size:13px;flex:0 0 auto">tenés ${x.nivel}</span> <b style="color:#e5484d;flex:0 0 auto">faltan ${x.falta}</b></div>`).join(""):'<div class="hint" style="margin:8px 0 0">Todo el stock OK 👍</div>'}
+    </div>`;
+}
+async function prepararDirecto(id){
+  const p=PEDIDOS.find(x=>x.id===id)||await DB.get(id);
+  if(!p){ toast("No encontré el pedido"); return; }
+  const desc=descuentoActivo();
+  if(!confirm("¿Marcar este pedido como PREPARADO?"+(desc?"\n\nSe descuenta del stock (los kits se abren en sus productos).":""))) return;
+  await avanzar(id,"preparado");   // avanzar descuenta el stock nominal (kits expandidos) si el descuento está activo
+  toast("Pedido preparado ✓");
+}
 function vistaPreparacion(){
   const pend=soloPedidos().filter(p=>p.estado==="pendiente");
   const pick=pickingConsolidado();
@@ -2583,21 +2680,15 @@ function vistaPreparacion(){
     <div class="row" style="margin-bottom:16px;flex-wrap:wrap">
       <button class="btn ghost" onclick="hojaEnvios()">${icon('printer')} Hoja de envíos (correo)</button>
       ${pend.length?`<button class="btn ghost" onclick="pantallaEtiquetas()">${icon('printer')} Imprimir etiquetas</button>`:""}
+      ${pend.length?`<button class="btn ghost" onclick="pickeoPend()">${icon('printer')} Etiquetas de pickeo</button>`:""}
     </div>
     <div class="card" style="margin-bottom:16px">
-      <span class="label">Escaneá el código de barras del producto</span>
-      <input id="scanBox" autocomplete="off" placeholder="Escaneá con el lector o escribí el código y Enter">
-      <button class="btn block" style="margin-top:12px" onclick="escanearProducto()"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:6px"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>Escanear con la cámara</button>
-      <div class="hint" style="margin-top:8px">Podés usar la <b>cámara del celu</b> (botón de arriba) o un lector USB/Bluetooth. Cada lectura suma el producto en la lista.</div>
-    </div>
-    <div class="card" style="margin-bottom:16px">
-      <div class="row" style="justify-content:space-between"><span class="label" style="margin:0">Picking consolidado de hoy</span>
-        ${unidades?`<button class="btn sm ghost" onclick="PICK={};vistaPreparacion()">Reiniciar conteo</button>`:""}</div>
-      ${pick.map(r=>{ const k=r.nombre.toLowerCase(); const done=PICK[k]||0; const ok=done>=r.cant;
-        return `<div class="row" style="justify-content:space-between;padding:11px 0 0;border-top:.5px solid var(--border);margin-top:9px">
-          <span class="row" style="gap:8px;color:${ok?'var(--green)':'inherit'}">${ok?icon('check'):icon('box')} ${esc(r.nombre)}</span>
-          <span style="font-variant-numeric:tabular-nums;font-weight:600;color:${ok?'var(--green)':'var(--text-2)'}">${done} / ${r.cant}</span>
-        </div>`; }).join("")||empty('check','No hay nada pendiente de preparar.')}
+      <span class="label" style="margin:0">Lista de pickeo · qué juntar hoy</span>
+      <div class="hint" style="margin:4px 0 2px">Total de unidades a preparar de todos los pedidos pendientes (los kits ya vienen abiertos en sus productos).</div>
+      ${pick.map(r=>`<div class="row" style="justify-content:space-between;padding:11px 0 0;border-top:.5px solid var(--border);margin-top:9px">
+          <span class="row" style="gap:8px">${icon('box')} ${esc(r.nombre)}</span>
+          <span style="font-variant-numeric:tabular-nums;font-weight:700">${r.cant}</span>
+        </div>`).join("")||empty('check','No hay nada pendiente de preparar.')}
     </div>
     <div class="label">Pedidos por preparar</div>
     ${pend.map(p=>`<div class="order">
@@ -2606,11 +2697,10 @@ function vistaPreparacion(){
       <div class="who">${esc(p.cliente)}</div>
       <div><span class="tag">Items</span> ${esc(p.items||'—')}</div>
       <div class="acts">
-        <button class="btn sm green" onclick="pantallaPreparar('${p.id}')">${icon('box')} Preparar</button>
+        <button class="btn sm green" onclick="prepararDirecto('${p.id}')">${icon('check')} Marcar preparado</button>
+        <button class="btn sm ghost" onclick="imprimirPickeo('${p.id}')">${icon('printer')} Pickeo</button>
         <button class="btn sm ghost" onclick="imprimirEtiqueta('${p.id}')">${icon('printer')}Etiqueta</button>
       </div></div>`).join("")||empty('check','Todo preparado.')}`;
-  const box=$("#scanBox");
-  if(box){ if(box.focus && !document.querySelector(".scan-ov")) box.focus(); box.onkeydown=e=>{ if(e.key==="Enter"){ procesarScan(box.value); box.value=""; } }; }
 }
 function procesarScan(code){
   if(!code||!code.trim()) return;
@@ -3009,6 +3099,51 @@ function imprimirEtiqueta(id){
   printLabels([p]);
 }
 function imprimirLote(){ pantallaEtiquetas(); }
+/* ---- ETIQUETA DE PICKEO: para armar el paquete (Cardinal imprime la de envío) ---- */
+function etiquetaPickeoBody(p){
+  const an=anilloDe(p);
+  const marca=p.empresa?empresaObj(p.empresa).nombre:LOGISTICA;
+  const metodo=p.metodo==="correo"?("CORREO"+(p.correo?(" · "+p.correo):"")):"CARDINAL";
+  const esSC=p.empresa==="sc";
+  const items=parseItems(p.items);
+  return `<div class="etq">
+    <div class="etq-h">
+      <div>
+        <div class="etq-brand">🧺 PICKEO</div>
+        <div class="etq-sub">${esc(marca)}</div>
+      </div>
+      <div style="text-align:right;display:flex;flex-direction:column;align-items:flex-end">
+        <div class="etq-anillo" style="background:${anilloColor(an.n)}">${an.n===0?"CABA":(an.n>=1&&an.n<=3?("<span>"+an.n+"<br><small>zona</small></span>"):"<small>rev.</small>")}</div>
+        <div class="etq-id">${esc(numOrden(p))}</div>
+      </div>
+    </div>
+    <div class="etq-met">${esc(metodo)}</div>
+    ${esSC?`<div style="border:1.1mm solid #000;padding:1.2mm 2mm;text-align:center;font-weight:900;font-size:5mm;letter-spacing:1.1mm;margin:1.1mm 0">⚠ FRÁGIL ⚠</div>`:''}
+    <div class="etq-lbl">PARA</div>
+    <div class="etq-name">${esc(p.cliente||"-")}</div>
+    <div class="etq-addr">${esc(p.ciudad||"")}${p.provincia?(", "+esc(p.provincia)):""} · <b>${esc(an.label)}</b></div>
+    ${p.nota?`<div class="etq-nota">⚠ ${esc(p.nota)}</div>`:""}
+    <div class="etq-items"><span class="etq-lbl">A PREPARAR</span>${items.length?items.map(it=>`<div class="etq-it"><span class="etq-chk"></span><b>${it.cant}×</b>${esc(it.nombre)}</div>`).join(""):esc(p.items||"-")}</div>
+    <div class="etq-spacer"></div>
+    ${barcodeSVG(p.id,42)}
+    <div class="etq-bc-t">${esc(numOrden(p))}</div>
+  </div>`;
+}
+function printPickeo(arr){
+  if(!arr||!arr.length){ toast("No hay pedidos para etiqueta de pickeo"); return; }
+  const w=window.open("","_blank","width=460,height=760");
+  if(!w){ toast("Permití las ventanas emergentes para imprimir"); return; }
+  const body=arr.map(p=>`<div class="page">${etiquetaPickeoBody(p)}</div>`).join("");
+  w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Etiquetas de pickeo</title>'+
+    '<link href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700;800&display=swap" rel="stylesheet">'+
+    '<style>@page{size:'+LABEL_MM.w+'mm '+LABEL_MM.h+'mm;margin:0}html,body{margin:0;padding:0}'+
+    '.page{break-after:page;page-break-after:always}.page:last-child{break-after:auto;page-break-after:auto}'+
+    ETQ_CSS+'</style></head><body>'+body+
+    '<scr'+'ipt>window.onload=function(){setTimeout(function(){window.print()},400)}<\\/scr'+'ipt></body></html>');
+  w.document.close();
+}
+function imprimirPickeo(id){ const p=PEDIDOS.find(x=>x.id===id)||((SIM&&SIM.id===id)?SIM:null); if(!p){ toast("No encontré el pedido"); return; } printPickeo([p]); }
+function pickeoPend(){ printPickeo(soloPedidos().filter(p=>p.estado==="pendiente")); }
 let SEL_ETQ={};
 function etqImprimibles(){ return soloPedidos().filter(p=>!["entregado","confirmado","anulado"].includes(p.estado)); }
 function pantallaEtiquetas(){
