@@ -496,10 +496,19 @@ function componentesKit(nombre){
   let base=(nombre||"").replace(/\(.*?\)/g," ").replace(/pack.*$/i," ").replace(/\bx\d+\b/ig," ").trim();
   return base.split("+").map(s=>s.trim()).filter(s=>s.length>2);
 }
-const MIN_DEFAULT=5;   // cuánto pedir cuando un producto que manejás baja del mínimo
-function minDe(n,st){ st=st||stockState(); return (st&&st.min&&st.min[n]!=null)?st.min[n]:MIN_DEFAULT; }
+const MIN_DEFAULT=3;   // umbral fijo: si un producto que manejás baja de acá, aparece para reponer
+function minDe(n,st){ return MIN_DEFAULT; }
 function tieneMov(n,st){ st=st||stockState(); return (st.movs||[]).some(m=>m.prod===n); }
-function pedirDe(n,st){ if(!tieneMov(n,st)) return 0; const mn=minDe(n,st),stk=nivel(n,st); return (mn>0 && stk<mn)?mn:0; }
+function pedirDe(n,st){ if(!tieneMov(n,st)) return 0; const mn=minDe(n,st),stk=nivel(n,st); return (mn>0 && stk<=mn)?mn:0; }
+function ocultos(st){ st=st||stockState(); return (st&&st.ocultos)||[]; }
+function estaOculto(n,st){ return ocultos(st).includes(n); }
+async function toggleOculto(nombreEnc){
+  const nombre=decodeURIComponent(nombreEnc);
+  const st=stockState(); const set=new Set(st.ocultos||[]);
+  set.has(nombre)?set.delete(nombre):set.add(nombre);
+  st.ocultos=[...set]; await persistStock(st);
+  toast(set.has(nombre)?"Producto ocultado":"Producto visible"); vistaStock();
+}
 const fmtAr = n => "$"+Number(n||0).toLocaleString("es-AR");
 /* Geo para la hoja de ruta: salida desde Puerto Madero + centro de cada barrio CABA */
 const ORIGEN_CABA={nombre:"Puerto Madero, CABA",lat:-34.6118,lon:-58.3625};
@@ -2134,7 +2143,7 @@ function formNuevo(edit){
       </div>
       <div class="field"><span class="label">Agregar producto del catálogo</span>
         <div class="row" style="gap:8px;align-items:flex-end">
-          <select id="f_prodsel" style="flex:1;min-width:0">${PRODUCTOS.map(pr=>`<option>${esc(pr.nombre)}</option>`).join("")}</select>
+          <select id="f_prodsel" style="flex:1;min-width:0">${PRODUCTOS.filter(pr=>!estaOculto(pr.nombre)).map(pr=>`<option>${esc(pr.nombre)}</option>`).join("")}</select>
           <input id="f_prodcant" type="number" inputmode="numeric" value="1" min="1" style="width:64px;text-align:center">
           <button type="button" class="btn sm" onclick="agregarItemManual()">Agregar</button>
         </div>
@@ -2346,7 +2355,10 @@ function vistaStock(){
   const rows=PRODUCTOS.map((p,i)=>{ const stk=nivel(p.nombre,st), mn=minDe(p.nombre,st), d=demandaDe(p,pick);
     const tieneMov=(st.movs||[]).some(m=>m.prod===p.nombre);
     return {p,i,stk,mn,d,rep:pedirDe(p.nombre,st),tieneMov}; })
-    .filter(r=> (q ? r.p.nombre.toLowerCase().includes(q) : (STOCK_TODOS||r.tieneMov)) );   // por defecto solo los cargados; buscador o "ver todos" muestran el resto
+    .filter(r=>{ const oc=estaOculto(r.p.nombre,st);
+      if(q) return r.p.nombre.toLowerCase().includes(q);   // buscando muestro todo (así podés reactivar ocultos)
+      if(oc) return STOCK_TODOS;                            // los ocultos solo con "Ver todos"
+      return STOCK_TODOS||r.tieneMov; });   // por defecto solo los cargados
   const reponer=rows.filter(r=>r.rep>0);
   const movs=(st.movs||[]).slice(-12).reverse();
   const inp="width:100%;padding:7px;border:1px solid var(--border);border-radius:9px;font:inherit;background:var(--bg)";
@@ -2367,7 +2379,7 @@ function vistaStock(){
     <div class="card" style="margin-bottom:16px">
       <span class="label">Registrar movimiento</span>
       <div class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-end">
-        <select id="mvProd" style="${inp};flex:1;min-width:150px">${PRODUCTOS.map(p=>`<option>${esc(p.nombre)}</option>`).join("")}</select>
+        <select id="mvProd" style="${inp};flex:1;min-width:150px">${PRODUCTOS.filter(p=>!estaOculto(p.nombre)).map(p=>`<option>${esc(p.nombre)}</option>`).join("")}</select>
         <select id="mvTipo" style="${inp};width:110px"><option value="entrada">Entrada</option><option value="salida">Salida</option></select>
         <input id="mvCant" type="number" inputmode="numeric" placeholder="Cant." style="${inp};width:80px;text-align:center">
       </div>
@@ -2407,19 +2419,18 @@ function vistaStock(){
     </div>
     <div class="row" style="margin-bottom:12px;flex-wrap:wrap">
       <button class="btn" onclick="pantallaCargarStock()">${icon('upload')} Cargar stock</button>
-      <button class="btn ghost" onclick="guardarMinimos()">Guardar mínimos</button>
       <button class="btn ghost" onclick="imprimirStock()">${icon('printer')} Imprimir A4</button>
       <button class="btn ghost" onclick="imprimirReposicion()">${icon('printer')} Planilla de reposición</button>
       <button class="btn ghost" onclick="pantallaSalidas()">${icon('box')} Lo que salió</button>
       <button class="btn ghost" onclick="diagnosticoStock()">🩺 Diagnóstico</button>
       ${ROL==='admin'?`<button class="btn ghost" style="color:var(--red)" onclick="vaciarStock()">🧹 Vaciar stock</button>`:''}
     </div>
-    <div class="label">Lo que queda · stock compartido <span class="muted" style="font-weight:400">(cuando baja de 5, pedís 5 · lo pone ${esc(empresaObj(STOCK_DUENO).nombre)})</span></div>
+    <div class="label">Lo que queda · stock compartido <span class="muted" style="font-weight:400">(con 3 o menos aparece para reponer · ocultá lo que no trabajás)</span></div>
     <input id="stockQ" autocomplete="off" placeholder="🔍 Buscar producto…" value="${esc(STOCK_Q||'')}" oninput="STOCK_Q=this.value;clearTimeout(window.__sq);window.__sq=setTimeout(vistaStock,250)" style="${inp};margin-bottom:10px">
     <div class="card" style="margin-bottom:16px">
       ${rows.map(r=>{ const f=flujoProducto(r.p.nombre,st);
         const split=Object.entries(f.porEmp).map(([e,n])=>esc(empresaObj(e).nombre.split(" ")[0])+" "+n).join(" · ");
-        return `<div style="padding:12px 0;border-top:.5px solid var(--border)">
+        return `<div style="padding:12px 0;border-top:.5px solid var(--border)${estaOculto(r.p.nombre,st)?';opacity:.5':''}">
         <div class="row" style="justify-content:space-between;align-items:baseline;gap:10px">
           <span style="font-size:14px;font-weight:600">${esc(r.p.nombre)}</span>
           <span style="font-weight:800;white-space:nowrap;color:${r.stk<=r.mn?'var(--red)':'var(--text)'}">Quedan ${r.stk}</span>
@@ -2432,9 +2443,8 @@ function vistaStock(){
             <button class="btn sm ghost" style="width:40px;font-size:20px;font-weight:700;padding:4px 0" onclick="ajustarUno('${encodeURIComponent(r.p.nombre)}',1)">+</button>
           </span>
           <span class="row" style="align-items:center;gap:6px">
-            <span class="muted" style="font-size:12px">Pedir si falta</span>
-            <input id="mn_${r.i}" type="number" inputmode="numeric" value="${r.mn}" style="${inp};width:56px;text-align:center;padding:5px">
-            <button class="btn sm ghost" onclick="ajustarStock('${encodeURIComponent(r.p.nombre)}')">Fijar</button>
+            <button class="btn sm ghost" onclick="ajustarStock('${encodeURIComponent(r.p.nombre)}')">Fijar stock real</button>
+            <button class="btn sm ghost" onclick="toggleOculto('${encodeURIComponent(r.p.nombre)}')">${estaOculto(r.p.nombre,st)?'Mostrar':'Ocultar'}</button>
           </span>
         </div>
       </div>`; }).join("")||empty('box', q?('No encontré productos con "'+esc(STOCK_Q)+'".'):'Cargá stock con el botón de arriba para empezar.')}
