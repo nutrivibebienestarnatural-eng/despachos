@@ -1653,10 +1653,12 @@ function vistaOperador(){
         <button class="btn ghost sm" onclick="recalcularRutas()">Recalcular rutas</button>
       </div>
     </div>`:''}
-    <div class="filters">
-      ${["todos","activos","cadete","correo","pendiente","preparado","entregado","confirmado","anulado"]
-        .map(f=>`<button class="${FILTRO===f?'on':''}" onclick="setFiltro('${f}')">${({todos:'Todos',activos:'Activos',cadete:'Cadete',correo:'Correo',anulado:'Anulados'})[f]||estObj(f).label}</button>`).join("")}
-      ${EMPRESAS.map(e=>`<button class="${FILTRO==='emp:'+e.id?'on':''}" onclick="setFiltro('emp:${e.id}')">${esc(e.nombre)}</button>`).join("")}
+    <div class="filters" style="margin-bottom:12px">
+      <select onchange="setFiltro(this.value)" style="width:100%;max-width:340px;padding:11px 12px;border:1px solid var(--border);border-radius:var(--r-inp,12px);background:var(--bg);color:var(--text);font:inherit;font-weight:600;cursor:pointer">
+        ${["todos","activos","cadete","correo","pendiente","preparado","entregado","confirmado","anulado"]
+          .map(f=>`<option value="${f}" ${FILTRO===f?'selected':''}>${({todos:'Todos',activos:'Activos',cadete:'Cadete',correo:'Correo',anulado:'Anulados'})[f]||estObj(f).label}</option>`).join("")}
+        ${EMPRESAS.map(e=>`<option value="emp:${e.id}" ${FILTRO==='emp:'+e.id?'selected':''}>${esc(e.nombre)}</option>`).join("")}
+      </select>
     </div>
     <div class="cardgrid">${listaPorFecha(lista)}</div>
     ${DB.modo==="demo"?`<div class="center" style="margin-top:24px">
