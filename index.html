@@ -524,7 +524,7 @@ function rutaOptima(stops){                                 // vecino más cerca
   return out; }
 /* --- Preparación / picking --- */
 let PICK={};   // progreso de escaneo de la sesión: {nombreProducto: cantidadEscaneada}
-function parseItems(t){ return (t||"").split(/·|,|\n|;/).map(s=>s.trim()).filter(Boolean).map(s=>{
+function parseItems(t){ return (t||"").split(/·|\n|;|\|/).map(s=>s.trim()).filter(Boolean).map(s=>{
   const m=s.match(/^(\d+)\s*[xX]\s*(.+)$/); return m?{cant:+m[1],nombre:m[2].trim()}:{cant:1,nombre:s}; }); }
 function pickingConsolidado(){
   const map={};
@@ -2132,6 +2132,14 @@ function formNuevo(edit){
         <div class="field"><span class="label">Localidad</span><input id="f_ciu" value="${esc(p.ciudad||'')}" placeholder="Ej: Palermo"></div>
         <div class="field"><span class="label">Provincia</span><select id="f_prov">${provOpts}</select></div>
       </div>
+      <div class="field"><span class="label">Agregar producto del catálogo</span>
+        <div class="row" style="gap:8px;align-items:flex-end">
+          <select id="f_prodsel" style="flex:1;min-width:0">${PRODUCTOS.map(pr=>`<option>${esc(pr.nombre)}</option>`).join("")}</select>
+          <input id="f_prodcant" type="number" inputmode="numeric" value="1" min="1" style="width:64px;text-align:center">
+          <button type="button" class="btn sm" onclick="agregarItemManual()">Agregar</button>
+        </div>
+        <div class="hint" style="margin-top:6px">Elegí el producto de la lista y tocá <b>Agregar</b>. Así queda exacto y descuenta bien del stock.</div>
+      </div>
       <div class="field"><span class="label">Items</span><textarea id="f_items" placeholder="Ej: 2x Magnesio · 1x Omega 3">${esc(p.items||'')}</textarea></div>
       <div class="field"><span class="label">Nota para la etiqueta (sale en negrita)</span><input id="f_nota" value="${esc(p.nota||'')}" placeholder="Ej: DEJAR EN CABINA DE VIGILANCIA"></div>
       <div class="two">
@@ -2156,6 +2164,16 @@ function formNuevo(edit){
 }
 function toggleCorreo(){ const m=$("#f_metodo").value;
   $("#bloqueCorreo").classList.toggle("hide", m!=="correo"); }
+function agregarItemManual(){
+  const sel=$("#f_prodsel"), c=$("#f_prodcant"), ta=$("#f_items");
+  if(!sel||!ta) return;
+  const nombre=(sel.value||"").trim(); if(!nombre) return;
+  const cant=Math.max(1, parseInt((c&&c.value)||"1",10)||1);
+  const linea=cant+"x "+nombre;
+  ta.value = ta.value.trim() ? (ta.value.trim()+" · "+linea) : linea;
+  if(c) c.value=1;
+  toast("Agregado: "+nombre.split(" ").slice(0,3).join(" "));
+}
 async function guardarNuevo(){
   const cliente=$("#f_cli").value.trim();
   if(!cliente){ toast("Falta el nombre del cliente"); return; }
