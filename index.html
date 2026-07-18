@@ -893,10 +893,12 @@ function enRango(ts,desde,hasta){
   return true;
 }
 /* Informe de salidas: todo lo que se retiró del stock, por producto y por empresa */
-let SAL_DESDE="", SAL_HASTA="", SAL_EXP={}, SAL_MIN=0;   // SAL_MIN: corte exacto del último cierre   // SAL_EXP: qué productos tienen abierto el detalle de "a dónde fue"
+let SAL_DESDE="", SAL_HASTA="", SAL_EXP={}, SAL_MIN=null;   // null = automático: desde el último cierre   // SAL_MIN: corte exacto del último cierre   // SAL_EXP: qué productos tienen abierto el detalle de "a dónde fue"
+function salMinEfectivo(){ return SAL_MIN===null ? ultimoCierreTs() : SAL_MIN; }
 function salidasResumen(desde,hasta){
   const st=stockState();
-  const sal=(st.movs||[]).filter(m=>m.tipo==="salida" && (m.ts||0)>=(SAL_MIN||0) && enRango(m.ts,desde,hasta));
+  const min=salMinEfectivo();
+  const sal=(st.movs||[]).filter(m=>m.tipo==="salida" && (m.ts||0)>=min && enRango(m.ts,desde,hasta));
   const porProd={};
   sal.forEach(m=>{ const k=m.prod; if(!porProd[k]) porProd[k]={prod:k,total:0,porEmp:{},detalle:[]};
     porProd[k].total+=m.cant; const e=m.empresa||"—"; porProd[k].porEmp[e]=(porProd[k].porEmp[e]||0)+m.cant;
@@ -961,7 +963,7 @@ function setRangoCta(k){
   CTA_DESDE=r[0]; CTA_HASTA=r[1]; pantallaCuenta();
 }
 function setRangoSal(k){
-  SAL_MIN=0;
+  SAL_MIN=0;   // rango manual: ignora el corte del cierre
   const r = k==="sem"?rangoSemana(0) : k==="ant"?rangoSemana(-1) : k==="mes"?rangoMes() : ["",""];
   SAL_DESDE=r[0]; SAL_HASTA=r[1]; pantallaSalidas();
 }
@@ -1119,7 +1121,7 @@ async function ejecutarCierre(){
     toast("Cerrando "+entregados.length+" pedidos entregados…");
     for(const p of entregados){ try{ await DB.update(p.id,{estado:"confirmado"}); }catch(e){} }
   }
-  SAL_MIN=Date.now(); SAL_DESDE=""; SAL_HASTA="";
+  SAL_MIN=null; SAL_DESDE=""; SAL_HASTA="";
   alert("✅ PERÍODO CERRADO\n\n"+entregados.length+" pedidos confirmados.\nQuedó guardado el resumen y el saldo de stock.\nDesde ahora se cuenta de cero.");
   pantallaCierre();
 }
@@ -1389,14 +1391,14 @@ function pantallaSalidas(){
     <button class="btn sm ghost" onclick="OPVIEW='stock';vistaOperador()">← Volver</button>
     <div class="title" style="margin-top:14px">Lo que salió del stock</div>
     <div class="subtitle">Todo lo que se retiró, por producto y por empresa</div>
-    ${SAL_MIN?`<div class="hint" style="margin-top:6px">Mostrando desde el cierre del ${new Date(SAL_MIN).toLocaleString("es-AR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})} hs</div>`:""}
+    ${salMinEfectivo()?`<div class="hint" style="margin-top:6px">Mostrando desde el cierre del ${new Date(salMinEfectivo()).toLocaleString("es-AR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})} hs</div>`:`<div class="hint" style="margin-top:6px">Mostrando todo el histórico</div>`}
     <div class="card" style="margin:14px 0">
       <div class="row" style="gap:10px;align-items:flex-end;flex-wrap:wrap">
         <div style="flex:1;min-width:120px"><span class="label">Desde</span><input type="date" value="${SAL_DESDE}" onchange="SAL_DESDE=this.value;pantallaSalidas()" style="${inpS}"></div>
         <div style="flex:1;min-width:120px"><span class="label">Hasta</span><input type="date" value="${SAL_HASTA}" onchange="SAL_HASTA=this.value;pantallaSalidas()" style="${inpS}"></div>
       </div>
       <div class="row" style="margin-top:10px">
-        <button class="btn sm ghost" onclick="SAL_MIN=ultimoCierreTs();SAL_DESDE='';SAL_HASTA='';pantallaSalidas()">Desde el último cierre</button>
+        <button class="btn sm ghost" onclick="SAL_MIN=null;SAL_DESDE='';SAL_HASTA='';pantallaSalidas()">Desde el último cierre</button>
         <button class="btn sm ghost" onclick="setRangoSal('sem')">Esta semana</button>
         <button class="btn sm ghost" onclick="setRangoSal('ant')">Semana pasada</button>
         <button class="btn sm ghost" onclick="setRangoSal('mes')">Este mes</button>
@@ -1759,7 +1761,8 @@ function imprimirComprobante(){
 }
 function imputacionEmp(st,desde,hasta){
   const g={};
-  (st.movs||[]).filter(m=>m.empresa && enRango(m.ts,desde,hasta)).forEach(m=>{
+  const minC=ultimoCierreTs();   // arranca desde el último cierre
+  (st.movs||[]).filter(m=>m.empresa && (m.ts||0)>=minC && enRango(m.ts,desde,hasta)).forEach(m=>{
     const e=m.empresa;
     if(!g[e]) g[e]={empresa:e,total:0,aporte:0,canales:{},prods:{}};
     if(m.tipo==="salida"){ g[e].total+=m.cant; const c=m.canal||"?"; g[e].canales[c]=(g[e].canales[c]||0)+m.cant; g[e].prods[m.prod]=(g[e].prods[m.prod]||0)+m.cant; }
@@ -3317,7 +3320,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v18jul-corte";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v18jul-periodo";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
