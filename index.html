@@ -1477,7 +1477,7 @@ async function crearPedido(d){
   const id=await DB.create({tipo:"pedido",empresa:emp.id,canal:d.canal||emp.canalDefault,ref:d.ref||"",
     cliente:d.cliente,tel:d.tel||"",dir:d.dir||"",ciudad:d.ciudad||"",provincia:d.provincia||"",cp:d.cp||"",
     etiquetaPdf:d.etiquetaPdf||"",etiquetaPdfNombre:d.etiquetaPdfNombre||"",nota:d.nota||"",zonaFija:(d.zonaFija!=null?d.zonaFija:""),
-    items:d.items||"",origen:d.origen||r.origen,metodo:d.metodo||r.metodo,
+    items:d.items||"",prods:d.prods||[],origen:d.origen||r.origen,metodo:d.metodo||r.metodo,
     correo:d.correo||"",tracking:d.tracking||"",tnId:d.tnId||"",cadete:"",estado:"pendiente",creado:Date.now(),
     eventos:[{estado:"pendiente",ts:Date.now(),nota:"Pedido creado"}]});
   return id;
@@ -2220,6 +2220,31 @@ function parsePDF(text){
 }
 
 /* ---------- OPERADOR · Pedido manual / editar ruta ---------- */
+let EDIT_PRODS=[];
+function pintarProdsEdit(){
+  const box=$("#f_prodsBox"); if(!box) return;
+  box.innerHTML = EDIT_PRODS.length ? EDIT_PRODS.map((x,i)=>`
+    <div class="row" style="justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-top:.5px solid var(--border)">
+      <span style="min-width:0;font-size:14px">${esc(x.nombre)}</span>
+      <span class="row" style="gap:6px;flex:0 0 auto;align-items:center">
+        <input type="number" min="1" value="${x.cant}" onchange="EDIT_PRODS[${i}].cant=Math.max(1,+this.value||1)" style="width:56px;text-align:center;padding:5px;border:1px solid var(--border);border-radius:8px;font:inherit;background:var(--bg)">
+        <button type="button" class="btn sm ghost" style="color:var(--red)" onclick="quitarProdEdit(${i})">Quitar</button>
+      </span>
+    </div>`).join("")
+    : `<div class="hint" style="margin:6px 0 0">Todavía no agregaste productos. Si dejás vacío, se usa el texto de referencia de arriba.</div>`;
+}
+function addProdEdit(){
+  const inp=$("#f_addProd"), cn=$("#f_addCant"); if(!inp) return;
+  const nom=(inp.value||"").trim(); if(!nom){ toast("Elegí un producto de la lista"); return; }
+  const prod=PRODUCTOS.find(x=>x.nombre===nom)||mejorProducto(nom);
+  if(!prod){ toast("Ese producto no está en el catálogo"); return; }
+  const cant=Math.max(1,parseInt(cn&&cn.value,10)||1);
+  const ya=EDIT_PRODS.find(x=>x.nombre===prod.nombre);
+  if(ya) ya.cant+=cant; else EDIT_PRODS.push({nombre:prod.nombre,cant});
+  inp.value=""; if(cn) cn.value=1;
+  pintarProdsEdit(); toast(prod.nombre.split(" ").slice(0,3).join(" ")+" agregado");
+}
+function quitarProdEdit(i){ EDIT_PRODS.splice(i,1); pintarProdsEdit(); }
 function formNuevo(edit){
   const p=edit||{};
   const provOpts=PROVINCIAS.map(pr=>`<option ${p.provincia===pr?'selected':''}>${pr}</option>`).join("");
@@ -2258,7 +2283,18 @@ function formNuevo(edit){
         <div class="field"><span class="label">Localidad</span><input id="f_ciu" value="${esc(p.ciudad||'')}" placeholder="Ej: Palermo"></div>
         <div class="field"><span class="label">Provincia</span><select id="f_prov">${provOpts}</select></div>
       </div>
-      <div class="field"><span class="label">Items</span><textarea id="f_items" placeholder="Ej: 2x Magnesio · 1x Omega 3">${esc(p.items||'')}</textarea></div>
+      <div class="field"><span class="label">Items (referencia de Tienda Nube)</span><textarea id="f_items" placeholder="Ej: 2x Magnesio · 1x Omega 3">${esc(p.items||'')}</textarea>
+        <div class="hint" style="margin-top:4px">Este texto es solo para leer. Lo que se descuenta es la lista de abajo.</div></div>
+      <div class="field"><span class="label">Productos a descontar (del catálogo)</span>
+        <div id="f_prodsBox"></div>
+        <div class="row" style="gap:8px;margin-top:8px;align-items:center">
+          <input id="f_addProd" list="catProds" placeholder="🔍 Buscá el producto…" style="flex:1;min-width:0">
+          <input id="f_addCant" type="number" inputmode="numeric" value="1" min="1" style="width:64px;text-align:center">
+          <button type="button" class="btn sm" onclick="addProdEdit()">Agregar</button>
+        </div>
+        <datalist id="catProds">${PRODUCTOS.map(x=>`<option value="${esc(x.nombre)}">`).join("")}</datalist>
+        <div class="hint" style="margin-top:6px">Buscá el producto correcto y agregalo. El de arriba queda como referencia nomás.</div>
+      </div>
       <div class="field"><span class="label">Nota para la etiqueta (sale en negrita)</span><input id="f_nota" value="${esc(p.nota||'')}" placeholder="Ej: DEJAR EN CABINA DE VIGILANCIA"></div>
       <div class="two">
         <div class="field"><span class="label">Origen del envío</span>
@@ -2279,6 +2315,8 @@ function formNuevo(edit){
       </div>
       <button class="btn block" onclick='${edit?`guardarEdicion(${JSON.stringify(p.id)})`:"guardarNuevo()"}'>${edit?'Guardar cambios':'Crear pedido'}</button>
     </div>`;
+  EDIT_PRODS=(p.prods&&p.prods.length)?p.prods.map(x=>({nombre:x.nombre,cant:+x.cant||1})):[];
+  pintarProdsEdit();
 }
 function toggleCorreo(){ const m=$("#f_metodo").value;
   $("#bloqueCorreo").classList.toggle("hide", m!=="correo"); }
@@ -2290,7 +2328,7 @@ async function guardarNuevo(){
   try{
     await crearPedido({ empresa:$("#f_emp").value, canal:$("#f_canal").value, cliente, ref:refN?("#"+refN):"", nota:($("#f_nota")?$("#f_nota").value:"").trim(), zonaFija:($("#f_zona")?$("#f_zona").value:""), tel:$("#f_tel").value.trim(),
       dir:$("#f_dir").value.trim(), ciudad:$("#f_ciu").value.trim(), provincia:$("#f_prov").value,
-      items:$("#f_items").value.trim(), origen:$("#f_origen").value, metodo,
+      items:$("#f_items").value.trim(), prods:EDIT_PRODS.slice(), origen:$("#f_origen").value, metodo,
       correo: metodo==="correo"?$("#f_correo").value:"", tracking: metodo==="correo"?$("#f_track").value.trim():"" });
     toast("Pedido creado ✅");
   }catch(e){ alert("⚠️ NO SE PUDO CREAR EL PEDIDO\n\nError: "+(e&&e.message||e)+"\nVersión: "+APP_VERSION+"\n\nSacale captura y pasásela a Claude."); return; }
@@ -2302,7 +2340,7 @@ async function guardarEdicion(id){
   const metodo=$("#f_metodo").value;
   const refV=($("#f_ref")?$("#f_ref").value:"").trim().replace(/\D/g,"");
   await DB.update(id,{ cliente, empresa:($("#f_emp")?$("#f_emp").value:undefined), ref:refV?("#"+refV):"", nota:($("#f_nota")?$("#f_nota").value:"").trim(), zonaFija:($("#f_zona")?$("#f_zona").value:""), tel:$("#f_tel").value.trim(), dir:$("#f_dir").value.trim(),
-    ciudad:$("#f_ciu").value.trim(), provincia:$("#f_prov").value, items:$("#f_items").value.trim(),
+    ciudad:$("#f_ciu").value.trim(), provincia:$("#f_prov").value, items:$("#f_items").value.trim(), prods:EDIT_PRODS.slice(),
     origen:$("#f_origen").value, metodo, correo: metodo==="correo"?$("#f_correo").value:"",
     tracking: metodo==="correo"?$("#f_track").value.trim():"" });
   toast("Pedido corregido"); vistaOperador();
@@ -2756,7 +2794,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v17jul-orden";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v17jul-prods";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
@@ -2931,6 +2969,8 @@ function procesarScan(code){
 let PREP_ID=null, PREP_SCAN={}, PREP_REAL={};   // PREP_SCAN: progreso por renglón del pedido · PREP_REAL: producto real escaneado (para descontar lo que salió)
 function itemsPedido(p){
   const out=[];
+  // Si la orden tiene productos elegidos del catálogo, esos mandan (exactos, sin adivinar)
+  if(p.prods && p.prods.length) return p.prods.filter(x=>x&&x.nombre&&x.cant>0).map(x=>({nombre:x.nombre, cant:+x.cant||1, prodNombre:x.nombre}));
   parseItems(p.items||"").forEach(it=>{
     const ke=kitEspecial(it.nombre);
     if(ke){ ke.comps.forEach(cmp=>{ const prod=mejorProducto(cmp.n);
