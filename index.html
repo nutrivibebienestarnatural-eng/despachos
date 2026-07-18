@@ -163,6 +163,11 @@ textarea{resize:vertical;min-height:66px;font-size:15px;line-height:1.5}
 .ord-cli{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ord-sub{color:var(--text-2);font-size:12.5px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dia-h{font-size:12px;font-weight:800;color:var(--text-2);text-transform:capitalize;letter-spacing:.02em;margin:18px 0 8px;padding-left:2px}
+.tbl{width:100%;border-collapse:collapse;font-size:13px;min-width:820px}
+.tbl th{text-align:left;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--text-3);padding:8px 10px;border-bottom:1px solid var(--border);white-space:nowrap;position:sticky;top:0;background:var(--bg)}
+.tbl td{padding:9px 10px;border-bottom:.5px solid var(--border);white-space:nowrap;vertical-align:middle}
+.tbl tbody tr:hover{background:var(--bg-2)}
+.tbl td:nth-child(3){white-space:normal;min-width:150px}
 .ord-chev{flex:0 0 auto;color:var(--text-3);font-size:15px;font-weight:800;width:20px;text-align:center}
 .ord-body{margin-top:13px;border-top:.5px solid var(--border);padding-top:12px}
 .order .top{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap}
@@ -282,6 +287,8 @@ const FIREBASE_CONFIG = {
 };
 
 const CADETES = ["Cardinal","Claudia"];   // quienes reparten CABA + Buenos Aires (no correo)
+const CADETES_SIN_COSTO = ["Claudia"];    // reparten pero NO se les paga (no cobran)
+function cadeteCobra(quien){ return !CADETES_SIN_COSTO.some(c=>c.toLowerCase()===String(quien||"").toLowerCase()); }
 let CADETERIA_TEL = "";                 // WhatsApp de Cardinal (mensajería) para mandarles el reparto
 const CORREOS = ["Andreani","OCA","Correo Argentino","Vía Cargo","Cruz del Sur"];
 /* Catálogo de productos. El campo `barcode` es lo que lee el lector:
@@ -894,7 +901,289 @@ function salidasResumen(desde,hasta){
   return {lista, total:sal.reduce((s,m)=>s+m.cant,0), totEmp};
 }
 let REP_DESDE="", REP_HASTA="", REP_SEL={};
-let CTA_DESDE="", CTA_HASTA="";
+let CTA_DESDE="", CTA_HASTA="", CTA_TAB="cobrar";
+function setCtaTab(t){ CTA_TAB=t; pantallaCuenta(); }
+function cuentaTransportistas(peds){
+  const zc=zonaCosto(); const esCad=c=>["caba","1","2","3"].includes(c);
+  const g={};
+  peds.forEach(p=>{ const c=catPedido(p);
+    const quien = p.metodo==="correo" ? "Correo" : (p.cadete || "Sin asignar");
+    const costo = (esCad(c) && cadeteCobra(quien)) ? (zc[c]||0) : 0;      // lo que le pagás al que reparte
+    if(!g[quien]) g[quien]={quien,n:0,costo:0,peds:[],zonas:{}};
+    g[quien].n++; g[quien].costo+=costo; g[quien].peds.push({p,costo});
+    const zl=anilloDe(p).label; g[quien].zonas[zl]=(g[quien].zonas[zl]||0)+1; });
+  return Object.values(g).sort((a,b)=>b.costo-a.costo);
+}
+/* ---- LIBRO DE CAJA: cobros (a las marcas) y pagos (a los que reparten) ---- */
+function cajaRecord(){ return PEDIDOS.find(p=>p.tipo==="caja"); }
+function cajaMovs(){ const r=cajaRecord(); return ((r&&r.movs)||[]).slice().sort((a,b)=>(b.ts||0)-(a.ts||0)); }
+async function cajaAgregar(mov){
+  const r=cajaRecord(); const arr=((r&&r.movs)||[]).concat([mov]);
+  if(r) await DB.update(r.id,{movs:arr}); else await DB.create({tipo:"caja",movs:arr});
+}
+async function cajaBorrar(nro){
+  const r=cajaRecord(); if(!r) return;
+  await DB.update(r.id,{movs:((r.movs)||[]).filter(m=>m.nro!==nro)});
+}
+function nuevoNro(clase){
+  const pref=clase==="cobro"?"C":"P";
+  const n=cajaMovs().filter(m=>m.clase===clase).length+1;
+  return pref+"-"+String(n).padStart(4,"0");
+}
+function periodoTxt(){ return (CTA_DESDE||CTA_HASTA)?((CTA_DESDE||"…")+" al "+(CTA_HASTA||"…")):"Todo el período"; }
+async function registrarMovCaja(clase,quien,monto,cant){
+  const m=Math.round(+monto||0); if(!m){ toast("El importe es 0"); return; }
+  const txt=clase==="cobro"?("¿Registrar el COBRO de "+fmtAr(m)+" a "+quien+"?"):("¿Registrar el PAGO de "+fmtAr(m)+" a "+quien+"?");
+  if(!confirm(txt+"\n\nPeríodo: "+periodoTxt()+"\nEnvíos: "+cant+"\n\nQueda guardado en el resumen de cuenta.")) return;
+  const nro=nuevoNro(clase);
+  await cajaAgregar({nro,clase,quien,monto:m,cant:+cant||0,periodo:periodoTxt(),ts:Date.now()});
+  toast((clase==="cobro"?"Cobro":"Pago")+" "+nro+" registrado ✓");
+  setCtaTab("historial");
+}
+function rangoSemana(off){   // off=0 esta semana, off=-1 la pasada. Lunes a domingo.
+  const d=new Date(); d.setHours(0,0,0,0);
+  const dow=(d.getDay()+6)%7;                     // 0=lunes
+  const ini=new Date(d); ini.setDate(d.getDate()-dow+(off*7));
+  const fin=new Date(ini); fin.setDate(ini.getDate()+6);
+  const f=x=>x.toISOString().slice(0,10);
+  return [f(ini),f(fin)];
+}
+function rangoMes(){ const d=new Date(); const f=x=>x.toISOString().slice(0,10);
+  return [f(new Date(d.getFullYear(),d.getMonth(),1)), f(new Date(d.getFullYear(),d.getMonth()+1,0))]; }
+function setRangoCta(k){
+  const r = k==="sem"?rangoSemana(0) : k==="ant"?rangoSemana(-1) : k==="mes"?rangoMes() : ["",""];
+  CTA_DESDE=r[0]; CTA_HASTA=r[1]; pantallaCuenta();
+}
+function setRangoSal(k){
+  const r = k==="sem"?rangoSemana(0) : k==="ant"?rangoSemana(-1) : k==="mes"?rangoMes() : ["",""];
+  SAL_DESDE=r[0]; SAL_HASTA=r[1]; pantallaSalidas();
+}
+/* ---- CIERRE DE PERÍODO: congela el resumen de la semana y arranca el conteo de cero ---- */
+function cierresRecord(){ return PEDIDOS.find(p=>p.tipo==="cierres"); }
+function cierresLista(){ const r=cierresRecord(); return ((r&&r.lista)||[]).slice().sort((a,b)=>(b.ts||0)-(a.ts||0)); }
+function ultimoCierreTs(){ const l=cierresLista(); return l.length?l[0].ts:0; }
+function fDia(ts){ return new Date(ts).toISOString().slice(0,10); }
+function datosPeriodo(desdeTs){
+  const st=stockState();
+  const movs=(st.movs||[]).filter(m=>m.tipo==="salida" && (m.ts||0)>=desdeTs);
+  const peds=soloPedidos().filter(p=>p.estado!=="anulado" && (p.cliente||"")!=="_PRUEBA_DIAGNOSTICO" && (p.creado||0)>=desdeTs);
+  const zc=zonaCosto(), esCad=c=>["caba","1","2","3"].includes(c);
+  const marcas={};
+  peds.forEach(p=>{ const e=p.empresa||"—"; if(!marcas[e]) marcas[e]={emp:e,envios:0,cobrar:0,unid:0,prods:{}};
+    marcas[e].envios++; marcas[e].cobrar+=costoEnvio(p); });
+  movs.forEach(m=>{ const e=m.empresa||"—"; if(!marcas[e]) marcas[e]={emp:e,envios:0,cobrar:0,unid:0,prods:{}};
+    marcas[e].unid+=m.cant; marcas[e].prods[m.prod]=(marcas[e].prods[m.prod]||0)+m.cant; });
+  const rep={};
+  peds.forEach(p=>{ const q=p.metodo==="correo"?"Correo":(p.cadete||"Sin asignar"); const c=catPedido(p);
+    if(!rep[q]) rep[q]={quien:q,envios:0,pagar:0};
+    rep[q].envios++; rep[q].pagar += (esCad(c)&&p.metodo!=="correo"&&cadeteCobra(q))?(zc[c]||0):0; });
+  const saldos={}; PRODUCTOS.forEach(pr=>{ const n=nivel(pr.nombre,st); if(n) saldos[pr.nombre]=n; });
+  return {marcas:Object.values(marcas), rep:Object.values(rep), saldos, movs:movs.length, peds:peds.length};
+}
+/* Acta de cierre: documento formal del período, reimprimible desde el archivo */
+function imprimirActaCierre(ts){
+  const c=cierresLista().find(x=>x.ts===ts); if(!c){ toast("No encontré ese cierre"); return; }
+  const w=window.open("","_blank","width=820,height=900"); if(!w){ toast("Permití las ventanas emergentes"); return; }
+  const nMarca=e=>e==="—"?"Sin marca":empresaObj(e).nombre;
+  const marcas=(c.marcas||[]).sort((a,b)=>b.cobrar-a.cobrar);
+  const blqMarcas=marcas.map(m=>{
+    const prods=Object.entries(m.prods||{}).sort((a,b)=>b[1]-a[1]);
+    return `<div class="mk"><div class="mkh"><b>${esc(nMarca(m.emp))}</b><span>${fmtAr(m.cobrar)}</span></div>
+      <div class="mut">${m.envios} envíos · ${m.unid} unidades retiradas</div>
+      ${prods.length?`<table class="m"><tbody>${prods.map(([n,q])=>`<tr><td>${esc(n)}</td><td class="r">${q}</td></tr>`).join("")}</tbody></table>`:""}
+    </div>`; }).join("");
+  const blqRep=(c.rep||[]).map(r=>`<tr><td>${esc(r.quien)}</td><td class="r">${r.envios}</td><td class="r">${r.pagar?fmtAr(r.pagar):"—"}</td></tr>`).join("");
+  const sal=Object.entries(c.saldos||{}).sort((a,b)=>a[0].localeCompare(b[0]));
+  const totU=sal.reduce((s,x)=>s+x[1],0);
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Acta de cierre ${esc(c.hasta||"")}</title>
+  <style>@page{size:A4;margin:14mm}body{font-family:-apple-system,system-ui,Segoe UI,sans-serif;color:#111;font-size:12px}
+  .h{border-bottom:2px solid #111;padding-bottom:10px;margin-bottom:16px}
+  h1{font-size:21px;margin:0 0 2px}.mut{color:#666}
+  h2{font-size:13px;text-transform:uppercase;letter-spacing:.05em;margin:22px 0 8px;padding-bottom:4px;border-bottom:1px solid #111}
+  table{width:100%;border-collapse:collapse}th{text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:#666;border-bottom:1px solid #ccc;padding:5px}
+  td{padding:5px;border-bottom:.5px solid #eee}.r{text-align:right}
+  .kpi{display:flex;gap:10px;margin:12px 0}.kpi div{flex:1;border:1px solid #ddd;border-radius:7px;padding:9px 11px}
+  .kpi b{display:block;font-size:17px}.kpi span{color:#666;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em}
+  .mk{border:1px solid #ddd;border-radius:7px;padding:10px 12px;margin-bottom:9px;break-inside:avoid}
+  .mkh{display:flex;justify-content:space-between;font-size:14px;margin-bottom:2px}
+  .m{margin-top:7px}.m td{padding:3px 5px;font-size:11px}
+  .firma{margin-top:44px;display:flex;gap:40px}.firma div{flex:1;border-top:1px solid #111;padding-top:5px;color:#666;font-size:11px}
+  </style></head><body>
+  <div class="h"><h1>Acta de cierre de período</h1>
+    <div class="mut">Fullminet · ${esc(c.desde||"inicio")} al ${esc(c.hasta||"")} · Emitida ${new Date(c.ts).toLocaleDateString("es-AR")}</div></div>
+  <div class="kpi">
+    <div><b>${c.peds||0}</b><span>Órdenes</span></div>
+    <div><b>${fmtAr(c.totalCobrar||0)}</b><span>A cobrar</span></div>
+    <div><b>${fmtAr(c.totalPagar||0)}</b><span>A pagar</span></div>
+    <div><b>${totU}</b><span>Unidades en stock</span></div>
+  </div>
+  <h2>Por marca · envíos y mercadería retirada</h2>
+  ${blqMarcas||'<div class="mut">Sin movimientos.</div>'}
+  <h2>Reparto</h2>
+  <table><thead><tr><th>Quién</th><th class="r">Envíos</th><th class="r">A pagar</th></tr></thead><tbody>${blqRep||""}</tbody></table>
+  <h2>Saldo de stock al cierre</h2>
+  <table><thead><tr><th>Producto</th><th class="r">Unidades</th></tr></thead>
+  <tbody>${sal.map(([n,q])=>`<tr><td>${esc(n)}</td><td class="r">${q}</td></tr>`).join("")}</tbody></table>
+  <div style="display:flex;justify-content:space-between;border-top:1.5px solid #111;padding-top:7px;margin-top:8px;font-weight:700">
+    <span>${sal.length} productos</span><span>${totU} unidades</span></div>
+  <div class="firma"><div>Cerró · Fullminet</div><div>Conforme</div></div>
+  <scr`+`ipt>window.onload=function(){setTimeout(function(){window.print()},400)}<\/scr`+`ipt></body></html>`);
+  w.document.close();
+}
+function pantallaCierre(){
+  const desde=ultimoCierreTs();
+  const d=datosPeriodo(desde);
+  const ini=desde?new Date(desde).toLocaleDateString("es-AR"):"el inicio";
+  const prev=cierresLista();
+  app().innerHTML=`
+    <button class="btn sm ghost" onclick="OPVIEW='informes';vistaOperador()">← Volver</button>
+    <div class="title" style="margin-top:14px">Cierre de período</div>
+    <div class="subtitle">Congela lo que pasó desde ${esc(ini)}, guarda el saldo de stock y arranca el conteo de cero. <b>El stock físico no se toca.</b></div>
+    <div class="kpis" style="margin:14px 0">
+      <div class="kpi"><div class="n">${d.peds}</div><div class="l">Órdenes</div></div>
+      <div class="kpi"><div class="n">${d.movs}</div><div class="l">Salidas</div></div>
+      <div class="kpi"><div class="n" style="color:var(--green)">${fmtAr(d.marcas.reduce((s,x)=>s+x.cobrar,0))}</div><div class="l">A cobrar</div></div>
+      <div class="kpi"><div class="n" style="color:#e5484d">${fmtAr(d.rep.reduce((s,x)=>s+x.pagar,0))}</div><div class="l">A pagar</div></div>
+    </div>
+    <div class="label">Qué se lleva cada marca</div>
+    ${d.marcas.length?d.marcas.map(x=>`<div class="card" style="margin-bottom:8px;padding:12px 14px">
+      <div class="row" style="justify-content:space-between"><b>${esc(x.emp==="—"?"Sin marca":empresaObj(x.emp).nombre)}</b>
+      <span style="color:var(--green);font-weight:700">${fmtAr(x.cobrar)}</span></div>
+      <div class="muted" style="font-size:12.5px;margin-top:2px">${x.envios} envíos · ${x.unid} unidades retiradas</div>
+      <div class="row" style="margin-top:8px"><button class="btn sm ghost" onclick="imprimirFacturaMarca('${esc(x.emp)}')">${icon('printer')} Estado de cuenta</button></div>
+    </div>`).join(""):'<div class="hint">Sin movimientos en el período.</div>'}
+    <div class="label" style="margin-top:16px">Reparto</div>
+    ${d.rep.length?d.rep.map(x=>`<div class="card" style="margin-bottom:8px;padding:12px 14px">
+      <div class="row" style="justify-content:space-between"><b>${esc(x.quien)}</b>
+      <span style="color:${x.pagar?'#e5484d':'var(--text-2)'};font-weight:700">${x.pagar?fmtAr(x.pagar):'—'}</span></div>
+      <div class="muted" style="font-size:12.5px;margin-top:2px">${x.envios} envíos</div>
+    </div>`).join(""):''}
+    <div class="card" style="margin-top:16px;border:1.5px solid var(--accent)">
+      <div style="font-weight:700">Cerrar el período</div>
+      <div class="hint" style="margin:6px 0 12px">Guardo este resumen y el saldo de stock (${Object.keys(d.saldos).length} productos). Desde mañana, "lo que salió" cuenta de cero. Podés seguir viendo los cierres viejos acá abajo.</div>
+      <button class="btn block" onclick="ejecutarCierre()">🔒 Cerrar período ahora</button>
+    </div>
+    ${prev.length?`<div class="label" style="margin-top:18px">Cierres anteriores</div>
+      ${prev.map(c=>`<div class="card" style="margin-bottom:8px;padding:12px 14px">
+        <div class="row" style="justify-content:space-between"><b>${esc(c.hasta||fDia(c.ts))}</b>
+        <span class="muted">${c.peds||0} órdenes · ${fmtAr(c.totalCobrar||0)}</span></div>
+        <div class="muted" style="font-size:12.5px;margin-top:2px">Desde ${esc(c.desde||'el inicio')} · ${Object.keys(c.saldos||{}).length} productos en stock al cierre</div>
+        <div class="row" style="margin-top:8px"><button class="btn sm ghost" onclick="imprimirActaCierre(${c.ts})">${icon('printer')} Acta de cierre</button></div>
+      </div>`).join("")}`:''}`;
+}
+async function ejecutarCierre(){
+  const desde=ultimoCierreTs();
+  const d=datosPeriodo(desde);
+  if(!confirm("¿Cerrar el período?\n\n· Se guarda el resumen y el saldo de stock\n· El stock físico NO se toca\n· 'Lo que salió' arranca de cero\n\nAntes de cerrar, imprimí los estados de cuenta.")) return;
+  const c={ts:Date.now(), desde:desde?fDia(desde):"", hasta:fDia(Date.now()),
+    peds:d.peds, movs:d.movs, saldos:d.saldos,
+    totalCobrar:d.marcas.reduce((s,x)=>s+x.cobrar,0), totalPagar:d.rep.reduce((s,x)=>s+x.pagar,0),
+    marcas:d.marcas.map(x=>({emp:x.emp,envios:x.envios,cobrar:x.cobrar,unid:x.unid,prods:x.prods})),
+    rep:d.rep};
+  const r=cierresRecord(); const lista=((r&&r.lista)||[]).concat([c]);
+  if(r) await DB.update(r.id,{lista}); else await DB.create({tipo:"cierres",lista});
+  SAL_DESDE=fDia(Date.now()); SAL_HASTA="";
+  alert("✅ PERÍODO CERRADO\n\nQuedó guardado el resumen y el saldo de stock.\nDesde ahora se cuenta de cero.");
+  pantallaCierre();
+}
+function imprimirFacturaMarca(empId){
+  const peds=soloPedidos().filter(p=>p.estado!=="anulado" && (p.cliente||"")!=="_PRUEBA_DIAGNOSTICO" && enRango(p.creado,CTA_DESDE,CTA_HASTA) && (p.empresa||"—")===empId);
+  if(!peds.length){ toast("No hay órdenes de esa marca en el período"); return; }
+  const nom=empId==="—"?"Sin marca":empresaObj(empId).nombre;
+  const total=peds.reduce((s,p)=>s+costoEnvio(p),0);
+  const acc={}; let unid=0;
+  peds.forEach(p=>{ try{ itemsPedido(p).forEach(it=>{ const k=it.prodNombre||it.nombre;
+    acc[k]=(acc[k]||0)+(it.cant||0); unid+=(it.cant||0); }); }catch(e){} });
+  const mercaderia=Object.entries(acc).sort((a,b)=>b[1]-a[1]);
+  const w=window.open("","_blank","width=800,height=900"); if(!w){ toast("Permití las ventanas emergentes"); return; }
+  const prodsDe=p=>{ try{ return itemsPedido(p).map(i=>i.cant+"× "+i.prodNombre).join("<br>"); }catch(e){ return esc(p.items||""); } };
+  const filas=peds.sort((a,b)=>(a.creado||0)-(b.creado||0)).map((p,i)=>`<tr><td>${i+1}</td>
+    <td>${p.creado?new Date(p.creado).toLocaleDateString("es-AR"):""}</td><td>${esc(numOrden(p))}</td>
+    <td>${esc(p.cliente||"")}</td><td>${esc([p.ciudad,p.provincia].filter(Boolean).join(", "))}</td>
+    <td>${esc(anilloDe(p).label)}</td><td class="pr">${prodsDe(p)}</td>
+    <td class="r">${fmtAr(costoEnvio(p))}</td></tr>`).join("");
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Detalle ${esc(nom)}</title>
+  <style>@page{size:A4;margin:14mm}body{font-family:-apple-system,system-ui,Segoe UI,sans-serif;color:#111;font-size:12px}
+  h1{font-size:20px;margin:0 0 2px}.sub{color:#666;margin-bottom:14px}
+  table{width:100%;border-collapse:collapse;margin-top:10px}
+  th{text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:#666;border-bottom:1.5px solid #111;padding:6px 5px}
+  td{padding:6px 5px;border-bottom:.5px solid #ddd}.r{text-align:right}
+  .tot{margin-top:16px;display:flex;justify-content:space-between;border-top:2px solid #111;padding-top:10px;font-size:16px;font-weight:700}
+  .pr{font-size:10.5px;line-height:1.4;color:#333;max-width:210px}
+  h2{font-size:14px;margin:26px 0 0;padding-top:14px;border-top:1px solid #111}
+  .m{margin-top:6px}.m td{padding:4px 5px}
+  .tot2{margin-top:8px;display:flex;justify-content:space-between;border-top:1.5px solid #111;padding-top:7px;font-size:13px;font-weight:700}
+  .firma{margin-top:40px;display:flex;gap:40px}.firma div{flex:1;border-top:1px solid #111;padding-top:5px;color:#666;font-size:11px}
+  </style></head><body>
+  <h1>Detalle de envíos · ${esc(nom)}</h1>
+  <div class="sub">${esc(periodoTxt())} · Emitido ${new Date().toLocaleDateString("es-AR")} · Fullminet</div>
+  <table><thead><tr><th>#</th><th>Fecha</th><th>Orden</th><th>Cliente</th><th>Destino</th><th>Zona</th><th>Productos enviados</th><th class="r">Envío</th></tr></thead>
+  <tbody>${filas}</tbody></table>
+  <div class="tot"><span>${peds.length} envíos</span><span>TOTAL A COBRAR ${fmtAr(total)}</span></div>
+  <h2>Mercadería retirada en el período</h2>
+  <table class="m"><thead><tr><th>Producto</th><th class="r">Unidades</th></tr></thead>
+  <tbody>${mercaderia.map(([n,c])=>`<tr><td>${esc(n)}</td><td class="r">${c}</td></tr>`).join("")}</tbody></table>
+  <div class="tot2"><span>${mercaderia.length} productos</span><span>${unid} unidades</span></div>
+  <div class="firma"><div>Por Fullminet</div><div>Conforme · ${esc(nom)}</div></div>
+  <scr`+`ipt>window.onload=function(){setTimeout(function(){window.print()},400)}<\/scr`+`ipt></body></html>`);
+  w.document.close();
+}
+function imprimirComprobanteCaja(nro){
+  const m=cajaMovs().find(x=>x.nro===nro); if(!m){ toast("No encontré el comprobante"); return; }
+  const w=window.open("","_blank","width=800,height=800"); if(!w){ toast("Permití las ventanas emergentes"); return; }
+  const esCobro=m.clase==="cobro";
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(m.nro)}</title>
+  <style>@page{size:A4;margin:16mm}body{font-family:-apple-system,system-ui,Segoe UI,sans-serif;color:#111;font-size:13px}
+  .h{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #111;padding-bottom:10px}
+  h1{font-size:22px;margin:0}.mut{color:#666}
+  .n{font-size:15px;font-weight:700}
+  .b{margin:26px 0;padding:18px;border:1px solid #ddd;border-radius:8px}
+  .row{display:flex;justify-content:space-between;padding:7px 0;border-bottom:.5px solid #eee}
+  .tot{margin-top:18px;display:flex;justify-content:space-between;font-size:20px;font-weight:700;border-top:2px solid #111;padding-top:12px}
+  .firma{margin-top:60px;display:flex;gap:40px}.firma div{flex:1;border-top:1px solid #111;padding-top:5px;color:#666;font-size:11px}
+  </style></head><body>
+  <div class="h"><div><h1>${esCobro?"Recibo de cobro":"Comprobante de pago"}</h1>
+    <div class="mut">Fullminet · logística y despacho</div></div>
+    <div style="text-align:right"><div class="n">${esc(m.nro)}</div><div class="mut">${new Date(m.ts).toLocaleDateString("es-AR")}</div></div></div>
+  <div class="b">
+    <div class="row"><span class="mut">${esCobro?"Cobrado a":"Pagado a"}</span><b>${esc(m.quien)}</b></div>
+    <div class="row"><span class="mut">Período</span><span>${esc(m.periodo||"—")}</span></div>
+    <div class="row"><span class="mut">Envíos</span><span>${m.cant||0}</span></div>
+    <div class="tot"><span>TOTAL</span><span>${fmtAr(m.monto)}</span></div>
+  </div>
+  <div class="firma"><div>Por Fullminet</div><div>Recibí conforme · ${esc(m.quien)}</div></div>
+  <scr`+`ipt>window.onload=function(){setTimeout(function(){window.print()},400)}<\/scr`+`ipt></body></html>`);
+  w.document.close();
+}
+function imprimirRecibo(quien){
+  const peds=soloPedidos().filter(p=>p.estado!=="anulado" && (p.cliente||"")!=="_PRUEBA_DIAGNOSTICO" && enRango(p.creado,CTA_DESDE,CTA_HASTA));
+  const tr=cuentaTransportistas(peds).find(x=>x.quien===quien);
+  if(!tr||!tr.peds.length){ toast("No hay envíos de "+quien+" en el período"); return; }
+  const per=(CTA_DESDE||CTA_HASTA)?((CTA_DESDE||"…")+" al "+(CTA_HASTA||"…")):"Todo el período";
+  const w=window.open("","_blank","width=800,height=900");
+  if(!w){ toast("Permití las ventanas emergentes"); return; }
+  const filas=tr.peds.map((o,i)=>`<tr><td>${i+1}</td><td>${o.p.creado?new Date(o.p.creado).toLocaleDateString("es-AR"):""}</td>
+    <td>${esc(numOrden(o.p))}</td><td>${esc(o.p.cliente||"")}</td>
+    <td>${esc([o.p.ciudad,o.p.provincia].filter(Boolean).join(", "))}</td>
+    <td>${esc(anilloDe(o.p).label)}</td><td class="r">${o.costo?fmtAr(o.costo):"—"}</td></tr>`).join("");
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Resumen ${esc(quien)}</title>
+  <style>@page{size:A4;margin:14mm}body{font-family:-apple-system,system-ui,Segoe UI,sans-serif;color:#111;font-size:12px}
+  h1{font-size:20px;margin:0 0 2px}.sub{color:#666;margin-bottom:14px}
+  table{width:100%;border-collapse:collapse;margin-top:10px}
+  th{text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:#666;border-bottom:1.5px solid #111;padding:6px 5px}
+  td{padding:6px 5px;border-bottom:.5px solid #ddd}.r{text-align:right}
+  .tot{margin-top:16px;display:flex;justify-content:space-between;align-items:center;border-top:2px solid #111;padding-top:10px;font-size:16px;font-weight:700}
+  .firma{margin-top:44px;display:flex;gap:40px}.firma div{flex:1;border-top:1px solid #111;padding-top:5px;color:#666;font-size:11px}
+  </style></head><body>
+  <h1>Resumen de envíos · ${esc(quien)}</h1>
+  <div class="sub">${esc(per)} · Emitido ${new Date().toLocaleDateString("es-AR")} · Fullminet</div>
+  <table><thead><tr><th>#</th><th>Fecha</th><th>Orden</th><th>Cliente</th><th>Destino</th><th>Zona</th><th class="r">Importe</th></tr></thead>
+  <tbody>${filas}</tbody></table>
+  <div class="tot"><span>${tr.n} envíos</span><span>TOTAL ${fmtAr(tr.costo)}</span></div>
+  <div class="firma"><div>Entregué conforme</div><div>Recibí conforme · ${esc(quien)}</div></div>
+  <scr`+`ipt>window.onload=function(){setTimeout(function(){window.print()},400)}<\/scr`+`ipt></body></html>`);
+  w.document.close();
+}
 function pantallaCuenta(){
   const peds=soloPedidos().filter(p=>p.estado!=="anulado" && (p.cliente||"")!=="_PRUEBA_DIAGNOSTICO" && enRango(p.creado,CTA_DESDE,CTA_HASTA));
   const zc=zonaCosto(); const esCad=c=>["caba","1","2","3"].includes(c);
@@ -914,7 +1203,12 @@ function pantallaCuenta(){
         <div style="flex:1;min-width:120px"><span class="label">Desde</span><input type="date" value="${CTA_DESDE}" onchange="CTA_DESDE=this.value;pantallaCuenta()" style="${inpC}"></div>
         <div style="flex:1;min-width:120px"><span class="label">Hasta</span><input type="date" value="${CTA_HASTA}" onchange="CTA_HASTA=this.value;pantallaCuenta()" style="${inpC}"></div>
       </div>
-      ${(CTA_DESDE||CTA_HASTA)?`<button class="btn sm ghost" style="margin-top:10px" onclick="CTA_DESDE='';CTA_HASTA='';pantallaCuenta()">Ver todo</button>`:''}
+      <div class="row" style="margin-top:10px">
+        <button class="btn sm ghost" onclick="setRangoCta('sem')">Esta semana</button>
+        <button class="btn sm ghost" onclick="setRangoCta('ant')">Semana pasada</button>
+        <button class="btn sm ghost" onclick="setRangoCta('mes')">Este mes</button>
+        <button class="btn sm ghost" onclick="setRangoCta('todo')">Todo</button>
+      </div>
     </div>
     <div class="kpis" style="margin-bottom:14px">
       <div class="kpi"><div class="n">${peds.length}</div><div class="l">Órdenes</div></div>
@@ -922,12 +1216,69 @@ function pantallaCuenta(){
       <div class="kpi"><div class="n" style="color:#e5484d">${fmtAr(totK)}</div><div class="l">Costo reparto</div></div>
       <div class="kpi"><div class="n" style="color:var(--accent)">${fmtAr(totC-totK)}</div><div class="l">Te queda</div></div>
     </div>
-    ${grupos.length?grupos.map(x=>`<div class="card" style="margin-bottom:12px">
+    <div class="row" style="margin-bottom:14px"><div class="seg">
+      <button class="${CTA_TAB==='cobrar'?'on':''}" ${CTA_TAB==='cobrar'?'':'onclick="setCtaTab(\'cobrar\')"'}>💵 A cobrar (marcas)</button>
+      <button class="${CTA_TAB==='pagar'?'on':''}" ${CTA_TAB==='pagar'?'':'onclick="setCtaTab(\'pagar\')"'}>🚚 A pagar (reparto)</button>
+      <button class="${CTA_TAB==='historial'?'on':''}" ${CTA_TAB==='historial'?'':'onclick="setCtaTab(\'historial\')"'}>📒 Resumen de cuenta</button>
+    </div></div>
+    ${CTA_TAB==='historial'?(()=>{ const mv=cajaMovs();
+      const cob=mv.filter(m=>m.clase==="cobro").reduce((s,m)=>s+m.monto,0);
+      const pag=mv.filter(m=>m.clase==="pago").reduce((s,m)=>s+m.monto,0);
+      const porQuien={}; mv.forEach(m=>{ const k=m.quien; if(!porQuien[k]) porQuien[k]={quien:k,cobro:0,pago:0};
+        porQuien[k][m.clase==="cobro"?"cobro":"pago"]+=m.monto; });
+      return `<div class="kpis" style="margin-bottom:14px">
+        <div class="kpi"><div class="n" style="color:var(--green)">${fmtAr(cob)}</div><div class="l">Cobrado</div></div>
+        <div class="kpi"><div class="n" style="color:#e5484d">${fmtAr(pag)}</div><div class="l">Pagado</div></div>
+        <div class="kpi"><div class="n" style="color:var(--accent)">${fmtAr(cob-pag)}</div><div class="l">Diferencia</div></div>
+        <div class="kpi"><div class="n">${mv.length}</div><div class="l">Comprobantes</div></div>
+      </div>
+      ${Object.keys(porQuien).length?`<div class="card" style="margin-bottom:14px"><span class="label">Por cada uno</span>
+        ${Object.values(porQuien).map(x=>`<div class="row" style="justify-content:space-between;padding:8px 0;border-top:.5px solid var(--border)">
+          <b>${esc(x.quien)}</b>
+          <span style="font-size:13px">${x.cobro?`<span style="color:var(--green)">cobrado ${fmtAr(x.cobro)}</span>`:''}${x.cobro&&x.pago?' · ':''}${x.pago?`<span style="color:#e5484d">pagado ${fmtAr(x.pago)}</span>`:''}</span>
+        </div>`).join("")}</div>`:''}
+      <div class="label">Comprobantes guardados</div>
+      ${mv.length?mv.map(m=>`<div class="card" style="margin-bottom:8px;padding:12px 14px">
+        <div class="row" style="justify-content:space-between;align-items:baseline;gap:8px">
+          <span><b>${esc(m.nro)}</b> <span class="muted">· ${m.clase==="cobro"?"Cobro a":"Pago a"} ${esc(m.quien)}</span></span>
+          <b style="color:${m.clase==="cobro"?'var(--green)':'#e5484d'}">${fmtAr(m.monto)}</b>
+        </div>
+        <div class="muted" style="font-size:12.5px;margin-top:2px">${new Date(m.ts).toLocaleDateString("es-AR")} · ${esc(m.periodo||'')} · ${m.cant||0} envíos</div>
+        <div class="row" style="margin-top:8px">
+          <button class="btn sm ghost" onclick="imprimirComprobanteCaja('${esc(m.nro)}')">${icon('printer')} Imprimir</button>
+          <button class="btn sm ghost" style="color:var(--red)" onclick="if(confirm('¿Borrar el comprobante ${esc(m.nro)}?'))cajaBorrar('${esc(m.nro)}').then(()=>{toast('Borrado');pantallaCuenta()})">Borrar</button>
+        </div>
+      </div>`).join(""):empty('box','Todavía no registraste cobros ni pagos. Usá los botones en las otras solapas.')}`;
+    })():CTA_TAB==='pagar'?(()=>{ const tr=cuentaTransportistas(peds);
+      return tr.length?tr.map(x=>`<div class="card" style="margin-bottom:12px">
+        <div class="row" style="justify-content:space-between;align-items:center">
+          <b style="font-size:16px">${esc(x.quien)}</b>
+          <span style="font-weight:800;color:${x.costo?'#e5484d':'var(--text-2)'}">${x.costo?fmtAr(x.costo):'—'}</span>
+        </div>
+        <div class="muted" style="font-size:13px;margin-top:3px">${x.n} envío${x.n===1?'':'s'}${x.quien==='Correo'?' · lo hacés vos (sin costo de cadete)':''}</div>
+        <div class="row" style="gap:6px;margin-top:8px;flex-wrap:wrap">${Object.entries(x.zonas).map(([z,n])=>`<span class="chip">${esc(z)}: ${n}</span>`).join("")}</div>
+        <div class="row" style="margin-top:10px">
+          <button class="btn sm ghost" onclick="imprimirRecibo('${esc(x.quien)}')">${icon('printer')} Recibo / resumen</button>
+          ${x.costo?`<button class="btn sm" onclick="registrarMovCaja('pago','${esc(x.quien)}',${x.costo},${x.n})">✓ Registrar pago</button>`:''}
+        </div>
+        <div style="margin-top:8px">
+          ${x.peds.slice(0,80).map(o=>`<div class="row" style="justify-content:space-between;gap:8px;padding:7px 0;border-top:.5px solid var(--border);font-size:13px">
+            <span style="min-width:0">${esc(o.p.cliente||'—')} <span class="muted">· N° ${esc(numOrden(o.p))} · ${esc(anilloDe(o.p).label)}${o.p.creado?(' · '+fmtFechaCorta(o.p.creado)):''}</span></span>
+            <span style="flex:0 0 auto;font-weight:700">${o.costo?fmtAr(o.costo):'—'}</span>
+          </div>`).join("")}
+          ${x.peds.length>80?`<div class="hint" style="margin-top:8px">…y ${x.peds.length-80} envíos más.</div>`:''}
+        </div>
+      </div>`).join(""):empty('box','No hay envíos en este período.');
+    })():(grupos.length?grupos.map(x=>`<div class="card" style="margin-bottom:12px">
       <div class="row" style="justify-content:space-between;align-items:center">
         <b style="font-size:16px">${esc(x.emp==="—"?"Sin marca":empresaObj(x.emp).nombre)}</b>
         <span style="font-weight:800;color:var(--green)">${fmtAr(x.cobrar)}</span>
       </div>
       <div class="muted" style="font-size:13px;margin-top:3px">${x.n} órdenes · costo ${fmtAr(x.costo)} · te queda <b style="color:var(--text)">${fmtAr(x.cobrar-x.costo)}</b></div>
+      <div class="row" style="margin-top:10px">
+        <button class="btn sm ghost" onclick="imprimirFacturaMarca('${esc(x.emp)}')">${icon('printer')} Detalle a cobrar</button>
+        <button class="btn sm" onclick="registrarMovCaja('cobro','${esc(x.emp==="—"?"Sin marca":empresaObj(x.emp).nombre)}',${x.cobrar},${x.n})">✓ Registrar cobro</button>
+      </div>
       <div style="margin-top:8px">
         ${x.peds.slice(0,60).map(o=>`<div class="row" style="justify-content:space-between;gap:8px;padding:7px 0;border-top:.5px solid var(--border);font-size:13px">
           <span style="min-width:0">${esc(o.p.cliente||'—')} <span class="muted">· N° ${esc(numOrden(o.p))}${o.p.creado?(' · '+fmtFechaCorta(o.p.creado)):''}</span></span>
@@ -935,7 +1286,7 @@ function pantallaCuenta(){
         </div>`).join("")}
         ${x.peds.length>60?`<div class="hint" style="margin-top:8px">…y ${x.peds.length-60} órdenes más.</div>`:''}
       </div>
-    </div>`).join(""):empty('box','No hay órdenes en este período.')}`;
+    </div>`).join(""):empty('box','No hay órdenes en este período.'))}`;
 }
 function pantallaRepickeo(){
   const st=stockState();
@@ -1000,7 +1351,13 @@ function pantallaSalidas(){
         <div style="flex:1;min-width:120px"><span class="label">Desde</span><input type="date" value="${SAL_DESDE}" onchange="SAL_DESDE=this.value;pantallaSalidas()" style="${inpS}"></div>
         <div style="flex:1;min-width:120px"><span class="label">Hasta</span><input type="date" value="${SAL_HASTA}" onchange="SAL_HASTA=this.value;pantallaSalidas()" style="${inpS}"></div>
       </div>
-      ${(SAL_DESDE||SAL_HASTA)?`<button class="btn sm ghost" style="margin-top:10px" onclick="SAL_DESDE='';SAL_HASTA='';pantallaSalidas()">Ver todo</button>`:''}
+      <div class="row" style="margin-top:10px">
+        <button class="btn sm ghost" onclick="SAL_DESDE=ultimoCierreTs()?fDia(ultimoCierreTs()):'';SAL_HASTA='';pantallaSalidas()">Desde el último cierre</button>
+        <button class="btn sm ghost" onclick="setRangoSal('sem')">Esta semana</button>
+        <button class="btn sm ghost" onclick="setRangoSal('ant')">Semana pasada</button>
+        <button class="btn sm ghost" onclick="setRangoSal('mes')">Este mes</button>
+        <button class="btn sm ghost" onclick="setRangoSal('todo')">Todo</button>
+      </div>
     </div>
     <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
       <b>${total} unidades salieron</b>
@@ -1782,7 +2139,14 @@ function vistaOperador(){
     </div>
     <input id="pedQ" autocomplete="off" placeholder="🔍 Buscar por cliente, N° de orden o producto…" value="${esc(PED_Q||'')}" oninput="PED_Q=this.value;clearTimeout(window.__pq);window.__pq=setTimeout(vistaOperador,300)" style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:11px;font:inherit;background:var(--bg);margin-bottom:10px">
     ${PED_Q?`<div class="row" style="margin-bottom:10px;align-items:center;gap:8px"><b>${lista.length}</b><span class="muted">resultado${lista.length===1?'':'s'} para "${esc(PED_Q)}"</span><button class="btn sm ghost" onclick="PED_Q='';vistaOperador()">Limpiar</button></div>`:''}
-    <div class="cardgrid">${listaPorFecha(lista)}</div>
+    <div class="row" style="margin-bottom:10px;justify-content:space-between;align-items:center">
+      <div class="seg" style="flex:0 0 auto">
+        <button class="${PED_VISTA==='lista'?'on':''}" ${PED_VISTA==='lista'?'':'onclick="setPedVista(\'lista\')"'}>Fichas</button>
+        <button class="${PED_VISTA==='tabla'?'on':''}" ${PED_VISTA==='tabla'?'':'onclick="setPedVista(\'tabla\')"'}>Tabla</button>
+      </div>
+      <span class="muted" style="font-size:13px">${lista.length} pedido${lista.length===1?'':'s'}</span>
+    </div>
+    <div class="cardgrid">${PED_VISTA==='tabla'?tablaPedidos(lista):listaPorFecha(lista)}</div>
     ${DB.modo==="demo"?`<div class="center" style="margin-top:24px">
       <span class="muted" style="font-size:13px">Modo demo · </span>
       <button class="btn sm ghost" onclick="resetDatos(false)">Recargar ejemplo (35)</button>
@@ -1808,6 +2172,45 @@ function fechaDia(ts){ if(!ts) return "Sin fecha"; const d=new Date(ts); d.setHo
   const diff=Math.round((h-d)/86400000);
   if(diff===0) return "Hoy"; if(diff===1) return "Ayer";
   return d.toLocaleDateString("es-AR",{weekday:"short",day:"2-digit",month:"2-digit"}); }
+let PED_VISTA=(typeof localStorage!=="undefined"&&localStorage.getItem("ped_vista"))||"lista";
+function setPedVista(v){ PED_VISTA=v; try{localStorage.setItem("ped_vista",v);}catch(e){} vistaOperador(); }
+function tablaPedidos(lista){
+  const arr=lista.slice().sort((a,b)=>(b.creado||0)-(a.creado||0));
+  if(!arr.length) return empty('box','Sin pedidos en este filtro.');
+  return `<div style="overflow-x:auto;-webkit-overflow-scrolling:touch">
+    <table class="tbl">
+      <thead><tr>
+        <th>Fecha</th><th>N°</th><th>Cliente</th><th>Marca</th><th>Zona</th><th>Reparto</th><th>Estado</th><th style="text-align:right">Envío</th><th></th>
+      </tr></thead>
+      <tbody>
+        ${arr.map(p=>{ const e=estObj(p.estado), an=anilloDe(p);
+          const quien=p.metodo==="correo"?"Correo":(p.cadete||"—");
+          return `<tr onclick="toggleExp('${p.id}')" style="cursor:pointer">
+            <td class="muted">${p.creado?fmtFechaCorta(p.creado):'—'}</td>
+            <td><b>${esc(numOrden(p))}</b></td>
+            <td>${esc(p.cliente||'—')}</td>
+            <td class="muted">${esc(p.empresa?empresaObj(p.empresa).nombre.split(" ")[0]:'—')}</td>
+            <td><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${anilloColor(an.n)};margin-right:4px"></span>${esc(an.label)}</td>
+            <td>${esc(quien)}</td>
+            <td><span class="badge"><span class="dot" style="background:${e.color}"></span>${e.label}</span></td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums">${fmtAr(costoEnvio(p))}</td>
+            <td style="text-align:right">${accionPrincipal(p)}</td>
+          </tr>
+          ${EXP_PED[p.id]?`<tr><td colspan="9" style="background:var(--bg-2);padding:12px 14px">
+            <div class="muted" style="font-size:12.5px">${esc(p.tel||'')} · ${esc(p.dir||'')} — ${esc(p.ciudad||'')}, ${esc(p.provincia||'')}</div>
+            <div style="margin:6px 0;font-size:13px">${esc(p.items||'—')}</div>
+            <div class="acts">
+              ${selectReparto(p)}
+              <button class="btn sm ghost" onclick="event.stopPropagation();cambiarRuta('${p.id}')">Editar</button>
+              <button class="btn sm ghost" onclick="event.stopPropagation();descontarAhora('${p.id}')">↻ Descontar</button>
+              ${p.stockBajado?`<button class="btn sm ghost" onclick="event.stopPropagation();deshacerDescuento('${p.id}')">↺ Deshacer</button>`:''}
+              <button class="btn sm ghost" onclick="event.stopPropagation();imprimirPickeo('${p.id}')">Pickeo</button>
+              <button class="btn sm green" onclick="event.stopPropagation();waCliente('${p.id}')">WhatsApp</button>
+            </div>
+          </td></tr>`:''}`; }).join("")}
+      </tbody>
+    </table></div>`;
+}
 function listaPorFecha(lista){
   const arr=lista.slice().sort((a,b)=>(b.creado||0)-(a.creado||0));   // más nuevos arriba
   if(!arr.length) return empty('box','Sin pedidos en este filtro.');
@@ -2811,7 +3214,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v17jul-deshacer";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v18jul-acta";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
@@ -2870,7 +3273,8 @@ function vistaInformes(){
   let unidades=0; peds.forEach(p=>{ try{ unidades+=itemsPedido(p).reduce((s,i)=>s+(i.cant||0),0); }catch(e){} });
   const aCobrar=peds.reduce((s,p)=>s+costoEnvio(p),0);
   const zc=zonaCosto(); const esCadeteCat=c=>["caba","1","2","3"].includes(c);
-  const aCardinal=peds.reduce((s,p)=>{ const c=catPedido(p); return s+(esCadeteCat(c)?(zc[c]||0):0); },0);
+  const aCardinal=peds.reduce((s,p)=>{ const c=catPedido(p); const q=p.metodo==="correo"?"Correo":(p.cadete||"");
+    return s+((esCadeteCat(c)&&p.metodo!=="correo"&&cadeteCobra(q))?(zc[c]||0):0); },0);
   const cats=[["caba","CABA",0],["1","Zona 1",1],["2","Zona 2",2],["3","Zona 3",3],["correo","Correo",null]];
   const porZona=cats.map(([c,lbl,anillo])=>{ const g=peds.filter(p=>catPedido(p)===c);
     return {c,lbl,anillo,n:g.length, cobrar:g.reduce((s,p)=>s+costoEnvio(p),0), cardinal:esCadeteCat(c)?g.reduce((s,p)=>s+(zc[c]||0),0):0}; }).filter(z=>z.n>0);
@@ -2889,6 +3293,7 @@ function vistaInformes(){
     <div class="row" style="margin-bottom:14px">
       <button class="btn ghost sm" onclick="pantallaCuenta()">💵 Cuenta · a cobrar</button>
       <button class="btn ghost sm" onclick="pantallaSalidas()">📦 Qué sacó cada uno</button>
+      <button class="btn ghost sm" onclick="pantallaCierre()">🔒 Cierre de período</button>
     </div>
     <div class="kpis">
       <div class="kpi">${icon('store')}<div class="n">${peds.length}</div><div class="l">Pedidos</div></div>
