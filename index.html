@@ -168,6 +168,10 @@ textarea{resize:vertical;min-height:66px;font-size:15px;line-height:1.5}
 .tbl td{padding:9px 10px;border-bottom:.5px solid var(--border);white-space:nowrap;vertical-align:middle}
 .tbl tbody tr:hover{background:var(--bg-2)}
 .tbl td:nth-child(3){white-space:normal;min-width:150px}
+.tbl2{width:100%;border-collapse:collapse;font-size:13.5px}
+.tbl2 td{padding:9px 0;border-top:.5px solid var(--border);vertical-align:middle}
+.tbl2 tr:first-child td{border-top:none}
+.tbl2 tr:hover td{background:var(--bg-2)}
 .ord-chev{flex:0 0 auto;color:var(--text-3);font-size:15px;font-weight:800;width:20px;text-align:center}
 .ord-body{margin-top:13px;border-top:.5px solid var(--border);padding-top:12px}
 .order .top{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap}
@@ -901,7 +905,7 @@ function salidasResumen(desde,hasta){
   return {lista, total:sal.reduce((s,m)=>s+m.cant,0), totEmp};
 }
 let REP_DESDE="", REP_HASTA="", REP_SEL={};
-let CTA_DESDE="", CTA_HASTA="", CTA_TAB="cobrar";
+let CTA_DESDE="", CTA_HASTA="", CTA_TAB="cobrar", CTA_HIST_TODO=false;
 function setCtaTab(t){ CTA_TAB=t; pantallaCuenta(); }
 function cuentaTransportistas(peds){
   const zc=zonaCosto(); const esCad=c=>["caba","1","2","3"].includes(c);
@@ -1021,6 +1025,12 @@ function imprimirActaCierre(ts){
   ${blqMarcas||'<div class="mut">Sin movimientos.</div>'}
   <h2>Reparto</h2>
   <table><thead><tr><th>Quién</th><th class="r">Envíos</th><th class="r">A pagar</th></tr></thead><tbody>${blqRep||""}</tbody></table>
+  ${(c.comprobantes&&c.comprobantes.length)?`<h2>Cobros y pagos del período</h2>
+  <table><thead><tr><th>Comprobante</th><th>Concepto</th><th class="r">Importe</th></tr></thead><tbody>
+  ${c.comprobantes.map(x=>`<tr><td>${esc(x.nro)}</td><td>${x.clase==="cobro"?"Cobro a":"Pago a"} ${esc(x.quien)}</td><td class="r">${fmtAr(x.monto)}</td></tr>`).join("")}
+  </tbody></table>
+  <div style="display:flex;justify-content:space-between;border-top:1.5px solid #111;padding-top:7px;margin-top:8px;font-weight:700">
+    <span>Cobrado ${fmtAr(c.cobrado||0)}</span><span>Pagado ${fmtAr(c.pagado||0)}</span></div>`:""}
   <h2>Saldo de stock al cierre</h2>
   <table><thead><tr><th>Producto</th><th class="r">Unidades</th></tr></thead>
   <tbody>${sal.map(([n,q])=>`<tr><td>${esc(n)}</td><td class="r">${q}</td></tr>`).join("")}</tbody></table>
@@ -1075,8 +1085,12 @@ async function ejecutarCierre(){
   const desde=ultimoCierreTs();
   const d=datosPeriodo(desde);
   if(!confirm("¿Cerrar el período?\n\n· Se guarda el resumen y el saldo de stock\n· El stock físico NO se toca\n· 'Lo que salió' arranca de cero\n\nAntes de cerrar, imprimí los estados de cuenta.")) return;
+  const cajaP=cajaMovs().filter(m=>(m.ts||0)>=desde);
   const c={ts:Date.now(), desde:desde?fDia(desde):"", hasta:fDia(Date.now()),
     peds:d.peds, movs:d.movs, saldos:d.saldos,
+    cobrado:cajaP.filter(m=>m.clase==="cobro").reduce((s,m)=>s+m.monto,0),
+    pagado:cajaP.filter(m=>m.clase==="pago").reduce((s,m)=>s+m.monto,0),
+    comprobantes:cajaP.map(m=>({nro:m.nro,clase:m.clase,quien:m.quien,monto:m.monto})),
     totalCobrar:d.marcas.reduce((s,x)=>s+x.cobrar,0), totalPagar:d.rep.reduce((s,x)=>s+x.pagar,0),
     marcas:d.marcas.map(x=>({emp:x.emp,envios:x.envios,cobrar:x.cobrar,unid:x.unid,prods:x.prods})),
     rep:d.rep};
@@ -1221,12 +1235,18 @@ function pantallaCuenta(){
       <button class="${CTA_TAB==='pagar'?'on':''}" ${CTA_TAB==='pagar'?'':'onclick="setCtaTab(\'pagar\')"'}>🚚 A pagar (reparto)</button>
       <button class="${CTA_TAB==='historial'?'on':''}" ${CTA_TAB==='historial'?'':'onclick="setCtaTab(\'historial\')"'}>📒 Resumen de cuenta</button>
     </div></div>
-    ${CTA_TAB==='historial'?(()=>{ const mv=cajaMovs();
+    ${CTA_TAB==='historial'?(()=>{ const corte=CTA_HIST_TODO?0:ultimoCierreTs();
+      const mv=cajaMovs().filter(m=>(m.ts||0)>=corte);
+      const desdeTxt=corte?("desde el cierre del "+new Date(corte).toLocaleDateString("es-AR")):"todo el historial";
       const cob=mv.filter(m=>m.clase==="cobro").reduce((s,m)=>s+m.monto,0);
       const pag=mv.filter(m=>m.clase==="pago").reduce((s,m)=>s+m.monto,0);
       const porQuien={}; mv.forEach(m=>{ const k=m.quien; if(!porQuien[k]) porQuien[k]={quien:k,cobro:0,pago:0};
         porQuien[k][m.clase==="cobro"?"cobro":"pago"]+=m.monto; });
-      return `<div class="kpis" style="margin-bottom:14px">
+      return `<div class="row" style="margin-bottom:12px;align-items:center;gap:8px">
+        <span class="muted" style="font-size:13px">Mostrando ${esc(desdeTxt)}</span>
+        <button class="btn sm ghost" onclick="CTA_HIST_TODO=${CTA_HIST_TODO?'false':'true'};pantallaCuenta()">${CTA_HIST_TODO?'Ver solo el período actual':'Ver todo el historial'}</button>
+      </div>
+      <div class="kpis" style="margin-bottom:14px">
         <div class="kpi"><div class="n" style="color:var(--green)">${fmtAr(cob)}</div><div class="l">Cobrado</div></div>
         <div class="kpi"><div class="n" style="color:#e5484d">${fmtAr(pag)}</div><div class="l">Pagado</div></div>
         <div class="kpi"><div class="n" style="color:var(--accent)">${fmtAr(cob-pag)}</div><div class="l">Diferencia</div></div>
@@ -1248,7 +1268,7 @@ function pantallaCuenta(){
           <button class="btn sm ghost" onclick="imprimirComprobanteCaja('${esc(m.nro)}')">${icon('printer')} Imprimir</button>
           <button class="btn sm ghost" style="color:var(--red)" onclick="if(confirm('¿Borrar el comprobante ${esc(m.nro)}?'))cajaBorrar('${esc(m.nro)}').then(()=>{toast('Borrado');pantallaCuenta()})">Borrar</button>
         </div>
-      </div>`).join(""):empty('box','Todavía no registraste cobros ni pagos. Usá los botones en las otras solapas.')}`;
+      </div>`).join(""):empty('box','No hay cobros ni pagos en este período. Usá los botones en las otras solapas, o mirá todo el historial.')}`;
     })():CTA_TAB==='pagar'?(()=>{ const tr=cuentaTransportistas(peds);
       return tr.length?tr.map(x=>`<div class="card" style="margin-bottom:12px">
         <div class="row" style="justify-content:space-between;align-items:center">
@@ -1996,9 +2016,23 @@ function vistaPanel(){
   const st=stockState(), pick=pickingConsolidado();
   const reponer=PRODUCTOS.filter(p=>pedirDe(p.nombre,st)>0).length;
   const fecha=new Date().toLocaleDateString("es-AR",{weekday:"long",day:"numeric",month:"long"});
-  const tile=(view,ic,nombre,sub,n)=>`<button class="tile" onclick="OPVIEW='${view}';vistaOperador()">
-    <span class="ico">${icon(ic)}</span><div class="tn">${nombre}</div>
-    <div class="ts">${sub}${n!=null?` · <span class="badge-n">${n}</span>`:''}</div></button>`;
+  const zc=zonaCosto(), esCad=c=>["caba","1","2","3"].includes(c);
+  const repHoy={}; activos.forEach(p=>{ const q=p.metodo==="correo"?"Correo":(p.cadete||"Sin asignar");
+    const c=catPedido(p); if(!repHoy[q]) repHoy[q]={q,n:0,$:0};
+    repHoy[q].n++; repHoy[q].$ += (esCad(c)&&p.metodo!=="correo"&&cadeteCobra(q))?(zc[c]||0):0; });
+  const estados=[["pendiente","Por preparar"],["preparado","Preparados"],["asignado","Asignados"],["en_reparto","En reparto"],["despachado","Despachados"],["en_camino","En camino"]];
+  const filaEst=estados.map(([k,l])=>{ const n=ped.filter(p=>p.estado===k).length; if(!n) return "";
+    const e=estObj(k);
+    return `<tr onclick="FILTRO='${k}';OPVIEW='pedidos';vistaOperador()" style="cursor:pointer">
+      <td><span class="dot" style="background:${e.color};display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px"></span>${l}</td>
+      <td style="text-align:right;font-weight:700">${n}</td>
+      <td style="text-align:right;color:var(--text-3)">›</td></tr>`; }).join("");
+  const mods=[["pedidos","store","Pedidos","Gestionar y facturar",activos.length],
+    ["preparacion","box","Preparación","Lista de pickeo",porPrep],
+    ["stock","panel","Stock","Inventario y remitos",reponer||null],
+    ["informes","panel","Informes","Cuentas, cierres y salidas",null],
+    ["ruta","route","Ruta","Hoja de ruta CABA",rutaStops||null],
+    ["deposito","truck","Depósito","Reabastecimientos",reabas||null]];
   app().innerHTML=`
     ${segOp('panel')}
     <div class="title">Panel de control</div>
@@ -2011,21 +2045,42 @@ function vistaPanel(){
         <div class="n" style="color:var(--accent)">${fmtAr(facturacion)}</div>
         <div class="c">${activos.length} pedidos activos · ${entregadosHoy} entregados hoy</div>`}
     </div>
-    <div class="kpis" style="margin-top:12px">
-      <div class="kpi">${icon('box')}<div class="n">${porPrep}</div><div class="l">Por preparar</div></div>
-      <div class="kpi">${icon('route')}<div class="n">${enRuta}</div><div class="l">En ruta</div></div>
-      <div class="kpi ${reponer?'accent':''}">${icon('box')}<div class="n">${reponer}</div><div class="l">Stock a reponer</div></div>
-      <div class="kpi">${icon('check')}<div class="n">${entregadosHoy}</div><div class="l">Entregados hoy</div></div>
+    <div class="two" style="margin-top:14px;align-items:start">
+      <div class="card" style="padding:14px 16px">
+        <span class="label" style="margin:0 0 6px">Estado de los pedidos</span>
+        <table class="tbl2">${filaEst||'<tr><td class="muted">Todo al día 👍</td></tr>'}
+          <tr onclick="FILTRO='entregado';OPVIEW='pedidos';vistaOperador()" style="cursor:pointer">
+            <td><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--green);margin-right:7px"></span>Entregados hoy</td>
+            <td style="text-align:right;font-weight:700">${entregadosHoy}</td><td style="text-align:right;color:var(--text-3)">›</td></tr>
+        </table>
+      </div>
+      <div class="card" style="padding:14px 16px">
+        <span class="label" style="margin:0 0 6px">Reparto · pedidos activos</span>
+        <table class="tbl2">
+          ${Object.values(repHoy).sort((a,b)=>b.n-a.n).map(x=>`<tr>
+            <td>${esc(x.q)}</td>
+            <td style="text-align:right;font-weight:700">${x.n}</td>
+            <td style="text-align:right;color:${x.$?'#e5484d':'var(--text-3)'};font-size:12.5px">${x.$?fmtAr(x.$):'—'}</td></tr>`).join("")
+            ||'<tr><td class="muted">Sin pedidos activos</td></tr>'}
+        </table>
+        ${reponer?`<div style="margin-top:10px;padding-top:9px;border-top:.5px solid var(--border);font-size:13px">
+          <span style="color:var(--amber);font-weight:600">⚠ ${reponer} producto${reponer===1?'':'s'} a reponer</span>
+          <button class="btn sm ghost" style="margin-left:6px" onclick="OPVIEW='stock';vistaOperador()">Ver stock</button></div>`:''}
+      </div>
     </div>
-    <span class="label">Módulos</span>
-    <div class="tiles">
-      ${tile('pedidos','store','Pedidos','Gestionar y facturar',activos.length)}
-      ${tile('preparacion','box','Preparación','Picking y escaneo',porPrep)}
-      ${tile('stock','panel','Stock','Inventario y compras',reponer||null)}
-      ${tile('ruta','route','Ruta','Hoja de ruta CABA',rutaStops)}
-      ${tile('deposito','truck','Depósito','Reabastecimientos',reabas||null)}
-      ${tile('informes','panel','Informes','Ventas, zonas y stock',null)}
-      ${tile('pedidos','plus','Importar','Subí CSV o PDF',null)}
+    <span class="label" style="margin-top:20px">Módulos</span>
+    <div class="card" style="padding:4px 16px">
+      <table class="tbl2">
+        ${mods.map(([v,ic,n,s,b])=>`<tr onclick="OPVIEW='${v}';vistaOperador()" style="cursor:pointer">
+          <td style="width:26px;color:var(--text-2)">${icon(ic)}</td>
+          <td><b>${n}</b><div class="muted" style="font-size:12px">${s}</div></td>
+          <td style="text-align:right">${b!=null?`<span class="badge-n">${b}</span>`:''}</td>
+          <td style="text-align:right;width:14px;color:var(--text-3)">›</td></tr>`).join("")}
+      </table>
+    </div>
+    <div class="row" style="margin-top:14px">
+      <button class="btn" onclick="formImportar()">${icon('upload')} Importar pedidos</button>
+      <button class="btn ghost" onclick="formNuevo()">${icon('plus')} Pedido manual</button>
     </div>
     ${EMPLEADO?'':`
     <span class="label" style="margin-top:26px">Accesos del equipo</span>
@@ -3214,7 +3269,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v18jul-acta";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v18jul-cierre2";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
