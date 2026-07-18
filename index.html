@@ -3320,7 +3320,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v18jul-periodo";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v18jul-informes";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
@@ -3366,8 +3366,9 @@ function imprimirReposicion(){
 }
 
 /* ---------- OPERADOR · Preparación (picking + escaneo) ---------- */
-let INF_PERIODO="7d";
+let INF_PERIODO="periodo";   // por defecto: desde el último cierre
 function infDesde(){ const d=new Date();
+  if(INF_PERIODO==="periodo"){ return ultimoCierreTs(); }   // período abierto
   if(INF_PERIODO==="hoy"){ d.setHours(0,0,0,0); return d.getTime(); }
   if(INF_PERIODO==="7d"){ d.setDate(d.getDate()-7); return d.getTime(); }
   if(INF_PERIODO==="30d"){ d.setDate(d.getDate()-30); return d.getTime(); }
@@ -3392,10 +3393,12 @@ function vistaInformes(){
   const top=Object.entries(acc).sort((a,b)=>b[1]-a[1]).slice(0,10);
   const st=stockState(); const bajo=PRODUCTOS.map(pr=>({nombre:pr.nombre,falta:pedirDe(pr.nombre,st),nivel:nivel(pr.nombre,st)})).filter(x=>x.falta>0).sort((a,b)=>b.falta-a.falta).slice(0,12);
   const perBtn=(k,l)=>`<button class="${INF_PERIODO===k?'on':''}" ${INF_PERIODO===k?'':`onclick="setInfPeriodo('${k}')"`}>${l}</button>`;
+  const cierreTs=ultimoCierreTs();
   app().innerHTML=`
     ${segOp('informes')}
     <div class="title">Informes</div>
-    <div class="row" style="margin:6px 0 14px"><div class="seg">${perBtn('hoy','Hoy')}${perBtn('7d','7 días')}${perBtn('30d','30 días')}${perBtn('todo','Todo')}</div></div>
+    <div class="row" style="margin:6px 0 14px"><div class="seg">${perBtn('periodo','Período abierto')}${perBtn('hoy','Hoy')}${perBtn('7d','7 días')}${perBtn('30d','30 días')}${perBtn('todo','Todo')}</div></div>
+    ${INF_PERIODO==="periodo"?`<div class="hint" style="margin:-6px 0 12px">${cierreTs?("Período abierto desde el cierre del "+new Date(cierreTs).toLocaleString("es-AR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})+" hs"):"Todavía no hiciste ningún cierre: se muestra todo."}</div>`:""}
     <div class="row" style="margin-bottom:14px">
       <button class="btn ghost sm" onclick="pantallaCuenta()">💵 Cuenta · a cobrar</button>
       <button class="btn ghost sm" onclick="pantallaSalidas()">📦 Qué sacó cada uno</button>
@@ -3435,7 +3438,7 @@ function vistaInformes(){
         <span class="muted" style="width:18px;flex:0 0 auto">${i+1}</span><div style="flex:1;min-width:0">${esc(n)}</div><b style="flex:0 0 auto">${c}</b></div>`).join(""):'<div class="hint" style="margin:8px 0 0">Sin datos en el período.</div>'}
     </div>
     <div class="card" style="margin-top:14px">
-      <span class="label">Stock a reponer</span>
+      <span class="label">Stock a reponer <span class="muted" style="font-weight:400;text-transform:none;letter-spacing:0">· saldo actual, no se reinicia</span></span>
       ${bajo.length?bajo.map(x=>`<div style="display:flex;gap:10px;align-items:center;padding:8px 0;border-top:.5px solid var(--border)">
         <div style="flex:1;min-width:0">${esc(x.nombre)}</div><span class="muted" style="font-size:13px;flex:0 0 auto">tenés ${x.nivel}</span> <b style="color:#e5484d;flex:0 0 auto">faltan ${x.falta}</b></div>`).join(""):'<div class="hint" style="margin:8px 0 0">Todo el stock OK 👍</div>'}
     </div>`;
