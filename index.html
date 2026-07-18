@@ -1813,6 +1813,17 @@ function accionPrincipal(p){   // el botón del paso siguiente, a la derecha de 
   if(["preparado","asignado","en_reparto","despachado","en_camino"].includes(p.estado)) return `<button class="btn sm green" onclick="event.stopPropagation();avanzar('${p.id}','entregado')">Entregar</button>`;
   return "";
 }
+async function descontarAhora(id){
+  const p=PEDIDOS.find(x=>x.id===id)||await DB.get(id); if(!p){ toast("No encontré el pedido"); return; }
+  let items=[]; try{ items=itemsPedido(p); }catch(e){}
+  if(!items.length){ toast("Este pedido no tiene productos reconocidos"); return; }
+  const det=items.map(i=>"· "+i.cant+"x "+i.prodNombre).join("\n");
+  const yaBajo=p.stockBajado?"\n\n⚠️ Este pedido YA se descontó antes. Si seguís, se descuenta de nuevo (queda doble).":"";
+  if(!confirm("Se va a descontar del stock:\n\n"+det+yaBajo)) return;
+  await descontarStockPedido(id,null,true);
+  toast("Descontado ✓");
+  render();
+}
 function cardOperador(p){
   const e=estObj(p.estado), exp=!!EXP_PED[p.id];
   const dest=(p.ciudad||"")+(p.provincia?(", "+p.provincia):"");
@@ -1837,6 +1848,7 @@ function cardOperador(p){
   acts+=`<button class="btn sm ghost" onclick="imprimirPickeo('${p.id}')">${icon('printer')} Pickeo</button>`;
   let mas="";
   mas+=`<button class="btn sm ghost" onclick="cambiarRuta('${p.id}')">Editar</button>`;
+  mas+=`<button class="btn sm ghost" style="color:${p.stockBajado?'var(--amber)':'var(--accent)'}" onclick="descontarAhora('${p.id}')">↻ ${p.stockBajado?'Volver a descontar':'Descontar del stock'}</button>`;
   mas+=`<button class="btn sm ghost" onclick="imprimirEtiqueta('${p.id}')">${icon('printer')} Etiqueta</button>`;
   if(p.tnId && !p.tnAvisado && ["preparado","asignado","en_reparto","despachado","en_camino","entregado","confirmado"].includes(p.estado))
     mas+=`<button class="btn sm ghost" onclick="marcarEnviadoTN('${p.id}')">🛍️ Avisar a Tienda Nube</button>`;
@@ -2744,7 +2756,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v17jul-sku";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v17jul-orden";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
