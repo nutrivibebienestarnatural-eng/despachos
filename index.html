@@ -2003,6 +2003,19 @@ function segOp(active){
     tabs.map(t=>`<button class="${active===t[0]?'on':''}" ${active===t[0]?'':`onclick="OPVIEW='${t[0]}';vistaOperador()"`}>${t[1]}</button>`).join("")
   }</div></div>`;
 }
+function cadetesRaros(){
+  const set=new Set();
+  soloPedidos().forEach(p=>{ if(p.metodo==="cadete" && p.cadete && !CADETES.includes(p.cadete)) set.add(p.cadete); });
+  return [...set];
+}
+async function reasignarCadete(viejo,nuevo){
+  const peds=soloPedidos().filter(p=>p.cadete===viejo);
+  if(!peds.length){ toast("No hay pedidos con "+viejo); return; }
+  if(!confirm("¿Pasar los "+peds.length+" pedidos de \""+viejo+"\" a \""+nuevo+"\"?")) return;
+  toast("Actualizando "+peds.length+" pedidos…");
+  for(const p of peds){ try{ await DB.update(p.id,{cadete:nuevo}); }catch(e){} }
+  toast("Listo ✓"); render();
+}
 function vistaPanel(){
   const ped=soloPedidos();
   const hoy=new Date(); hoy.setHours(0,0,0,0);
@@ -2020,7 +2033,7 @@ function vistaPanel(){
   const repHoy={}; activos.forEach(p=>{ const q=p.metodo==="correo"?"Correo":(p.cadete||"Sin asignar");
     const c=catPedido(p); if(!repHoy[q]) repHoy[q]={q,n:0,$:0};
     repHoy[q].n++; repHoy[q].$ += (esCad(c)&&p.metodo!=="correo"&&cadeteCobra(q))?(zc[c]||0):0; });
-  const estados=[["pendiente","Por preparar"],["preparado","Preparados"],["asignado","Asignados"],["en_reparto","En reparto"],["despachado","Despachados"],["en_camino","En camino"]];
+  const estados=[["pendiente","Por preparar"],["preparado","Preparados"],["asignado","Asignados"],["en_reparto","En reparto"],["despachado","Despachados"],["en_camino","En camino"],["entregado","Entregados"],["confirmado","Confirmados"]];
   const filaEst=estados.map(([k,l])=>{ const n=ped.filter(p=>p.estado===k).length; if(!n) return "";
     const e=estObj(k);
     return `<tr onclick="FILTRO='${k}';OPVIEW='pedidos';vistaOperador()" style="cursor:pointer">
@@ -2063,6 +2076,15 @@ function vistaPanel(){
             <td style="text-align:right;color:${x.$?'#e5484d':'var(--text-3)'};font-size:12.5px">${x.$?fmtAr(x.$):'—'}</td></tr>`).join("")
             ||'<tr><td class="muted">Sin pedidos activos</td></tr>'}
         </table>
+        ${(()=>{ const raros=cadetesRaros(); if(!raros.length) return "";
+          return `<div style="margin-top:10px;padding-top:9px;border-top:.5px solid var(--border)">
+            <div class="muted" style="font-size:12.5px;margin-bottom:6px">⚠ Repartidores de antes. Pasalos a los actuales:</div>
+            ${raros.map(r=>`<div class="row" style="gap:6px;align-items:center;margin-bottom:5px">
+              <span style="flex:1;min-width:0;font-size:13px">${esc(r)}</span>
+              <select onchange="if(this.value)reasignarCadete('${esc(r)}',this.value)" style="max-width:130px;padding:4px 7px;font-size:12.5px">
+                <option value="">pasar a…</option>${CADETES.map(c=>`<option>${esc(c)}</option>`).join("")}
+              </select></div>`).join("")}
+          </div>`; })()}
         ${reponer?`<div style="margin-top:10px;padding-top:9px;border-top:.5px solid var(--border);font-size:13px">
           <span style="color:var(--amber);font-weight:600">⚠ ${reponer} producto${reponer===1?'':'s'} a reponer</span>
           <button class="btn sm ghost" style="margin-left:6px" onclick="OPVIEW='stock';vistaOperador()">Ver stock</button></div>`:''}
@@ -3269,7 +3291,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v18jul-cierre2";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v18jul-fix";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
