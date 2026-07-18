@@ -2668,9 +2668,10 @@ function parseRemito(text){
     const qm=b.match(/(\d+)[.,]\d{2}(?!\d)/);
     let cant = qm ? Math.round(parseFloat(qm[1])) : null;
     if(cant==null){ const ints=[...b.matchAll(/(\d{1,4})/g)].map(m=>+m[1]).filter(v=>v>0&&v<10000); cant=ints.length?ints[ints.length-1]:null; }
+    const sk=(b.match(/\bPLN\s?-?\s?(\d{3,6})\b/i)||[])[1];      // guardo el código PLN
     // nombre = sacar el código PLN y la cantidad; dejar el resto (incluye "(60 Capsulas)")
     let nombre=b.replace(/^[\s\S]*?PLN\d+\s*/i,"").replace(/\d+[.,]\d{2}(?!\d)/,"").replace(/\s+/g," ").trim();
-    if(nombre && cant) out.push({nombre, cant});
+    if(nombre && cant) out.push({nombre, cant, sku: sk?("PLN"+sk):null});
   });
   return out;
 }
@@ -2683,35 +2684,67 @@ async function leerRemitoPDF(file){
     const texto=await pdfTextoRemito(file);
     const items=parseRemito(texto);
     if(!items.length){ toast("No reconocí productos. ¿Es el PDF del remito?"); return; }
-    const box=$("#csTxt"); if(box) box.value=items.map(i=>i.nombre+" = "+i.cant).join("\n");
+    const box=$("#csTxt"); if(box) box.value=items.map(i=>(i.sku?(i.sku+" "):"")+i.nombre+" = "+i.cant).join("\n");
     previsualizarCarga();
     toast(items.length+" productos leídos del remito");
   }catch(e){ toast("No pude leer el PDF del remito"); }
 }
+/* Tabla de SKU (PLN...) → producto del catálogo. Se guarda en la nube y se va aprendiendo. */
+function skuRecord(){ return PEDIDOS.find(p=>p.tipo==="skus"); }
+function skuMap(){ const r=skuRecord(); return (r&&r.map)||{}; }
+function skuDe(txt){ const m=String(txt||"").toUpperCase().match(/\bPLN\s?-?\s?(\d{3,6})\b/); return m?("PLN"+m[1]):null; }
+async function aprenderSku(sku,nombreProd){
+  if(!sku||!nombreProd) return;
+  const r=skuRecord(); const map=Object.assign({},(r&&r.map)||{}); map[sku]=nombreProd;
+  if(r) await DB.update(r.id,{map}); else await DB.create({tipo:"skus",map});
+}
+function prodPorSku(sku){ const n=skuMap()[sku]; return n?PRODUCTOS.find(p=>p.nombre===n):null; }
 function parseCarga(){
   return ($("#csTxt").value||"").split(/\n/).map(l=>l.trim()).filter(Boolean).map(l=>{
     const i=l.lastIndexOf("="); if(i<0) return null;
     const nombre=l.slice(0,i).trim(), cant=parseInt((l.slice(i+1).match(/\d+/)||[])[0],10);
     if(!nombre||!cant) return null;
-    const prod=mejorProducto(nombre);
-    return { entrada:nombre, cant, prod: prod?prod.nombre:null };
+    const sku=skuDe(nombre);                                   // ej: PLN1012
+    let prod=sku?prodPorSku(sku):null;                         // 1) por SKU: exacto
+    if(!prod) prod=mejorProducto(nombre.replace(/\bPLN\s?-?\s?\d{3,6}\b/ig,"").trim());   // 2) por nombre
+    return { entrada:nombre, cant, sku, prod: prod?prod.nombre:null, porSku: !!(sku&&prodPorSku(sku)) };
   }).filter(Boolean);
 }
 function previsualizarCarga(){
   const items=parseCarga(); const prev=$("#csPrev");
   if(!items.length){ prev.innerHTML=`<div class="hint" style="margin-top:12px">Pegá al menos una línea con “nombre = cantidad”.</div>`; return; }
   window.__carga=items; const okN=items.filter(i=>i.prod).length;
+  const opts=(sel)=>PRODUCTOS.map(p=>`<option ${p.nombre===sel?'selected':''}>${esc(p.nombre)}</option>`).join("");
   prev.innerHTML=`
     <div class="label" style="margin-top:18px">Se va a cargar (${okN} de ${items.length})</div>
     <div class="card">
-      ${items.map(it=>`<div class="row" style="justify-content:space-between;align-items:center;padding:9px 0;border-top:.5px solid var(--border)">
-        <span style="min-width:0;font-size:14px">${it.prod?esc(it.prod):`<span style="color:var(--red)">⚠ No reconocido: ${esc(it.entrada)}</span>`}</span>
-        <b style="flex:0 0 auto">+${it.cant}</b></div>`).join("")}
+      ${items.map((it,ix)=>`<div style="padding:10px 0;border-top:.5px solid var(--border)">
+        <div class="row" style="justify-content:space-between;align-items:center;gap:8px">
+          <span style="min-width:0;font-size:14px">
+            ${it.prod?esc(it.prod):`<span style="color:var(--red)">⚠ No reconocido</span>`}
+            ${it.sku?`<span class="muted" style="font-size:12px"> · ${esc(it.sku)}${it.porSku?' ✓':''}</span>`:''}
+          </span>
+          <b style="flex:0 0 auto">+${it.cant}</b>
+        </div>
+        <div class="muted" style="font-size:12px;margin-top:2px">${esc(it.entrada)}</div>
+        ${it.sku&&!it.porSku?`<div style="margin-top:7px">
+          <div class="muted" style="font-size:12px;margin-bottom:4px">¿Qué producto es ${esc(it.sku)}? (lo aprendo para siempre)</div>
+          <select onchange="fijarSku('${esc(it.sku)}',this.value)" style="width:100%;padding:7px;border:1px solid var(--border);border-radius:9px;font:inherit;background:var(--bg)">
+            <option value="">— elegir producto —</option>${opts(it.prod)}
+          </select>
+        </div>`:''}
+      </div>`).join("")}
     </div>
     ${okN?`<button class="btn block" style="margin-top:12px" onclick="confirmarCarga()">${icon('check')} Cargar ${okN} al stock</button>`:''}
-    <div class="hint" style="margin-top:8px">Los ⚠ no los cargo. Si querés, corregí el nombre y volvé a "Ver".</div>`;
+    <div class="hint" style="margin-top:8px">Los que tienen <b>PLN ✓</b> son match exacto por código. Los ⚠ no los cargo: elegí el producto en la lista y queda aprendido.</div>`;
 }
-const APP_VERSION="v17jul-stock";   // versión visible para saber qué archivo está corriendo
+async function fijarSku(sku,nombre){
+  if(!nombre) return;
+  await aprenderSku(sku,nombre);
+  toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
+  previsualizarCarga();
+}
+const APP_VERSION="v17jul-sku";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
