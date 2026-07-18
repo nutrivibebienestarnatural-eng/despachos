@@ -700,7 +700,7 @@ function sembrarDemo(write,read){
 /* =========================================================================
    5) ESTADO EN MEMORIA + UTILIDADES
    ========================================================================= */
-let PEDIDOS=[], ROL=null, CADETE_ACTIVO=null, FILTRO="todos", OPVIEW="panel", EMPLEADO=false;
+let PEDIDOS=[], ROL=null, CADETE_ACTIVO=null, FILTRO="todos", OPVIEW="panel", EMPLEADO=false, PED_Q="";
 let USER=null, USERROL=null, AUTH_READY=false, SUBSCRITO=false, PREVIEW=null;
 let STOCK_DESDE="", STOCK_HASTA="", STOCK_Q="", STOCK_TODOS=false;
 let ENT_DESDE="", ENT_HASTA="";
@@ -1713,7 +1713,13 @@ function vistaOperador(){
     if(arr.length) grupos.push({empresa:e.nombre, canalId:c.id, canalNombre:c.nombre, n:arr.length, costo:c.costo, total:arr.length*c.costo});
   }));
   const costoTotal=grupos.reduce((s,g)=>s+g.total,0);
+  const q=(PED_Q||"").toLowerCase().trim();
   const lista=ped.filter(p=>{
+    if(q){   // buscador: cliente, N° de orden, o producto (texto de items o lista elegida)
+      const prods=(p.prods||[]).map(x=>x.nombre).join(" ");
+      const txt=[p.cliente,p.ref,numOrden(p),p.items,prods,p.dir,p.ciudad,p.tel].filter(Boolean).join(" ").toLowerCase();
+      if(!txt.includes(q)) return false;
+    }
     if(FILTRO.startsWith("emp:")) return (p.empresa||"")===FILTRO.slice(4);
     if(FILTRO==="todos") return p.estado!=="anulado";
     if(FILTRO==="activos") return !["confirmado","anulado"].includes(p.estado);
@@ -1774,6 +1780,8 @@ function vistaOperador(){
         .map(f=>`<button class="${FILTRO===f?'on':''}" onclick="setFiltro('${f}')">${({todos:'Todos',activos:'Activos',cadete:'Cadete',correo:'Correo',anulado:'Anulados'})[f]||estObj(f).label}</button>`).join("")}
       ${EMPRESAS.map(e=>`<button class="${FILTRO==='emp:'+e.id?'on':''}" onclick="setFiltro('emp:${e.id}')">${esc(e.nombre)}</button>`).join("")}
     </div>
+    <input id="pedQ" autocomplete="off" placeholder="🔍 Buscar por cliente, N° de orden o producto…" value="${esc(PED_Q||'')}" oninput="PED_Q=this.value;clearTimeout(window.__pq);window.__pq=setTimeout(vistaOperador,300)" style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:11px;font:inherit;background:var(--bg);margin-bottom:10px">
+    ${PED_Q?`<div class="row" style="margin-bottom:10px;align-items:center;gap:8px"><b>${lista.length}</b><span class="muted">resultado${lista.length===1?'':'s'} para "${esc(PED_Q)}"</span><button class="btn sm ghost" onclick="PED_Q='';vistaOperador()">Limpiar</button></div>`:''}
     <div class="cardgrid">${listaPorFecha(lista)}</div>
     ${DB.modo==="demo"?`<div class="center" style="margin-top:24px">
       <span class="muted" style="font-size:13px">Modo demo · </span>
@@ -2794,7 +2802,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v17jul-prods";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v17jul-buscar";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
