@@ -1094,7 +1094,7 @@ async function confirmarEntregados(){
   toast("Cerrando "+ent.length+" pedidos…");
   let ok=0; for(const p of ent){ try{ await DB.update(p.id,{estado:"confirmado"}); ok++; }catch(e){} }
   alert("✅ "+ok+" pedidos cerrados.\n\nEl panel ya arranca de cero.");
-  pantallaCierre();
+  render();
 }
 async function ejecutarCierre(){
   const desde=ultimoCierreTs();
@@ -2224,6 +2224,9 @@ function vistaOperador(){
       </div>
       <div class="label" style="margin:0 0 8px">⚙️ Otros</div>
       <div class="row">
+        ${(()=>{ const e=soloPedidos().filter(p=>p.estado==="entregado").length;
+          return e?`<button class="btn sm" onclick="confirmarEntregados()">✓ Cerrar ${e} entregados</button>`:''; })()}
+        <button class="btn ghost sm" onclick="pantallaCierre()">🔒 Cierre de período</button>
         <button class="btn ghost sm" onclick="pantallaCobro()">Facturar</button>
         <button class="btn ghost sm" onclick="pantallaEntregas()">Resumen de entregas</button>
         <button class="btn ghost sm" onclick="recalcularRutas()">Recalcular rutas</button>
@@ -3311,7 +3314,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v18jul-cerrar";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v18jul-cerrar2";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
