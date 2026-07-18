@@ -2039,7 +2039,8 @@ async function reasignarCadete(viejo,nuevo){
 function vistaPanel(){
   const ped=soloPedidos();
   const hoy=new Date(); hoy.setHours(0,0,0,0);
-  const activos=ped.filter(p=>!["confirmado","anulado"].includes(p.estado));
+  const ACTIVOS_EST=["pendiente","preparado","asignado","en_reparto","despachado","en_camino","entregado"];
+  const activos=ped.filter(p=>ACTIVOS_EST.includes(p.estado));   // solo estados de trabajo reales
   const porPrep=ped.filter(p=>p.estado==="pendiente").length;
   const enRuta=ped.filter(p=>["asignado","en_reparto"].includes(p.estado)).length;
   const entregadosHoy=ped.filter(p=>(p.eventos||[]).some(e=>e.estado==="entregado"&&e.ts>=hoy.getTime())).length;
@@ -2160,7 +2161,7 @@ function vistaOperador(){
     enRuta:  ped.filter(p=>["asignado","en_reparto","despachado","en_camino"].includes(p.estado)).length,
     hoy: entregadosHoy
   };
-  const activosArr=ped.filter(p=>!["confirmado","anulado"].includes(p.estado));
+  const activosArr=ped.filter(p=>["pendiente","preparado","asignado","en_reparto","despachado","en_camino","entregado"].includes(p.estado));
   const grupos=[];
   EMPRESAS.forEach(e=>CANALES.forEach(c=>{
     const arr=activosArr.filter(p=>(p.empresa||"")===e.id && canalDe(p)===c.id);
@@ -3314,7 +3315,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v18jul-cerrar2";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v18jul-activos";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
