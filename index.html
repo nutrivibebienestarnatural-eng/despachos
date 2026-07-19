@@ -1097,7 +1097,8 @@ async function confirmarEntregados(){
   if(!ent.length){ toast("No hay entregados sin cerrar"); return; }
   if(!confirm("¿Cerrar "+ent.length+" pedidos entregados?\n\nPasan a CONFIRMADOS: salen de 'activos' y dejan de sumar en 'a facturar'.\nSiguen guardados y los podés ver con el filtro Confirmados.")) return;
   toast("Cerrando "+ent.length+" pedidos…");
-  let ok=0; for(const p of ent){ try{ await DB.update(p.id,{estado:"confirmado"}); ok++; }catch(e){} }
+  const sello=Date.now();
+  let ok=0; for(const p of ent){ try{ await DB.update(p.id,{estado:"confirmado",cerradoEn:sello}); ok++; }catch(e){} }
   alert("✅ "+ok+" pedidos cerrados.\n\nEl panel ya arranca de cero.");
   render();
 }
@@ -1119,7 +1120,7 @@ async function ejecutarCierre(){
   if(r) await DB.update(r.id,{lista}); else await DB.create({tipo:"cierres",lista});
   if(entregados.length){                                  // cierro los entregados: dejan de ser activos
     toast("Cerrando "+entregados.length+" pedidos entregados…");
-    for(const p of entregados){ try{ await DB.update(p.id,{estado:"confirmado"}); }catch(e){} }
+    for(const p of entregados){ try{ await DB.update(p.id,{estado:"confirmado",cerradoEn:c.ts}); }catch(e){} }
   }
   SAL_MIN=null; SAL_DESDE=""; SAL_HASTA="";
   alert("✅ PERÍODO CERRADO\n\n"+entregados.length+" pedidos confirmados.\nQuedó guardado el resumen y el saldo de stock.\nDesde ahora se cuenta de cero.");
@@ -2180,6 +2181,8 @@ function vistaOperador(){
       const txt=[p.cliente,p.ref,numOrden(p),p.items,prods,p.dir,p.ciudad,p.tel].filter(Boolean).join(" ").toLowerCase();
       if(!txt.includes(q)) return false;
     }
+    if(FILTRO==="archivados") return !!p.cerradoEn;                  // solo las cerradas
+    if(p.cerradoEn) return false;                                     // archivadas: fuera de las demás vistas
     if(FILTRO.startsWith("emp:")) return (p.empresa||"")===FILTRO.slice(4);
     if(FILTRO==="todos") return p.estado!=="anulado";
     if(FILTRO==="activos") return !["confirmado","anulado"].includes(p.estado);
@@ -2239,8 +2242,8 @@ function vistaOperador(){
       </div>
     </div>`:''}
     <div class="filters">
-      ${["todos","activos","cadete","correo","pendiente","preparado","entregado","confirmado","anulado"]
-        .map(f=>`<button class="${FILTRO===f?'on':''}" onclick="setFiltro('${f}')">${({todos:'Todos',activos:'Activos',cadete:'Cadete',correo:'Correo',anulado:'Anulados'})[f]||estObj(f).label}</button>`).join("")}
+      ${["todos","activos","cadete","correo","pendiente","preparado","entregado","confirmado","anulado","archivados"]
+        .map(f=>`<button class="${FILTRO===f?'on':''}" onclick="setFiltro('${f}')">${({todos:'Todos',activos:'Activos',cadete:'Cadete',correo:'Correo',anulado:'Anulados',archivados:'📁 Archivados'})[f]||estObj(f).label}</button>`).join("")}
       ${EMPRESAS.map(e=>`<button class="${FILTRO==='emp:'+e.id?'on':''}" onclick="setFiltro('emp:${e.id}')">${esc(e.nombre)}</button>`).join("")}
     </div>
     <input id="pedQ" autocomplete="off" placeholder="🔍 Buscar por cliente, N° de orden o producto…" value="${esc(PED_Q||'')}" oninput="PED_Q=this.value;clearTimeout(window.__pq);window.__pq=setTimeout(vistaOperador,300)" style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:11px;font:inherit;background:var(--bg);margin-bottom:10px">
@@ -3339,7 +3342,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v19jul-compacto";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v19jul-archivo";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
