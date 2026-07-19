@@ -2232,6 +2232,7 @@ function vistaOperador(){
       <div class="row" style="margin-bottom:14px">
         <button class="btn ghost sm" onclick="imprimirLote()">Etiquetas de envío</button>
         <button class="btn ghost sm" onclick="pickeoPend()">Etiquetas de pickeo</button>
+        <button class="btn ghost sm" onclick="etiquetasML()">🏷️ Etiquetas ML</button>
         <button class="btn ghost sm" onclick="hojaEnvios()">Hoja de envíos</button>
         <button class="btn ghost sm" onclick="imprimirComprobante()">Comprobante cadete</button>
       </div>
@@ -2386,6 +2387,7 @@ function cardOperador(p){
   if(["pendiente","preparado","asignado","en_reparto"].includes(p.estado)) acts+=selectReparto(p);
   acts+=`<button class="btn sm green" onclick="waCliente('${p.id}')">WhatsApp</button>`;
   acts+=`<button class="btn sm ghost" onclick="imprimirPickeo('${p.id}')">${icon('printer')} Pickeo</button>`;
+  if(p.etiquetaPdf) acts+=`<button class="btn sm ghost" style="color:var(--accent)" onclick='abrirEtiquetaPDF(PEDIDOS.find(x=>x.id==="${p.id}"))'>🏷️ Etiqueta ML</button>`;
   let mas="";
   mas+=`<button class="btn sm ghost" onclick="cambiarRuta('${p.id}')">Editar</button>`;
   mas+=`<button class="btn sm ghost" style="color:${p.stockBajado?'var(--amber)':'var(--accent)'}" onclick="descontarAhora('${p.id}')">↻ ${p.stockBajado?'Volver a descontar':'Descontar del stock'}</button>`;
@@ -2469,6 +2471,10 @@ function formImportar(){
         <button class="btn block" onclick="traerTiendaNube()">${icon('store')} Traer pedidos de Tienda Nube</button>
         <div class="hint" style="margin:8px 0 14px;text-align:center">Trae los pedidos pagados sin despachar, desde la fecha elegida. No trae los que ya importaste ni los que descartaste.</div>
         <div style="text-align:center;color:var(--text-3);font-size:13px;margin-bottom:14px">— o subí el archivo —</div>`:''}
+      <label class="btn ${IMP_CANAL==='ml_flex'?'':'ghost'} block" style="cursor:pointer;margin-bottom:8px">🏷️ Subir etiqueta de Mercado Libre
+        <input type="file" accept="application/pdf" style="display:none" onchange="leerEtiquetaML(this.files[0])"></label>
+      <div class="hint" style="margin:0 0 14px;text-align:center">Crea el pedido y carga los productos por código de barras. Subilas de a una para que quede la etiqueta guardada.</div>
+      ${IMP_CANAL==='ml_flex'?`<div style="text-align:center;color:var(--text-3);font-size:13px;margin-bottom:14px">— o subí un CSV —</div>`:''}
       <label id="dropZone" class="dropzone" for="impFile">
         <input type="file" id="impFile" accept=".csv,.pdf,text/csv,application/pdf" style="display:none" onchange="importarAuto(this.files&&this.files[0])">
         ${icon('upload')}
@@ -3285,6 +3291,64 @@ function parseRemito(text){
   });
   return out;
 }
+/* ---- ETIQUETA DE MERCADO LIBRE: crea el pedido y carga los productos por código de barras ---- */
+function parseEtiquetaML(texto){
+  const L=texto.split(/\n/).map(x=>x.trim()).filter(Boolean);
+  const T=texto.replace(/[ \t]+/g," ");
+  let cp=(T.match(/CP:\s*(\d{4})\b/)||[])[1]||"";                       // "CP: 1642"
+  if(!cp){ const i=L.findIndex(x=>/^CP:?$/.test(x)); if(i>0){ const m=L[i-1].match(/^(\d{4})$/); if(m) cp=m[1]; } }  // o el número arriba
+  let loc=""; const iCP=L.findIndex(x=>/^CP:?$/.test(x)||/CP:\s*\d{4}/.test(x));
+  if(iCP>=0) for(let j=iCP+1;j<Math.min(iCP+4,L.length);j++){ const c=L[j];
+    if(c && !/^(RESIDENCIAL|COMERCIAL|Direccion|Barrio|Referencia|Destinatario)/i.test(c) && !/^\d{4}$/.test(c)){ loc=c; break; } }
+  const dir=(T.match(/Direccion:\s*(.+?)(?:\s*Barrio:|\s*Referencia:|\s*Destinatario:|\n|$)/i)||[])[1]||"";
+  let cli=(T.match(/Destinatario:\s*([^(\n]+)/i)||[])[1]||"";
+  const nota=(T.match(/Referencia:\s*(?:Referencia:\s*)?([^\n]+)/i)||[])[1]||"";
+  const venta=(T.match(/Venta:\s*(\d+)/)||[])[1]||"";
+  const envio=(T.match(/Envio:\s*(\d+)/i)||[])[1]||"";
+  const prods=[], items=[];
+  const rx=/SKU:\s*(\d{6,})/g; let m;
+  while((m=rx.exec(texto))!==null){
+    const sku=m[1];
+    const cant=parseInt((texto.slice(m.index).match(/Cantidad:\s*(\d+)/)||[])[1],10)||1;
+    const prod=PRODUCTOS.find(p=>p.barcode===sku);                        // match exacto por código de barras
+    let nom=""; const antes=texto.slice(0,m.index).split(/\n/).reverse();
+    for(const c of antes){ const t=c.trim();
+      if(t.length>12 && !/^(Pack ID|Venta|Cantidad|Sabor|Tipo de envase|SKU)/i.test(t)){ nom=t.replace(/^\d{6,}\s*/,""); break; } }
+    if(prod) prods.push({nombre:prod.nombre,cant});
+    items.push(cant+"x "+(prod?prod.nombre:(nom||("SKU "+sku))));
+  }
+  if(!cli && !venta && !prods.length) return null;
+  return { ref: venta?("#"+venta):(envio?("#"+envio):""), cliente:cli.trim(), tel:"", dir:dir.trim(),
+    ciudad:loc, provincia:"Buenos Aires", cp, items:items.join(" · "), prods, nota:nota.trim(), etiquetaML:true };
+}
+async function leerEtiquetaML(file){
+  if(!file) return;
+  if(typeof pdfjsLib==="undefined"){ toast("El lector de PDF no cargó, probá de nuevo"); return; }
+  pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+  toast("Leyendo la etiqueta de Mercado Libre…");
+  try{
+    const texto=await pdfTextoRemito(file);
+    // puede traer varias etiquetas: corto por "Destinatario" o por "Venta:"
+    const bloques=texto.split(/(?=NutriVibe|Despacha tus productos)/).filter(b=>/CP:|SKU:/.test(b));
+    let filas=[];
+    if(bloques.length<=2){ const f=parseEtiquetaML(texto); if(f) filas=[f]; }
+    else { bloques.forEach(b=>{ const f=parseEtiquetaML(b); if(f&&(f.cliente||f.prods.length)) filas.push(f); }); }
+    if(!filas.length){ toast("No reconocí la etiqueta. ¿Es el PDF de Mercado Libre?"); return; }
+    // guardo el PDF para poder reimprimir la etiqueta desde el pedido
+    let adj=null;
+    try{ if(file.size<=700*1024){ adj={etiquetaPdf:await leerArchivoBase64(file), etiquetaPdfNombre:file.name||"etiqueta-ml.pdf"}; } }catch(e){}
+    const existentes=new Set(soloPedidos().map(p=>p.ref).filter(Boolean));
+    IMP_FILAS=filas.filter(f=>!f.ref||!existentes.has(f.ref)).map(f=>{
+      f.empresa=IMP_EMPRESA; f.canal="ml_flex";
+      if(adj && filas.length===1){ f.etiquetaPdf=adj.etiquetaPdf; f.etiquetaPdfNombre=adj.etiquetaPdfNombre; }
+      const rr=sugerirRuta(f.provincia,f.ciudad); f.origen=(rr&&rr.origen)||"bsas";
+      if(llegaCadete(f)){ f.metodo="cadete"; f.correo=""; } else { f.metodo="correo"; f.correo="Correo Argentino"; }
+      return f; });
+    if(!IMP_FILAS.length){ toast("Esa venta ya está cargada"); return; }
+    mostrarPreviewImport();
+    toast(IMP_FILAS.length+" etiqueta"+(IMP_FILAS.length===1?"":"s")+" leída"+(IMP_FILAS.length===1?"":"s"));
+  }catch(e){ console.error(e); toast("No pude leer el PDF de la etiqueta"); }
+}
 async function leerRemitoPDF(file){
   if(!file) return;
   if(typeof pdfjsLib==="undefined"){ toast("El lector de PDF no cargó, probá de nuevo"); return; }
@@ -3354,7 +3418,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v19jul-archivo2";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v19jul-ml3";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
@@ -3917,6 +3981,14 @@ function imprimirEtiqueta(id){
   printLabels([p]);
 }
 function imprimirLote(){ pantallaEtiquetas(); }
+/* Abre las etiquetas de Mercado Libre de los pedidos pendientes (una pestaña por etiqueta) */
+function etiquetasML(){
+  const arr=soloPedidos().filter(p=>p.etiquetaPdf && ["pendiente","preparado","asignado"].includes(p.estado));
+  if(!arr.length){ toast("No hay etiquetas de ML pendientes"); return; }
+  if(arr.length>6 && !confirm("Se van a abrir "+arr.length+" pestañas (una por etiqueta). ¿Seguimos?")) return;
+  arr.forEach((p,i)=>setTimeout(()=>abrirEtiquetaPDF(p), i*350));
+  toast("Abriendo "+arr.length+" etiqueta"+(arr.length===1?"":"s"));
+}
 /* ---- ETIQUETA DE PICKEO: para armar el paquete (Cardinal imprime la de envío) ---- */
 function etiquetaPickeoBody(p){
   const an=anilloDe(p);
