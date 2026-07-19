@@ -60,36 +60,36 @@ a{color:var(--accent);text-decoration:none}
   padding:7px 14px;border-radius:var(--r-pill);border:.5px solid var(--border);transition:.2s}
 .nav .role-pill:hover{color:var(--text);border-color:var(--border-2)}
 
-.wrap{max-width:1040px;margin:0 auto;padding:28px 20px 100px}
-.title{font-size:34px;font-weight:700;letter-spacing:-.025em;line-height:1.05;margin-bottom:6px}
-.subtitle{color:var(--text-2);font-size:17px;margin-bottom:26px}
-.label{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
-  color:var(--text-2);margin-bottom:9px;display:block}
+.wrap{max-width:1180px;margin:0 auto;padding:18px 18px 80px}
+.title{font-size:25px;font-weight:700;letter-spacing:-.02em;line-height:1.1;margin-bottom:3px}
+.subtitle{color:var(--text-2);font-size:14px;margin-bottom:14px}
+.label{font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--text-2);margin-bottom:6px;display:block}
 
 /* ---- Cards ---- */
 .card{background:var(--bg-2);border:.5px solid var(--border);border-radius:var(--r-card);
-  padding:22px;box-shadow:var(--sh-sm)}
+  padding:13px 15px;box-shadow:var(--sh-sm)}
 .grid{display:grid;gap:12px}
-.cardgrid{display:grid;gap:14px;grid-template-columns:1fr}
+.cardgrid{display:grid;gap:9px;grid-template-columns:1fr}
 .cardgrid .order{margin-bottom:0}
 @media(min-width:900px){.cardgrid{grid-template-columns:1fr 1fr}}
 
 /* ---- KPIs ---- */
-.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:26px}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;margin-bottom:14px}
 .kpi{background:var(--bg-2);border:.5px solid var(--border);border-radius:var(--r-card);
-  padding:18px;box-shadow:var(--sh-sm);position:relative;overflow:hidden}
-.kpi .ico{position:absolute;top:16px;right:16px;color:var(--text-3);width:19px;height:19px}
-.kpi .n{font-size:38px;font-weight:700;letter-spacing:-.03em;line-height:1;
+  padding:11px 13px;box-shadow:var(--sh-sm);position:relative;overflow:hidden}
+.kpi .ico{position:absolute;top:10px;right:10px;color:var(--text-3);width:15px;height:15px}
+.kpi .n{font-size:25px;font-weight:700;letter-spacing:-.03em;line-height:1;
   font-variant-numeric:tabular-nums}
-.kpi .l{font-size:12.5px;color:var(--text-2);margin-top:8px;font-weight:450}
+.kpi .l{font-size:11.5px;color:var(--text-2);margin-top:4px;font-weight:450}
 .kpi.accent .n{color:var(--accent)}
-@media(max-width:640px){.kpis{grid-template-columns:repeat(2,1fr)}.kpi .n{font-size:32px}}
+@media(max-width:640px){.kpis{grid-template-columns:repeat(2,1fr)}.kpi .n{font-size:22px}}
 
 /* ---- Panel (dashboard) ---- */
 .hero{background:var(--bg-2);border:.5px solid var(--border);border-radius:var(--r-card);
-  padding:30px 26px;box-shadow:var(--sh-sm);margin-bottom:12px}
-.hero .n{font-size:52px;font-weight:700;letter-spacing:-.035em;line-height:1;font-variant-numeric:tabular-nums}
-.hero .c{color:var(--text-2);font-size:15px;margin-top:10px}
+  padding:16px 18px;box-shadow:var(--sh-sm);margin-bottom:9px}
+.hero .n{font-size:34px;font-weight:700;letter-spacing:-.035em;line-height:1;font-variant-numeric:tabular-nums}
+.hero .c{color:var(--text-2);font-size:13px;margin-top:5px}
 .tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:12px}
 @media(max-width:640px){.tiles{grid-template-columns:repeat(2,1fr)}}
 .tile{background:var(--bg-2);border:.5px solid var(--border);border-radius:var(--r-card);
@@ -122,17 +122,17 @@ a{color:var(--accent);text-decoration:none}
 .scan-last{position:absolute;left:0;right:0;bottom:92px;color:#7CFC98;font-size:15px;font-weight:700;text-align:center}
 
 /* ---- Inputs ---- */
-.field{margin-bottom:16px}
+.field{margin-bottom:11px}
 input,select,textarea{width:100%;background:var(--bg);border:.5px solid var(--border-2);
-  border-radius:var(--r-inp);padding:12px 14px;outline:none;transition:border-color .2s,box-shadow .2s}
+  border-radius:var(--r-inp);padding:8px 11px;outline:none;transition:border-color .2s,box-shadow .2s;font-size:14px}
 input:focus,select:focus,textarea:focus{border-color:var(--accent);
   box-shadow:0 0 0 4px var(--accent-weak)}
-textarea{resize:vertical;min-height:66px;font-size:15px;line-height:1.5}
-.two{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+textarea{resize:vertical;min-height:54px;font-size:14px;line-height:1.45}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 @media(max-width:560px){.two{grid-template-columns:1fr}}
 
 /* ---- Botones ---- */
-.btn{background:var(--accent);color:#fff;border-radius:var(--r-pill);padding:12px 20px;
+.btn{background:var(--accent);color:#fff;border-radius:var(--r-pill);padding:8px 15px;font-size:14px;
   font-weight:590;letter-spacing:-.01em;transition:opacity .2s,transform .08s,box-shadow .2s;
   display:inline-flex;align-items:center;gap:8px;justify-content:center;box-shadow:var(--sh-sm)}
 .btn:hover{opacity:.88}.btn:active{transform:scale(.97)}
@@ -141,35 +141,35 @@ textarea{resize:vertical;min-height:66px;font-size:15px;line-height:1.5}
 .btn.ghost{background:var(--bg-3);color:var(--text);box-shadow:none}
 .btn.ghost:hover{background:var(--border-2);opacity:1}
 .btn.green{background:var(--green)}.btn.amber{background:var(--amber);color:#1d1d1f}.btn.red{background:var(--red)}
-.btn.sm{padding:9px 15px;font-size:14px}
+.btn.sm{padding:6px 11px;font-size:12.5px}
 .btn.sm .ico{width:15px;height:15px}
 
 /* ---- Segmented control ---- */
 .seg{display:flex;background:var(--bg-3);border-radius:var(--r-pill);padding:3px;gap:2px;
   max-width:100%;min-width:0;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
 .seg::-webkit-scrollbar{display:none}
-.seg button{padding:8px 18px;border-radius:var(--r-pill);font-size:14px;font-weight:540;flex:0 0 auto;white-space:nowrap;
+.seg button{padding:6px 13px;border-radius:var(--r-pill);font-size:13px;font-weight:540;flex:0 0 auto;white-space:nowrap;
   color:var(--text-2);transition:.18s;display:inline-flex;align-items:center;gap:6px}
 .seg button.on{background:var(--bg);color:var(--text);box-shadow:var(--sh-sm)}
 @media(prefers-color-scheme:dark){.seg button.on{background:var(--bg-3)}}
 
 /* ---- Lista de pedidos ---- */
 .order{background:var(--bg-2);border:.5px solid var(--border);border-radius:var(--r-card);
-  padding:14px 16px;margin-bottom:12px;box-shadow:var(--sh-sm);
+  padding:10px 13px;margin-bottom:8px;box-shadow:var(--sh-sm);
   transition:border-color .2s,transform .15s,box-shadow .2s}
 .order:hover{border-color:var(--border-2);box-shadow:var(--sh-md)}
 .ord-head{display:flex;align-items:center;gap:10px;cursor:pointer;-webkit-tap-highlight-color:transparent}
 .ord-name{display:flex;align-items:center;gap:8px;min-width:0}
 .ord-cli{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ord-sub{color:var(--text-2);font-size:12.5px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.dia-h{font-size:12px;font-weight:800;color:var(--text-2);text-transform:capitalize;letter-spacing:.02em;margin:18px 0 8px;padding-left:2px}
-.tbl{width:100%;border-collapse:collapse;font-size:13px;min-width:820px}
-.tbl th{text-align:left;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--text-3);padding:8px 10px;border-bottom:1px solid var(--border);white-space:nowrap;position:sticky;top:0;background:var(--bg)}
-.tbl td{padding:9px 10px;border-bottom:.5px solid var(--border);white-space:nowrap;vertical-align:middle}
+.dia-h{font-size:11px;font-weight:800;color:var(--text-2);text-transform:capitalize;letter-spacing:.02em;margin:12px 0 5px;padding-left:2px}
+.tbl{width:100%;border-collapse:collapse;font-size:12.5px;min-width:780px}
+.tbl th{text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--text-3);padding:8px 10px;border-bottom:1px solid var(--border);white-space:nowrap;position:sticky;top:0;background:var(--bg)}
+.tbl td{padding:6px 9px;border-bottom:.5px solid var(--border);white-space:nowrap;vertical-align:middle}
 .tbl tbody tr:hover{background:var(--bg-2)}
 .tbl td:nth-child(3){white-space:normal;min-width:150px}
-.tbl2{width:100%;border-collapse:collapse;font-size:13.5px}
-.tbl2 td{padding:9px 0;border-top:.5px solid var(--border);vertical-align:middle}
+.tbl2{width:100%;border-collapse:collapse;font-size:13px}
+.tbl2 td{padding:7px 0;border-top:.5px solid var(--border);vertical-align:middle}
 .tbl2 tr:first-child td{border-top:none}
 .tbl2 tr:hover td{background:var(--bg-2)}
 .ord-chev{flex:0 0 auto;color:var(--text-3);font-size:15px;font-weight:800;width:20px;text-align:center}
@@ -512,7 +512,7 @@ function componentesKit(nombre){
 const MIN_DEFAULT=5;   // cuánto pedir cuando un producto que manejás baja del mínimo
 function minDe(n,st){ st=st||stockState(); return (st&&st.min&&st.min[n]!=null)?st.min[n]:MIN_DEFAULT; }
 function tieneMov(n,st){ st=st||stockState(); return (st.movs||[]).some(m=>m.prod===n); }
-function pedirDe(n,st){ if(!tieneMov(n,st)) return 0; const mn=minDe(n,st),stk=nivel(n,st); return (mn>0 && stk<mn)?mn:0; }
+function pedirDe(n,st){ if(!tieneMov(n,st)) return 0; const mn=minDe(n,st),stk=nivel(n,st); return (mn>0 && stk<mn)?(mn-stk):0; }   // lo que falta para llegar al mínimo
 const fmtAr = n => "$"+Number(n||0).toLocaleString("es-AR");
 /* Geo para la hoja de ruta: salida desde Puerto Madero + centro de cada barrio CABA */
 const ORIGEN_CABA={nombre:"Puerto Madero, CABA",lat:-34.6118,lon:-58.3625};
@@ -3009,6 +3009,30 @@ function hojaEnvios(){
 function etiquetasPend(){ printLabels(soloPedidos().filter(p=>p.estado==="pendiente")); }
 
 /* ---------- OPERADOR · Stock ---------- */
+let STOCK_DET=null;
+function verMovsProd(nombre){ nombre=decodeURIComponent(nombre); STOCK_DET=(STOCK_DET===nombre)?null:nombre; vistaStock(); }
+function movsProdHTML(prod,st){
+  const movs=(st.movs||[]).filter(m=>m.prod===prod).sort((a,b)=>(b.ts||0)-(a.ts||0));
+  if(!movs.length) return '<div class="hint" style="margin-top:8px">Sin movimientos.</div>';
+  let saldo=movs.reduce((s,m)=>s+(m.tipo==="salida"?-m.cant:m.cant),0);
+  const filas=movs.map(m=>{
+    const esSal=m.tipo==="salida";
+    const linea=`<div style="padding:7px 0;border-top:.5px solid var(--border);font-size:12.5px">
+      <div class="row" style="justify-content:space-between;gap:8px">
+        <span style="min-width:0">${esSal?"↓":"↑"} <b>${esc(m.cliente||m.motivo||(esSal?"Salida":"Entrada"))}</b></span>
+        <span style="flex:0 0 auto;font-weight:700;color:${esSal?'#e5484d':'var(--green)'}">${esSal?"−":"+"}${m.cant}</span>
+      </div>
+      <div class="muted" style="font-size:11.5px;margin-top:1px">
+        ${m.ts?new Date(m.ts).toLocaleString("es-AR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}):""}
+        ${m.ref?(" · N° "+esc(m.ref)):""}${m.empresa?(" · "+esc(nombreEmp(m.empresa))):""}${m.zona?(" · "+esc(m.zona)):""}
+      </div></div>`;
+    return linea; }).join("");
+  return `<div style="margin-top:10px;padding:10px 12px;background:var(--bg-2);border-radius:10px">
+    <div class="row" style="justify-content:space-between"><span class="label" style="margin:0">Historial · ${movs.length} movimientos</span>
+      <b style="color:${saldo<0?'#e5484d':'inherit'}">Saldo ${saldo}</b></div>
+    ${filas}
+  </div>`;
+}
 function vistaStock(){
   const st=stockState(), pick=pickingConsolidado();
   const desc=st.descontar!==false;
@@ -3092,24 +3116,19 @@ function vistaStock(){
     <div class="card" style="margin-bottom:16px">
       ${rows.map(r=>{ const f=flujoProducto(r.p.nombre,st);
         const split=Object.entries(f.porEmp).map(([e,n])=>esc(empresaObj(e).nombre.split(" ")[0])+" "+n).join(" · ");
-        return `<div style="padding:12px 0;border-top:.5px solid var(--border)">
-        <div class="row" style="justify-content:space-between;align-items:baseline;gap:10px">
-          <span style="font-size:14px;font-weight:600">${esc(r.p.nombre)}</span>
-          <span style="font-weight:800;white-space:nowrap;color:${r.stk<=r.mn?'var(--red)':'var(--text)'}">Quedan ${r.stk}</span>
-        </div>
-        <div class="muted" style="font-size:13px;margin-top:4px">Entraron ${f.ent} · Salieron ${f.sal}${split?` <span style="opacity:.85">(${split})</span>`:""}${r.rep>0?` · <span style="color:var(--amber);font-weight:600">pedir ${r.rep}</span>`:""}</div>
-        <div class="row" style="align-items:center;gap:6px;margin-top:8px;justify-content:space-between;flex-wrap:wrap">
-          <span class="row" style="align-items:center;gap:8px">
-            <button class="btn sm ghost" style="width:40px;font-size:20px;font-weight:700;padding:4px 0" onclick="ajustarUno('${encodeURIComponent(r.p.nombre)}',-1)">−</button>
-            <b style="min-width:44px;text-align:center;font-size:18px">${r.stk}</b>
-            <button class="btn sm ghost" style="width:40px;font-size:20px;font-weight:700;padding:4px 0" onclick="ajustarUno('${encodeURIComponent(r.p.nombre)}',1)">+</button>
-          </span>
-          <span class="row" style="align-items:center;gap:6px">
-            <span class="muted" style="font-size:12px">Pedir si falta</span>
-            <input id="mn_${r.i}" type="number" inputmode="numeric" value="${r.mn}" style="${inp};width:56px;text-align:center;padding:5px">
-            <button class="btn sm ghost" onclick="ajustarStock('${encodeURIComponent(r.p.nombre)}')">Fijar</button>
+        return `<div style="padding:7px 0;border-top:.5px solid var(--border)">
+        <div class="row" style="justify-content:space-between;align-items:center;gap:10px">
+          <span style="font-size:13.5px;font-weight:600;min-width:0;flex:1">${esc(r.p.nombre)}</span>
+          <span class="row" style="align-items:center;gap:5px;flex:0 0 auto">
+            <button class="btn sm ghost" style="width:29px;font-size:16px;font-weight:700;padding:2px 0" onclick="ajustarUno('${encodeURIComponent(r.p.nombre)}',-1)">−</button>
+            <b style="min-width:36px;text-align:center;font-size:15px;font-variant-numeric:tabular-nums;color:${r.stk<0?'var(--red)':(r.stk<=r.mn?'var(--amber)':'var(--text)')}">${r.stk}</b>
+            <button class="btn sm ghost" style="width:29px;font-size:16px;font-weight:700;padding:2px 0" onclick="ajustarUno('${encodeURIComponent(r.p.nombre)}',1)">+</button>
+            <input id="mn_${r.i}" type="number" inputmode="numeric" value="${r.mn}" title="Mínimo" style="${inp};width:44px;text-align:center;padding:4px;font-size:12px">
+            <button class="btn sm ghost" style="padding:5px 8px;font-size:11.5px" onclick="ajustarStock('${encodeURIComponent(r.p.nombre)}')">Fijar</button>
           </span>
         </div>
+        <div class="muted" style="font-size:11.5px;margin-top:2px;cursor:pointer" onclick="verMovsProd('${encodeURIComponent(r.p.nombre)}')">Entraron ${f.ent} · Salieron ${f.sal}${split?` <span style="opacity:.85">(${split})</span>`:""}${r.rep>0?` · <span style="color:var(--amber);font-weight:600">pedir ${r.rep}</span>`:""} <span style="color:var(--accent)">${STOCK_DET===r.p.nombre?'▲ ocultar':'▼ ver movimientos'}</span></div>
+        ${STOCK_DET===r.p.nombre?movsProdHTML(r.p.nombre,st):""}
       </div>`; }).join("")||empty('box', q?('No encontré productos con "'+esc(STOCK_Q)+'".'):'Cargá stock con el botón de arriba para empezar.')}
     </div>
     <div class="label" style="margin-top:18px">Cuenta corriente · lo que retiró cada una</div>
@@ -3320,7 +3339,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v18jul-informes";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v19jul-compacto";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
@@ -3440,7 +3459,7 @@ function vistaInformes(){
     <div class="card" style="margin-top:14px">
       <span class="label">Stock a reponer <span class="muted" style="font-weight:400;text-transform:none;letter-spacing:0">· saldo actual, no se reinicia</span></span>
       ${bajo.length?bajo.map(x=>`<div style="display:flex;gap:10px;align-items:center;padding:8px 0;border-top:.5px solid var(--border)">
-        <div style="flex:1;min-width:0">${esc(x.nombre)}</div><span class="muted" style="font-size:13px;flex:0 0 auto">tenés ${x.nivel}</span> <b style="color:#e5484d;flex:0 0 auto">faltan ${x.falta}</b></div>`).join(""):'<div class="hint" style="margin:8px 0 0">Todo el stock OK 👍</div>'}
+        <div style="flex:1;min-width:0">${esc(x.nombre)}</div><span class="muted" style="font-size:13px;flex:0 0 auto">tenés <b style="color:${x.nivel<0?'#e5484d':'inherit'}">${x.nivel}</b>${x.nivel<0?' ⚠':''}</span> <b style="color:#e5484d;flex:0 0 auto">faltan ${x.falta}</b></div>`).join(""):'<div class="hint" style="margin:8px 0 0">Todo el stock OK 👍</div>'}
     </div>`;
 }
 async function prepararDirecto(id){
