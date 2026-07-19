@@ -1092,6 +1092,16 @@ function pantallaCierre(){
         <div class="row" style="margin-top:8px"><button class="btn sm ghost" onclick="imprimirActaCierre(${c.ts})">${icon('printer')} Acta de cierre</button></div>
       </div>`).join("")}`:''}`;
 }
+async function archivarConfirmadas(){
+  const conf=soloPedidos().filter(p=>p.estado==="confirmado" && !p.cerradoEn);
+  if(!conf.length){ toast("No hay confirmadas sin archivar"); return; }
+  if(!confirm("¿Archivar "+conf.length+" pedidos ya confirmados?\n\nDesaparecen de la lista y quedan en el filtro 📁 Archivados.\nNo se borra nada.")) return;
+  const sello=ultimoCierreTs()||Date.now();
+  toast("Archivando "+conf.length+"…");
+  let ok=0; for(const p of conf){ try{ await DB.update(p.id,{cerradoEn:sello}); ok++; }catch(e){} }
+  alert("✅ "+ok+" pedidos archivados.");
+  render();
+}
 async function confirmarEntregados(){
   const ent=soloPedidos().filter(p=>p.estado==="entregado");
   if(!ent.length){ toast("No hay entregados sin cerrar"); return; }
@@ -2235,6 +2245,8 @@ function vistaOperador(){
       <div class="row">
         ${(()=>{ const e=soloPedidos().filter(p=>p.estado==="entregado").length;
           return e?`<button class="btn sm" onclick="confirmarEntregados()">✓ Cerrar ${e} entregados</button>`:''; })()}
+        ${(()=>{ const c=soloPedidos().filter(p=>p.estado==="confirmado"&&!p.cerradoEn).length;
+          return c?`<button class="btn sm ghost" onclick="archivarConfirmadas()">📁 Archivar ${c} confirmados</button>`:''; })()}
         <button class="btn ghost sm" onclick="pantallaCierre()">🔒 Cierre de período</button>
         <button class="btn ghost sm" onclick="pantallaCobro()">Facturar</button>
         <button class="btn ghost sm" onclick="pantallaEntregas()">Resumen de entregas</button>
@@ -3342,7 +3354,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v19jul-archivo";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v19jul-archivo2";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
