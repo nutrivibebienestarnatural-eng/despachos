@@ -2933,6 +2933,17 @@ async function guardarEdicion(id){
     ciudad:$("#f_ciu").value.trim(), provincia:$("#f_prov").value, items:$("#f_items").value.trim(), prods:EDIT_PRODS.slice(),
     origen:$("#f_origen").value, metodo, correo: metodo==="correo"?$("#f_correo").value:"",
     tracking: metodo==="correo"?$("#f_track").value.trim():"" });
+  // Si ya se había descontado, ofrezco rehacer el descuento con las cantidades nuevas
+  const p=PEDIDOS.find(x=>x.id===id)||await DB.get(id);
+  if(p && p.stockBajado && descuentoActivo()){
+    let det=""; try{ det=itemsPedido(p).map(i=>"· "+i.cant+"x "+i.prodNombre).join("\n"); }catch(e){}
+    if(confirm("Este pedido ya estaba descontado del stock.\n\n¿Rehago el descuento con lo que quedó ahora?\n\n"+det+"\n\n(Devuelve lo anterior y descuenta esto. Si decís que no, el stock queda como estaba.)")){
+      await devolverStockPedido(id);
+      await DB.update(id,{stockBajado:false});
+      await descontarStockPedido(id,null,true);
+      toast("Pedido corregido y stock actualizado ✓"); vistaOperador(); return;
+    }
+  }
   toast("Pedido corregido"); vistaOperador();
 }
 /* Devuelve al stock lo que se había descontado de un pedido (borra sus salidas) */
@@ -3461,7 +3472,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v19jul-cobros";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v19jul-editstock";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
