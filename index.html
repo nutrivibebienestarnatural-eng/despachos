@@ -912,6 +912,29 @@ function salidasResumen(desde,hasta){
 let REP_DESDE="", REP_HASTA="", REP_SEL={};
 let CTA_DESDE="", CTA_HASTA="", CTA_TAB="cobrar", CTA_HIST_TODO=false;
 function setCtaTab(t){ CTA_TAB=t; pantallaCuenta(); }
+let CTA_SEL={};
+function ctaSelTodas(emp,v){
+  const peds=soloPedidos().filter(p=>p.estado!=="anulado" && !p.cobradoEn && (p.empresa||"—")===emp && enRango(p.creado,CTA_DESDE,CTA_HASTA));
+  peds.forEach(p=>CTA_SEL[p.id]=!!v); pantallaCuenta();
+}
+/* Cobra las órdenes tildadas: emite el recibo y las saca de la lista de pendientes */
+async function cobrarSeleccion(emp){
+  const peds=soloPedidos().filter(p=>p.estado!=="anulado" && !p.cobradoEn && (p.empresa||"—")===emp
+    && enRango(p.creado,CTA_DESDE,CTA_HASTA) && CTA_SEL[p.id]);
+  if(!peds.length){ toast("Elegí al menos una orden"); return; }
+  const total=peds.reduce((s,p)=>s+costoEnvio(p),0);
+  const quien=nombreEmp(emp);
+  if(!confirm("¿Registrar el cobro de "+fmtAr(total)+" a "+quien+"?\n\n"+peds.length+" órdenes.\nSe emite el recibo y salen de la lista de pendientes.")) return;
+  const nro=nuevoNro("cobro");
+  await cajaAgregar({nro, clase:"cobro", quien, monto:total, cant:peds.length,
+    periodo:periodoTxt(), ts:Date.now(),
+    ordenes:peds.map(p=>({ref:numOrden(p), cliente:p.cliente||"", monto:costoEnvio(p), fecha:p.creado||0}))});
+  for(const p of peds){ try{ await DB.update(p.id,{cobradoEn:Date.now(), cobradoNro:nro}); }catch(e){} }
+  peds.forEach(p=>delete CTA_SEL[p.id]);
+  toast("Cobro "+nro+" registrado ✓");
+  imprimirComprobanteCaja(nro);
+  pantallaCuenta();
+}
 function cuentaTransportistas(peds){
   const zc=zonaCosto(); const esCad=c=>["caba","1","2","3"].includes(c);
   const g={};
@@ -1202,6 +1225,17 @@ function imprimirComprobanteCaja(nro){
     <div class="row"><span class="mut">Envíos</span><span>${m.cant||0}</span></div>
     <div class="tot"><span>TOTAL</span><span>${fmtAr(m.monto)}</span></div>
   </div>
+  ${(m.ordenes&&m.ordenes.length)?`<h3 style="font-size:13px;text-transform:uppercase;letter-spacing:.05em;margin:22px 0 6px">Órdenes incluidas</h3>
+  <table style="width:100%;border-collapse:collapse;font-size:12px">
+    <thead><tr><th style="text-align:left;font-size:10px;text-transform:uppercase;color:#666;border-bottom:1px solid #111;padding:5px">Orden</th>
+    <th style="text-align:left;font-size:10px;text-transform:uppercase;color:#666;border-bottom:1px solid #111;padding:5px">Cliente</th>
+    <th style="text-align:left;font-size:10px;text-transform:uppercase;color:#666;border-bottom:1px solid #111;padding:5px">Fecha</th>
+    <th style="text-align:right;font-size:10px;text-transform:uppercase;color:#666;border-bottom:1px solid #111;padding:5px">Importe</th></tr></thead>
+    <tbody>${m.ordenes.map(o=>`<tr><td style="padding:4px 5px;border-bottom:.5px solid #eee">${esc(o.ref||"")}</td>
+      <td style="padding:4px 5px;border-bottom:.5px solid #eee">${esc(o.cliente||"")}</td>
+      <td style="padding:4px 5px;border-bottom:.5px solid #eee">${o.fecha?new Date(o.fecha).toLocaleDateString("es-AR"):""}</td>
+      <td style="padding:4px 5px;border-bottom:.5px solid #eee;text-align:right">${fmtAr(o.monto||0)}</td></tr>`).join("")}</tbody>
+  </table>`:""}
   <div class="firma"><div>Por Fullminet</div><div>Recibí conforme · ${esc(m.quien)}</div></div>
   <scr`+`ipt>window.onload=function(){setTimeout(function(){window.print()},400)}<\/scr`+`ipt></body></html>`);
   w.document.close();
@@ -1239,7 +1273,7 @@ function pantallaCuenta(){
   const peds=soloPedidos().filter(p=>p.estado!=="anulado" && (p.cliente||"")!=="_PRUEBA_DIAGNOSTICO" && enRango(p.creado,CTA_DESDE,CTA_HASTA));
   const zc=zonaCosto(); const esCad=c=>["caba","1","2","3"].includes(c);
   const g={};
-  peds.forEach(p=>{ const e=p.empresa||"—"; if(!g[e]) g[e]={emp:e,n:0,cobrar:0,costo:0,peds:[]};
+  peds.filter(p=>!p.cobradoEn).forEach(p=>{ const e=p.empresa||"—"; if(!g[e]) g[e]={emp:e,n:0,cobrar:0,costo:0,peds:[]};
     const c=catPedido(p), cob=costoEnvio(p), cos=esCad(c)?(zc[c]||0):0;
     g[e].n++; g[e].cobrar+=cob; g[e].costo+=cos; g[e].peds.push({p,cob,cos}); });
   const grupos=Object.values(g).sort((a,b)=>b.cobrar-a.cobrar);
@@ -1332,16 +1366,22 @@ function pantallaCuenta(){
         <span style="font-weight:800;color:var(--green)">${fmtAr(x.cobrar)}</span>
       </div>
       <div class="muted" style="font-size:13px;margin-top:3px">${x.n} órdenes · costo ${fmtAr(x.costo)} · te queda <b style="color:var(--text)">${fmtAr(x.cobrar-x.costo)}</b></div>
-      <div class="row" style="margin-top:10px">
-        <button class="btn sm ghost" onclick="imprimirFacturaMarca('${esc(x.emp)}')">${icon('printer')} Detalle a cobrar</button>
-        <button class="btn sm" onclick="registrarMovCaja('cobro','${esc(nombreEmp(x.emp))}',${x.cobrar},${x.n})">✓ Registrar cobro</button>
-      </div>
+      ${(()=>{ const sel=x.peds.filter(o=>CTA_SEL[o.p.id]); const nS=sel.length, tS=sel.reduce((s,o)=>s+o.cob,0);
+        return `<div class="row" style="margin-top:10px;align-items:center;gap:6px;flex-wrap:wrap">
+        <button class="btn sm ghost" onclick="ctaSelTodas('${esc(x.emp)}',1)">Todas</button>
+        <button class="btn sm ghost" onclick="ctaSelTodas('${esc(x.emp)}',0)">Ninguna</button>
+        <button class="btn sm ghost" onclick="imprimirFacturaMarca('${esc(x.emp)}')">${icon('printer')} Detalle</button>
+        <button class="btn sm ${nS?'':'ghost'}" ${nS?'':'disabled style="opacity:.5"'} onclick="cobrarSeleccion('${esc(x.emp)}')">✓ Cobrar ${nS?(nS+" · "+fmtAr(tS)):"(elegí órdenes)"}</button>
+      </div>`; })()}
       <div style="margin-top:8px">
-        ${x.peds.slice(0,60).map(o=>`<div class="row" style="justify-content:space-between;gap:8px;padding:7px 0;border-top:.5px solid var(--border);font-size:13px">
-          <span style="min-width:0">${esc(o.p.cliente||'—')} <span class="muted">· N° ${esc(numOrden(o.p))}${o.p.creado?(' · '+fmtFechaCorta(o.p.creado)):''}</span></span>
+        ${x.peds.slice(0,80).map(o=>`<label style="display:flex;justify-content:space-between;gap:8px;padding:7px 0;border-top:.5px solid var(--border);font-size:13px;cursor:pointer;align-items:center">
+          <span style="min-width:0;display:flex;gap:8px;align-items:center">
+            <input type="checkbox" ${CTA_SEL[o.p.id]?'checked':''} onchange="CTA_SEL['${o.p.id}']=this.checked;pantallaCuenta()">
+            <span style="min-width:0">${esc(o.p.cliente||'—')} <span class="muted">· N° ${esc(numOrden(o.p))}${o.p.creado?(' · '+fmtFechaCorta(o.p.creado)):''}</span></span>
+          </span>
           <span style="flex:0 0 auto;font-weight:700">${fmtAr(o.cob)}</span>
-        </div>`).join("")}
-        ${x.peds.length>60?`<div class="hint" style="margin-top:8px">…y ${x.peds.length-60} órdenes más.</div>`:''}
+        </label>`).join("")}
+        ${x.peds.length>80?`<div class="hint" style="margin-top:8px">…y ${x.peds.length-80} órdenes más.</div>`:''}
       </div>
     </div>`).join(""):empty('box','No hay órdenes en este período.'))}`;
 }
@@ -3421,7 +3461,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v19jul-etiqpdf";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v19jul-cobros";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
