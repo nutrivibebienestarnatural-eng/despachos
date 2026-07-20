@@ -270,6 +270,7 @@ hr{border:none;border-top:.5px solid var(--border);margin:20px 0}
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <!-- pdf.js: para importar el PDF de preparación de Tienda Nube -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <!-- ZXing: lector de códigos de barras por cámara (funciona en Android y iPhone) -->
 <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.20.0/umd/index.min.js"></script>
 
@@ -2393,6 +2394,7 @@ function cardOperador(p){
   mas+=`<button class="btn sm ghost" style="color:${p.stockBajado?'var(--amber)':'var(--accent)'}" onclick="descontarAhora('${p.id}')">↻ ${p.stockBajado?'Volver a descontar':'Descontar del stock'}</button>`;
   if(p.stockBajado) mas+=`<button class="btn sm ghost" onclick="deshacerDescuento('${p.id}')">↺ Deshacer descuento</button>`;
   mas+=`<button class="btn sm ghost" onclick="imprimirEtiqueta('${p.id}')">${icon('printer')} Etiqueta</button>`;
+  if(p.etiquetaPdf) mas+=`<button class="btn sm ghost" onclick="imprimirEtiquetaML('${p.id}',true)">📄 Bajar etiqueta PDF</button>`;
   if(p.etiquetaPdf) mas+=`<button class="btn sm ghost" onclick='abrirEtiquetaPDF(PEDIDOS.find(x=>x.id==="${p.id}"))'>📄 PDF ML completo</button>`;
   if(p.tnId && !p.tnAvisado && ["preparado","asignado","en_reparto","despachado","en_camino","entregado","confirmado"].includes(p.estado))
     mas+=`<button class="btn sm ghost" onclick="marcarEnviadoTN('${p.id}')">🛍️ Avisar a Tienda Nube</button>`;
@@ -3419,7 +3421,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v19jul-etiq1015";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v19jul-etiqpdf";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
@@ -3981,8 +3983,23 @@ function imprimirEtiqueta(id){
   if((p.correo||"")==="Punto de retiro"){ alert("Este pedido es CORREO A SUCURSAL: va con la etiqueta del correo, no la nuestra.\n\nAdjuntale el PDF de Tienda Nube (botón 📎 Adjuntar) y volvé a imprimir."); return; }
   printLabels([p]);
 }
+/* Genera el PDF 10x15 de la última etiqueta preparada */
+function descargarEtiquetaPDF(){
+  const e=window.__etqUltima;
+  if(!e){ toast("Abrí primero la etiqueta"); return; }
+  if(typeof window.jspdf==="undefined"){ toast("La librería de PDF no cargó, recargá la página"); return; }
+  const { jsPDF }=window.jspdf;
+  const doc=new jsPDF({orientation:"portrait", unit:"mm", format:[100,150]});
+  // encajo la imagen dentro de los 100x150 sin deformarla
+  const rImg=e.w/e.h, rPag=100/150;
+  let w,h,x,y;
+  if(rImg>rPag){ w=100; h=100/rImg; x=0; y=(150-h)/2; }
+  else { h=150; w=150*rImg; y=0; x=(100-w)/2; }
+  doc.addImage(e.img,"PNG",x,y,w,h);
+  doc.save("etiqueta-"+String(e.cliente).replace(/[^a-zA-Z0-9]+/g,"-").toLowerCase()+".pdf");
+}
 /* Imprime SOLO la etiqueta de envío de ML (página 1, recortada) en 10x15 cm */
-async function imprimirEtiquetaML(id){
+async function imprimirEtiquetaML(id, soloPDF){
   const p=PEDIDOS.find(x=>x.id===id)||await DB.get(id);
   if(!p||!p.etiquetaPdf){ toast("Este pedido no tiene etiqueta de ML guardada"); return; }
   if(typeof pdfjsLib==="undefined"){ toast("El lector de PDF no cargó, probá de nuevo"); return; }
@@ -4010,13 +4027,23 @@ async function imprimirEtiquetaML(id){
     const c2=document.createElement("canvas"); c2.width=x1-x0; c2.height=y1-y0;
     c2.getContext("2d").drawImage(cv,x0,y0,c2.width,c2.height,0,0,c2.width,c2.height);
     const img=c2.toDataURL("image/png");
+    window.__etqUltima={img, cliente:(p.cliente||"ml"), w:c2.width, h:c2.height};
+    if(soloPDF){ descargarEtiquetaPDF(); toast("PDF descargado ✓"); return; }
     const w=window.open("","_blank","width=440,height=640");
     if(!w){ toast("Permití las ventanas emergentes para imprimir"); return; }
+    const nomArch=("etiqueta-"+(p.cliente||"ml").replace(/[^a-zA-Z0-9]+/g,"-").toLowerCase()+".png");
     w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Etiqueta '+esc(p.cliente||"")+'</title>'+
-      '<style>@page{size:100mm 150mm;margin:0}html,body{margin:0;padding:0;width:100mm;height:150mm}'+
-      'img{width:100mm;height:150mm;object-fit:contain;display:block}</style></head><body>'+
-      '<img src="'+img+'">'+
-      '<scr'+'ipt>window.onload=function(){setTimeout(function(){window.print()},500)}<\\/scr'+'ipt></body></html>');
+      '<style>@page{size:100mm 150mm;margin:0}html,body{margin:0;padding:0;background:#f5f5f7;font-family:-apple-system,system-ui,Segoe UI,sans-serif}'+
+      '#et{width:100mm;height:150mm;object-fit:contain;display:block;margin:0 auto;background:#fff}'+
+      '#bar{position:sticky;top:0;display:flex;gap:8px;padding:10px;background:#fff;border-bottom:1px solid #ddd;justify-content:center}'+
+      'a,button{font:inherit;font-size:14px;padding:8px 16px;border-radius:8px;border:1px solid #ccc;background:#fff;cursor:pointer;text-decoration:none;color:#111}'+
+      'button{background:#0a84ff;color:#fff;border-color:#0a84ff}'+
+      '@media print{#bar{display:none}body{background:#fff}}</style></head><body>'+
+      '<div id="bar"><button onclick="window.print()">🖨️ Imprimir 10×15</button>'+
+      '<button onclick="window.opener.descargarEtiquetaPDF()">📄 Descargar PDF</button>'+
+      '<a href="'+img+'" download="'+nomArch+'">⬇️ PNG</a></div>'+
+      '<img id="et" src="'+img+'">'+
+      '<scr'+'ipt>window.onload=function(){setTimeout(function(){window.print()},600)}<\\/scr'+'ipt></body></html>');
     w.document.close();
   }catch(e){ console.error(e); toast("No pude preparar la etiqueta"); }
 }
