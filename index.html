@@ -163,9 +163,10 @@ textarea{resize:vertical;min-height:54px;font-size:14px;line-height:1.45}
 .ord-cli{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ord-sub{color:var(--text-2);font-size:12.5px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dia-h{font-size:11px;font-weight:800;color:var(--text-2);text-transform:capitalize;letter-spacing:.02em;margin:12px 0 5px;padding-left:2px}
-.tbl{width:100%;border-collapse:collapse;font-size:12.5px;min-width:780px}
+.tbl{width:100%;border-collapse:collapse;font-size:12.5px;min-width:960px;table-layout:auto}
 .tbl th{text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--text-3);padding:8px 10px;border-bottom:1px solid var(--border);white-space:nowrap;position:sticky;top:0;background:var(--bg)}
-.tbl td{padding:6px 9px;border-bottom:.5px solid var(--border);white-space:nowrap;vertical-align:middle}
+.tbl td{padding:5px 7px;border-bottom:.5px solid var(--border);white-space:nowrap;vertical-align:middle}
+.tbl td:nth-child(2){font-size:11.5px}
 .tbl tbody tr:hover{background:var(--bg-2)}
 .tbl td:nth-child(3){white-space:normal;min-width:150px}
 .tbl2{width:100%;border-collapse:collapse;font-size:13px}
@@ -2373,11 +2374,15 @@ function tablaPedidos(lista){
           const quien=p.metodo==="correo"?"Correo":(p.cadete||"—");
           return `<tr onclick="toggleExp('${p.id}')" style="cursor:pointer">
             <td class="muted">${p.creado?fmtFechaCorta(p.creado):'—'}</td>
-            <td><b>${esc(numOrden(p))}</b></td>
+            <td><b title="${esc(numOrden(p))}">${(()=>{const n=numOrden(p);return esc(n.length>11?("…"+n.slice(-8)):n);})()}</b></td>
             <td>${esc(p.cliente||'—')}</td>
             <td class="muted">${esc(p.empresa?empresaObj(p.empresa).nombre.split(" ")[0]:'—')}</td>
-            <td style="white-space:normal;max-width:230px;font-size:11.5px;line-height:1.35;color:var(--text-2)">${(()=>{ let it=[]; try{ it=itemsPedido(p); }catch(e){}
-              return it.length?it.map(x=>x.cant+"× "+esc(x.prodNombre)).join("<br>"):esc((p.items||"—").slice(0,60)); })()}</td>
+            <td style="max-width:210px;overflow:hidden;text-overflow:ellipsis;font-size:11.5px;color:var(--text-2)">${(()=>{ let it=[]; try{ it=itemsPedido(p); }catch(e){}
+              if(!it.length) return esc((p.items||"—").slice(0,42));
+              const u=it.reduce((s,x)=>s+(x.cant||0),0);
+              const t=it[0].cant+"× "+it[0].prodNombre;
+              return esc(t.length>40?t.slice(0,40)+"…":t)+(it.length>1?` <span style="opacity:.7">+${it.length-1} (${u}u)</span>`:"");
+            })()}</td>
             <td><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${anilloColor(an.n)};margin-right:4px"></span>${esc(an.label)}</td>
             <td>${esc(quien)}</td>
             <td><span class="badge"><span class="dot" style="background:${e.color}"></span>${e.label}</span></td>
@@ -3497,7 +3502,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v19jul-marca";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v21jul-tabla";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
