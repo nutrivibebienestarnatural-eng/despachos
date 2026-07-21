@@ -2300,6 +2300,29 @@ function vistaOperador(){
         .map(f=>`<button class="${FILTRO===f?'on':''}" onclick="setFiltro('${f}')">${({todos:'Todos',activos:'Activos',cadete:'Cadete',correo:'Correo',anulado:'Anulados',archivados:'📁 Archivados'})[f]||estObj(f).label}</button>`).join("")}
       ${EMPRESAS.map(e=>`<button class="${FILTRO==='emp:'+e.id?'on':''}" onclick="setFiltro('emp:${e.id}')">${esc(e.nombre)}</button>`).join("")}
     </div>
+    ${(()=>{ const abiertas=ped.filter(p=>!p.cerradoEn && p.estado!=="anulado");
+      const cierreTs=ultimoCierreTs();
+      const porM=EMPRESAS.map(e=>{ const arr=abiertas.filter(p=>(p.empresa||"")===e.id);
+        return {e, n:arr.length, $:arr.reduce((s,p)=>s+costoEnvio(p),0)}; }).filter(x=>x.n);
+      if(!porM.length) return "";
+      return `<div class="card" style="margin-bottom:10px;padding:10px 13px">
+        <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:6px">
+          <span class="label" style="margin:0">Período abierto · por marca</span>
+          <span class="muted" style="font-size:11.5px">${cierreTs?("desde "+new Date(cierreTs).toLocaleDateString("es-AR")):"sin cierres previos"}</span>
+        </div>
+        <table class="tbl2">
+          ${porM.map(x=>`<tr onclick="setFiltro('emp:${x.e.id}')" style="cursor:pointer">
+            <td><b>${esc(x.e.nombre)}</b></td>
+            <td style="text-align:right;font-weight:700">${x.n}</td>
+            <td style="text-align:right;color:var(--accent);font-size:12.5px">${fmtAr(x.$)}</td>
+            <td style="text-align:right;width:14px;color:var(--text-3)">›</td></tr>`).join("")}
+          <tr onclick="setFiltro('todos')" style="cursor:pointer">
+            <td class="muted">Todas</td>
+            <td style="text-align:right;font-weight:700">${porM.reduce((s,x)=>s+x.n,0)}</td>
+            <td style="text-align:right;color:var(--accent);font-size:12.5px">${fmtAr(porM.reduce((s,x)=>s+x.$,0))}</td>
+            <td style="text-align:right;color:var(--text-3)">›</td></tr>
+        </table>
+      </div>`; })()}
     <input id="pedQ" autocomplete="off" placeholder="🔍 Buscar por cliente, N° de orden o producto…" value="${esc(PED_Q||'')}" oninput="PED_Q=this.value;clearTimeout(window.__pq);window.__pq=setTimeout(vistaOperador,300)" style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:11px;font:inherit;background:var(--bg);margin-bottom:10px">
     ${PED_Q?`<div class="row" style="margin-bottom:10px;align-items:center;gap:8px"><b>${lista.length}</b><span class="muted">resultado${lista.length===1?'':'s'} para "${esc(PED_Q)}"</span><button class="btn sm ghost" onclick="PED_Q='';vistaOperador()">Limpiar</button></div>`:''}
     <div class="row" style="margin-bottom:10px;justify-content:space-between;align-items:center">
@@ -2343,7 +2366,7 @@ function tablaPedidos(lista){
   return `<div style="overflow-x:auto;-webkit-overflow-scrolling:touch">
     <table class="tbl">
       <thead><tr>
-        <th>Fecha</th><th>N°</th><th>Cliente</th><th>Marca</th><th>Zona</th><th>Reparto</th><th>Estado</th><th style="text-align:right">Envío</th><th></th>
+        <th>Fecha</th><th>N°</th><th>Cliente</th><th>Marca</th><th>Productos enviados</th><th>Zona</th><th>Reparto</th><th>Estado</th><th style="text-align:right">Envío</th><th></th>
       </tr></thead>
       <tbody>
         ${arr.map(p=>{ const e=estObj(p.estado), an=anilloDe(p);
@@ -2353,13 +2376,15 @@ function tablaPedidos(lista){
             <td><b>${esc(numOrden(p))}</b></td>
             <td>${esc(p.cliente||'—')}</td>
             <td class="muted">${esc(p.empresa?empresaObj(p.empresa).nombre.split(" ")[0]:'—')}</td>
+            <td style="white-space:normal;max-width:230px;font-size:11.5px;line-height:1.35;color:var(--text-2)">${(()=>{ let it=[]; try{ it=itemsPedido(p); }catch(e){}
+              return it.length?it.map(x=>x.cant+"× "+esc(x.prodNombre)).join("<br>"):esc((p.items||"—").slice(0,60)); })()}</td>
             <td><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${anilloColor(an.n)};margin-right:4px"></span>${esc(an.label)}</td>
             <td>${esc(quien)}</td>
             <td><span class="badge"><span class="dot" style="background:${e.color}"></span>${e.label}</span></td>
             <td style="text-align:right;font-variant-numeric:tabular-nums">${fmtAr(costoEnvio(p))}</td>
             <td style="text-align:right">${accionPrincipal(p)}</td>
           </tr>
-          ${EXP_PED[p.id]?`<tr><td colspan="9" style="background:var(--bg-2);padding:12px 14px">
+          ${EXP_PED[p.id]?`<tr><td colspan="10" style="background:var(--bg-2);padding:12px 14px">
             <div class="muted" style="font-size:12.5px">${esc(p.tel||'')} · ${esc(p.dir||'')} — ${esc(p.ciudad||'')}, ${esc(p.provincia||'')}</div>
             <div style="margin:6px 0;font-size:13px">${esc(p.items||'—')}</div>
             <div class="acts">
@@ -3472,7 +3497,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v19jul-editstock";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v19jul-marca";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
