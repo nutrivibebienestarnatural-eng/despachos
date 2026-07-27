@@ -912,16 +912,18 @@ function salidasResumen(desde,hasta){
 }
 let REP_DESDE="", REP_HASTA="", REP_SEL={};
 let CTA_DESDE="", CTA_HASTA="", CTA_TAB="cobrar", CTA_HIST_TODO=false;
+/* Una orden entra en la cuenta si: no está archivada por un cierre, es posterior al último cierre, y cae en el rango de fechas elegido */
+function enCuenta(p){ if(p.cerradoEn) return false; if((p.creado||0)<ultimoCierreTs()) return false; return enRango(p.creado,CTA_DESDE,CTA_HASTA); }
 function setCtaTab(t){ CTA_TAB=t; pantallaCuenta(); }
 let CTA_SEL={};
 function ctaSelTodas(emp,v){
-  const peds=soloPedidos().filter(p=>p.estado!=="anulado" && !p.cobradoEn && (p.empresa||"—")===emp && enRango(p.creado,CTA_DESDE,CTA_HASTA));
+  const peds=soloPedidos().filter(p=>p.estado!=="anulado" && !p.cobradoEn && (p.empresa||"—")===emp && enCuenta(p));
   peds.forEach(p=>CTA_SEL[p.id]=!!v); pantallaCuenta();
 }
 /* Cobra las órdenes tildadas: emite el recibo y las saca de la lista de pendientes */
 async function cobrarSeleccion(emp){
   const peds=soloPedidos().filter(p=>p.estado!=="anulado" && !p.cobradoEn && (p.empresa||"—")===emp
-    && enRango(p.creado,CTA_DESDE,CTA_HASTA) && CTA_SEL[p.id]);
+    && enCuenta(p) && CTA_SEL[p.id]);
   if(!peds.length){ toast("Elegí al menos una orden"); return; }
   const total=peds.reduce((s,p)=>s+costoEnvio(p),0);
   const quien=nombreEmp(emp);
@@ -963,7 +965,11 @@ function nuevoNro(clase){
   const n=cajaMovs().filter(m=>m.clase===clase).length+1;
   return pref+"-"+String(n).padStart(4,"0");
 }
-function periodoTxt(){ return (CTA_DESDE||CTA_HASTA)?((CTA_DESDE||"…")+" al "+(CTA_HASTA||"…")):"Todo el período"; }
+function periodoTxt(){
+  if(CTA_DESDE||CTA_HASTA) return (CTA_DESDE||"…")+" al "+(CTA_HASTA||"…");
+  const c=ultimoCierreTs();
+  return c ? ("desde el cierre "+new Date(c).toLocaleDateString("es-AR")) : "Todo el período";
+}
 async function registrarMovCaja(clase,quien,monto,cant){
   const m=Math.round(+monto||0); if(!m){ toast("El importe es 0"); return; }
   const txt=clase==="cobro"?("¿Registrar el COBRO de "+fmtAr(m)+" a "+quien+"?"):("¿Registrar el PAGO de "+fmtAr(m)+" a "+quien+"?");
@@ -1162,10 +1168,17 @@ async function ejecutarCierre(){
   pantallaCierre();
 }
 function imprimirFacturaMarca(empId){
-  const peds=soloPedidos().filter(p=>p.estado!=="anulado" && (p.cliente||"")!=="_PRUEBA_DIAGNOSTICO" && enRango(p.creado,CTA_DESDE,CTA_HASTA) && (p.empresa||"—")===empId);
+  const peds=soloPedidos().filter(p=>p.estado!=="anulado" && (p.cliente||"")!=="_PRUEBA_DIAGNOSTICO" && enCuenta(p) && (p.empresa||"—")===empId);
   if(!peds.length){ toast("No hay órdenes de esa marca en el período"); return; }
   const nom=nombreEmp(empId);
   const total=peds.reduce((s,p)=>s+costoEnvio(p),0);
+  const problemas=[];
+  peds.forEach(p=>{ let it=[]; try{ it=itemsPedido(p); }catch(e){}
+    if(!it.length) problemas.push({p, q:"sin productos cargados"});
+    const dest=[p.ciudad,p.provincia].filter(Boolean).join(", ").toLowerCase();
+    if(anilloDe(p).label==="CABA" && dest && !/capital|caba|autonoma|ciudad de buenos|c\.a\.b\.a/.test(dest) && /buenos aires/.test(dest))
+      problemas.push({p, q:"zona CABA pero destino dice Buenos Aires"});
+  });
   const acc={}; let unid=0;
   peds.forEach(p=>{ try{ itemsPedido(p).forEach(it=>{ const k=it.prodNombre||it.nombre;
     acc[k]=(acc[k]||0)+(it.cant||0); unid+=(it.cant||0); }); }catch(e){} });
@@ -1195,6 +1208,11 @@ function imprimirFacturaMarca(empId){
   <table><thead><tr><th>#</th><th>Fecha</th><th>Orden</th><th>Cliente</th><th>Destino</th><th>Zona</th><th>Productos enviados</th><th class="r">Envío</th></tr></thead>
   <tbody>${filas}</tbody></table>
   <div class="tot"><span>${peds.length} envíos</span><span>TOTAL A COBRAR ${fmtAr(total)}</span></div>
+  ${problemas.length?`<div style="margin-top:14px;padding:10px 12px;border:1.5px solid #d4820a;border-radius:8px;background:#fdf6ec">
+    <b style="color:#a5620a">⚠ ${problemas.length} ${problemas.length===1?"orden para revisar":"órdenes para revisar"} antes de facturar:</b>
+    <ul style="margin:6px 0 0;padding-left:20px;font-size:11px">
+      ${problemas.map(x=>`<li>${esc(numOrden(x.p))} · ${esc(x.p.cliente||"")} — ${esc(x.q)}</li>`).join("")}
+    </ul></div>`:""}
   <h2>Mercadería retirada en el período</h2>
   <table class="m"><thead><tr><th>Producto</th><th class="r">Unidades</th></tr></thead>
   <tbody>${mercaderia.map(([n,c])=>`<tr><td>${esc(n)}</td><td class="r">${c}</td></tr>`).join("")}</tbody></table>
@@ -1242,7 +1260,7 @@ function imprimirComprobanteCaja(nro){
   w.document.close();
 }
 function imprimirRecibo(quien){
-  const peds=soloPedidos().filter(p=>p.estado!=="anulado" && (p.cliente||"")!=="_PRUEBA_DIAGNOSTICO" && enRango(p.creado,CTA_DESDE,CTA_HASTA));
+  const peds=soloPedidos().filter(p=>p.estado!=="anulado" && (p.cliente||"")!=="_PRUEBA_DIAGNOSTICO" && enCuenta(p));
   const tr=cuentaTransportistas(peds).find(x=>x.quien===quien);
   if(!tr||!tr.peds.length){ toast("No hay envíos de "+quien+" en el período"); return; }
   const per=(CTA_DESDE||CTA_HASTA)?((CTA_DESDE||"…")+" al "+(CTA_HASTA||"…")):"Todo el período";
@@ -1271,7 +1289,7 @@ function imprimirRecibo(quien){
   w.document.close();
 }
 function pantallaCuenta(){
-  const peds=soloPedidos().filter(p=>p.estado!=="anulado" && (p.cliente||"")!=="_PRUEBA_DIAGNOSTICO" && enRango(p.creado,CTA_DESDE,CTA_HASTA));
+  const peds=soloPedidos().filter(p=>p.estado!=="anulado" && (p.cliente||"")!=="_PRUEBA_DIAGNOSTICO" && enCuenta(p));
   const zc=zonaCosto(); const esCad=c=>["caba","1","2","3"].includes(c);
   const g={};
   peds.filter(p=>!p.cobradoEn).forEach(p=>{ const e=p.empresa||"—"; if(!g[e]) g[e]={emp:e,n:0,cobrar:0,costo:0,peds:[]};
@@ -1289,6 +1307,7 @@ function pantallaCuenta(){
         <div style="flex:1;min-width:120px"><span class="label">Desde</span><input type="date" value="${CTA_DESDE}" onchange="CTA_DESDE=this.value;pantallaCuenta()" style="${inpC}"></div>
         <div style="flex:1;min-width:120px"><span class="label">Hasta</span><input type="date" value="${CTA_HASTA}" onchange="CTA_HASTA=this.value;pantallaCuenta()" style="${inpC}"></div>
       </div>
+      ${(()=>{ const c=ultimoCierreTs(); return c?`<div class="hint" style="margin-top:8px">Mostrando el <b>período abierto</b>: desde el cierre del ${new Date(c).toLocaleDateString("es-AR")}. Lo ya cerrado no aparece.</div>`:`<div class="hint" style="margin-top:8px">Todavía no hiciste ningún cierre: se muestra todo.</div>`; })()}
       <div class="row" style="margin-top:10px">
         <button class="btn sm ghost" onclick="setRangoCta('sem')">Esta semana</button>
         <button class="btn sm ghost" onclick="setRangoCta('ant')">Semana pasada</button>
@@ -3502,7 +3521,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v21jul-tabla";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v21jul-periodo";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
