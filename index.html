@@ -1306,6 +1306,82 @@ function imprimirRecibo(quien){
   <scr`+`ipt>window.onload=function(){setTimeout(function(){window.print()},400)}<\/scr`+`ipt></body></html>`);
   w.document.close();
 }
+function pantallaZonas(){
+  const peds=soloPedidos().filter(p=>p.estado!=="anulado" && (p.cliente||"")!=="_PRUEBA_DIAGNOSTICO" && enCuenta(p));
+  const zc=zonaCosto();
+  const orden=[["caba","CABA",0],["1","Zona 1",1],["2","Zona 2",2],["3","Zona 3",3],["correo","Correo",9]];
+  const g={}; orden.forEach(([k,l])=>g[k]={k,label:l,n:0,cobro:0,costo:0});
+  peds.forEach(p=>{ const c=catPedido(p); if(!g[c]) return;
+    g[c].n++; g[c].cobro+=costoEnvio(p);
+    g[c].costo += ["caba","1","2","3"].includes(c) ? (zc[c]||0) : 0; });
+  const filas=orden.map(([k])=>g[k]).filter(x=>x.n>0);
+  const tN=filas.reduce((s,x)=>s+x.n,0), tCob=filas.reduce((s,x)=>s+x.cobro,0), tCos=filas.reduce((s,x)=>s+x.costo,0);
+  const maxN=Math.max(1,...filas.map(x=>x.n));
+  const cierreTs=ultimoCierreTs();
+  app().innerHTML=`
+    <button class="btn sm ghost" onclick="OPVIEW='informes';vistaOperador()">← Volver</button>
+    <div class="title" style="margin-top:14px">Envíos por zona</div>
+    <div class="subtitle">Cuánto cobrás y cuánto te cuesta el reparto, por zona.${cierreTs?` Desde el cierre del ${new Date(cierreTs).toLocaleDateString("es-AR")}.`:""}</div>
+    <div class="card" style="margin-bottom:16px">
+      <span class="label">Tarifa al cliente · precio por envío</span>
+      <table class="tbl2">
+        ${[["caba","CABA",0],["1","Zona 1",1],["2","Zona 2",2],["3","Zona 3",3],["correo","Correo (interior)",9]].map(([k,l,cn])=>
+          `<tr><td><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${anilloColor(cn)};margin-right:7px"></span>${esc(l)}</td>
+           <td style="text-align:right;font-weight:800;font-size:15px">${fmtAr(precioCat(k))}</td></tr>`).join("")}
+      </table>
+    </div>
+    <div class="kpis" style="margin-bottom:16px">
+      <div class="kpi"><div class="n">${tN}</div><div class="l">Envíos</div></div>
+      <div class="kpi"><div class="n" style="color:var(--green)">${fmtAr(tCob)}</div><div class="l">A cobrar</div></div>
+      <div class="kpi"><div class="n" style="color:#e5484d">${fmtAr(tCos)}</div><div class="l">Costo reparto</div></div>
+      <div class="kpi"><div class="n" style="color:var(--accent)">${fmtAr(tCob-tCos)}</div><div class="l">Te queda</div></div>
+    </div>
+    <div class="card">
+      <table class="tbl2">
+        <tr style="color:var(--text-2)"><td style="font-size:11px;text-transform:uppercase;letter-spacing:.05em">Zona</td>
+          <td style="text-align:right;font-size:11px;text-transform:uppercase">Envíos</td>
+          <td style="text-align:right;font-size:11px;text-transform:uppercase">Cobrás</td>
+          <td style="text-align:right;font-size:11px;text-transform:uppercase">Costo</td>
+          <td style="text-align:right;font-size:11px;text-transform:uppercase">Queda</td></tr>
+        ${filas.map(x=>`<tr>
+          <td><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${anilloColor(orden.find(o=>o[0]===x.k)[2])};margin-right:7px"></span>${esc(x.label)}
+            <div style="height:4px;background:var(--accent);border-radius:2px;margin-top:4px;width:${Math.round(x.n/maxN*100)}%;max-width:180px;opacity:.5"></div></td>
+          <td style="text-align:right;font-weight:700">${x.n}</td>
+          <td style="text-align:right;color:var(--green)">${fmtAr(x.cobro)}</td>
+          <td style="text-align:right;color:#e5484d">${x.costo?fmtAr(x.costo):'—'}</td>
+          <td style="text-align:right;font-weight:700">${fmtAr(x.cobro-x.costo)}</td></tr>`).join("")}
+        <tr style="border-top:1.5px solid var(--border)"><td><b>Total</b></td>
+          <td style="text-align:right;font-weight:800">${tN}</td>
+          <td style="text-align:right;font-weight:800;color:var(--green)">${fmtAr(tCob)}</td>
+          <td style="text-align:right;font-weight:800;color:#e5484d">${fmtAr(tCos)}</td>
+          <td style="text-align:right;font-weight:800;color:var(--accent)">${fmtAr(tCob-tCos)}</td></tr>
+      </table>
+    </div>
+    <button class="btn ghost block" style="margin-top:12px" onclick="imprimirZonas()">${icon('printer')} Imprimir resumen por zona</button>`;
+}
+function imprimirZonas(){
+  const peds=soloPedidos().filter(p=>p.estado!=="anulado" && (p.cliente||"")!=="_PRUEBA_DIAGNOSTICO" && enCuenta(p));
+  const zc=zonaCosto();
+  const orden=[["caba","CABA"],["1","Zona 1"],["2","Zona 2"],["3","Zona 3"],["correo","Correo"]];
+  const g={}; orden.forEach(([k,l])=>g[k]={label:l,n:0,cobro:0,costo:0});
+  peds.forEach(p=>{ const c=catPedido(p); if(!g[c]) return; g[c].n++; g[c].cobro+=costoEnvio(p); g[c].costo+=["caba","1","2","3"].includes(c)?(zc[c]||0):0; });
+  const filas=orden.map(([k])=>g[k]).filter(x=>x.n>0);
+  const tN=filas.reduce((s,x)=>s+x.n,0), tCob=filas.reduce((s,x)=>s+x.cobro,0), tCos=filas.reduce((s,x)=>s+x.costo,0);
+  const w=window.open("","_blank","width=760,height=800"); if(!w){ toast("Permití las ventanas emergentes"); return; }
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Envíos por zona</title>
+  <style>@page{size:A4;margin:16mm}body{font-family:-apple-system,system-ui,Segoe UI,sans-serif;color:#111;font-size:13px}
+  h1{font-size:21px;margin:0 0 2px}.sub{color:#666;margin-bottom:16px}
+  table{width:100%;border-collapse:collapse;margin-top:8px}th{text-align:left;font-size:11px;text-transform:uppercase;color:#666;border-bottom:1.5px solid #111;padding:7px 6px}
+  td{padding:7px 6px;border-bottom:.5px solid #ddd}.r{text-align:right}tfoot td{border-top:2px solid #111;font-weight:700;font-size:15px}
+  </style></head><body>
+  <h1>Envíos por zona</h1><div class="sub">Fullminet · ${periodoTxt()} · emitido ${new Date().toLocaleDateString("es-AR")}</div>
+  <table><thead><tr><th>Zona</th><th class="r">Envíos</th><th class="r">Cobrás</th><th class="r">Costo</th><th class="r">Te queda</th></tr></thead>
+  <tbody>${filas.map(x=>`<tr><td>${esc(x.label)}</td><td class="r">${x.n}</td><td class="r">${fmtAr(x.cobro)}</td><td class="r">${x.costo?fmtAr(x.costo):"—"}</td><td class="r">${fmtAr(x.cobro-x.costo)}</td></tr>`).join("")}</tbody>
+  <tfoot><tr><td>Total</td><td class="r">${tN}</td><td class="r">${fmtAr(tCob)}</td><td class="r">${fmtAr(tCos)}</td><td class="r">${fmtAr(tCob-tCos)}</td></tr></tfoot>
+  </table>
+  <scr`+`ipt>window.onload=function(){setTimeout(function(){window.print()},400)}<\/scr`+`ipt></body></html>`);
+  w.document.close();
+}
 function pantallaCuenta(){
   const peds=soloPedidos().filter(p=>p.estado!=="anulado" && (p.cliente||"")!=="_PRUEBA_DIAGNOSTICO" && enCuenta(p));
   const zc=zonaCosto(); const esCad=c=>["caba","1","2","3"].includes(c);
@@ -2556,7 +2632,9 @@ function vistaOperador(){
       </div>
       <span class="muted" style="font-size:13px">${lista.length} pedido${lista.length===1?'':'s'}</span>
     </div>
-    <div class="cardgrid">${PED_VISTA==='kanban'?kanbanPedidos(lista):PED_VISTA==='tabla'?tablaPedidos(lista):listaPorFecha(lista)}</div>
+    ${PED_VISTA==='kanban'
+      ? kanbanPedidos(lista)
+      : `<div class="cardgrid">${PED_VISTA==='tabla'?tablaPedidos(lista):listaPorFecha(lista)}</div>`}
     ${DB.modo==="demo"?`<div class="center" style="margin-top:24px">
       <span class="muted" style="font-size:13px">Modo demo · </span>
       <button class="btn sm ghost" onclick="resetDatos(false)">Recargar ejemplo (35)</button>
@@ -2591,11 +2669,11 @@ function kanbanPedidos(lista){
     {k:"entregado", t:"Entregado", c:"var(--green)"}
   ];
   const enCol=(p,k)=>Array.isArray(k)?k.includes(p.estado):p.estado===k;
-  return `<div style="display:flex;gap:12px;overflow-x:auto;padding-bottom:8px;align-items:flex-start">
+  return `<div class="kanwrap" style="display:flex;gap:12px;overflow-x:auto;padding-bottom:10px;align-items:flex-start">
     ${cols.map(col=>{ const arr=lista.filter(p=>enCol(p,col.k)).sort((a,b)=>(b.creado||0)-(a.creado||0));
       const tot=arr.reduce((s,p)=>s+costoEnvio(p),0);
       const destino=Array.isArray(col.k)?col.k[0]:col.k;
-      return `<div style="flex:1;min-width:230px;background:var(--bg-3);border-radius:12px;padding:10px"
+      return `<div style="flex:0 0 250px;width:250px;background:var(--bg-3);border-radius:12px;padding:10px;align-self:stretch"
         ondragover="event.preventDefault();this.style.outline='2px dashed var(--accent)'"
         ondragleave="this.style.outline='none'"
         ondrop="this.style.outline='none';kanSoltar('${destino}')">
@@ -3793,7 +3871,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v22jul-kanban";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v22jul-kanfix";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
@@ -3874,6 +3952,7 @@ function vistaInformes(){
     ${INF_PERIODO==="periodo"?`<div class="hint" style="margin:-6px 0 12px">${cierreTs?("Período abierto desde el cierre del "+new Date(cierreTs).toLocaleString("es-AR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})+" hs"):"Todavía no hiciste ningún cierre: se muestra todo."}</div>`:""}
     <div class="row" style="margin-bottom:14px">
       <button class="btn ghost sm" onclick="pantallaCuenta()">💵 Cuenta · a cobrar</button>
+      <button class="btn ghost sm" onclick="pantallaZonas()">🗺️ Envíos por zona</button>
       <button class="btn ghost sm" onclick="pantallaSalidas()">📦 Qué sacó cada uno</button>
       <button class="btn ghost sm" onclick="pantallaCierre()">🔒 Cierre de período</button>
     </div>
