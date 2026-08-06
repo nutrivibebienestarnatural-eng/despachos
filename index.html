@@ -1958,7 +1958,6 @@ function imprimirChecklistDia(){
     .sort((a,b)=>(a.creado||0)-(b.creado||0));
   if(!peds.length){ toast("No hay pedidos para preparar este día"); return; }
   let udsTot=0; peds.forEach(p=>{ try{ itemsPedido(p).forEach(it=>udsTot+=it.cant||0); }catch(e){} });
-  const w=window.open("","_blank","width=420,height=680"); if(!w){ toast("Permití las ventanas emergentes"); return; }
   const filasOrd=peds.map((p,i)=>{
     let it=[]; try{ it=itemsPedido(p); }catch(e){}
     const prods=it.map(x=>'<div class="pl">☐ '+x.cant+'× '+esc(x.prodNombre)+'</div>').join("");
@@ -1971,24 +1970,38 @@ function imprimirChecklistDia(){
       '<div class="om">N° '+esc(numOrden(p))+' · '+esc(nombreEmp(p.empresa))+' · '+esc(detalle)+' · '+esc(anilloDe(p).label)+'</div>'+
       prods+'</div>';
   }).join("");
-  w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Preparación '+dia+'</title>'+
-  '<style>@page{size:100mm 150mm;margin:0}*{box-sizing:border-box}'+
-  'body{font-family:Arial,Helvetica,sans-serif;color:#000;margin:0;padding:3mm;width:100mm;font-size:9px;line-height:1.25}'+
+  const estilos='<style>@media screen{body{background:#f5f5f7}#bar{position:sticky;top:0;display:flex;gap:8px;justify-content:center;padding:10px;background:#fff;border-bottom:1px solid #ddd}#bar button{font:inherit;font-size:14px;padding:8px 16px;border-radius:8px;border:1px solid #0a84ff;background:#0a84ff;color:#fff;cursor:pointer}#hoja{width:100mm;margin:12px auto;background:#fff;box-shadow:0 2px 12px rgba(0,0,0,.15)}}'+
+  '@media print{#bar{display:none}#hoja{margin:0;box-shadow:none}}'+
+  '@page{size:100mm 150mm;margin:0}*{box-sizing:border-box}'+
+  '#hoja{color:#000;padding:3mm;width:100mm;font-family:Arial,Helvetica,sans-serif;font-size:9px;line-height:1.25}'+
   'h1{font-size:12px;margin:0;text-align:center}.sub{text-align:center;font-size:8.5px;color:#333;margin:.5mm 0 2mm;border-bottom:1.2px solid #000;padding-bottom:1.5mm}'+
   '.ord{border:1px solid #000;border-radius:1mm;padding:1.4mm 2mm;margin-bottom:1.4mm}'+
-  '.oh{font-size:10px;display:flex;gap:1.5mm;align-items:center}.chk{font-size:13px;line-height:1}'+
-  '.oh b{flex:1;min-width:0}'+
+  '.oh{font-size:10px;display:flex;gap:1.5mm;align-items:center}.chk{font-size:13px;line-height:1}.oh b{flex:1;min-width:0}'+
   '.via{font-size:8px;font-weight:800;letter-spacing:.05em;padding:1px 5px;border-radius:2px;border:1.2px solid #000;white-space:nowrap}'+
   '.vc{background:#000;color:#fff}.vd{background:#fff;color:#000}'+
-  '.om{font-size:8px;color:#333;margin:.4mm 0 .8mm}'+
-  '.pl{font-size:9.5px;padding:.3mm 0 .3mm 2.5mm}'+
-  '.foot{margin-top:2mm;font-size:8.5px;border-top:1.2px solid #000;padding-top:1.5mm}'+
-  '</style></head><body>'+
-  '<h1>Preparación · '+dia+'</h1><div class="sub">'+peds.length+' órdenes · '+udsTot+' unidades</div>'+
-  filasOrd+
-  '<div class="foot">Preparó: ______________  Fecha: ______</div>'+
-  '<scr'+'ipt>window.onload=function(){setTimeout(function(){window.print()},400)}<\/scr'+'ipt></body></html>');
-  w.document.close();
+  '.om{font-size:8px;color:#333;margin:.4mm 0 .8mm}.pl{font-size:9.5px;padding:.3mm 0 .3mm 2.5mm}'+
+  '.foot{margin-top:2mm;font-size:8.5px;border-top:1.2px solid #000;padding-top:1.5mm}</style>';
+  const cuerpo='<div id="hoja"><h1>Preparación · '+dia+'</h1><div class="sub">'+peds.length+' órdenes · '+udsTot+' unidades</div>'+
+    filasOrd+'<div class="foot">Preparó: ______________  Fecha: ______</div></div>';
+  const html='<!doctype html><html><head><meta charset="utf-8"><title>Preparación '+dia+'</title>'+estilos+'</head><body>'+
+    '<div id="bar"><button onclick="window.print()">🖨️ Imprimir</button>'+
+    '<button onclick="descargarPDF()">📄 Descargar PDF</button></div>'+cuerpo+
+    '<scr'+'ipt src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></scr'+'ipt>'+
+    '<scr'+'ipt src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></scr'+'ipt>'+
+    '<scr'+'ipt>function descargarPDF(){var el=document.getElementById("hoja");html2canvas(el,{scale:3,backgroundColor:"#fff"}).then(function(cv){'+
+    'var img=cv.toDataURL("image/png");var jsPDF=window.jspdf.jsPDF;var doc=new jsPDF({orientation:"portrait",unit:"mm",format:[100,150]});'+
+    'var h=cv.height*100/cv.width;doc.addImage(img,"PNG",0,0,100,h>150?150:h);doc.save("preparacion-'+dia+'.pdf");});}<\/scr'+'ipt>'+
+    '</body></html>';
+  // intento abrir en pestaña nueva; si el navegador la bloquea, uso la misma con un blob
+  const w=window.open("","_blank");
+  if(w){ w.document.write(html); w.document.close(); }
+  else {
+    const blob=new Blob([html],{type:"text/html"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a"); a.href=url; a.target="_blank"; a.rel="noopener";
+    document.body.appendChild(a); a.click(); a.remove();
+    toast("Se abrió en otra pestaña. Si no, permití las ventanas emergentes.");
+  }
 }
 function pantallaEntregas(){
   const arr=entregadosEn(ENT_DESDE,ENT_HASTA);
@@ -3871,7 +3884,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v22jul-kanfix";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v22jul-checklist-pdf";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
