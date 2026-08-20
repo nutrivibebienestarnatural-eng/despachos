@@ -3809,7 +3809,14 @@ function parseRemito(text){
 function parseEtiquetaML(texto){
   const L=texto.split(/\n/).map(x=>x.trim()).filter(Boolean);
   const T=texto.replace(/[ \t]+/g," ");
-  const venta=(T.match(/Venta:\s*(\d+)/)||[])[1]||"";
+  // el N° de venta de ML son ~13-16 dígitos, a veces partido en dos líneas ("20000" + "18016578394")
+  let venta="";
+  let vm=T.match(/Venta:\s*(\d[\d\s]{0,20}?\d)(?:\s|$|Pack|SKU)/i) || T.match(/Venta:\s*(\d+)/i);
+  if(!vm || vm[1].replace(/\s/g,"").length<11){                 // si quedó corto, uno con la línea siguiente
+    const lv=texto.split(/\n/); const iv=lv.findIndex(x=>/Venta:/i.test(x));
+    if(iv>=0){ const junto=(lv[iv].replace(/.*Venta:\s*/i,"")+ (lv[iv+1]||"")).replace(/\D/g,"").slice(0,16); if(junto.length>=11) vm=[null,junto]; }
+  }
+  if(vm){ const limpio=vm[1].replace(/\s/g,""); if(limpio.length>=11) venta=limpio.slice(0,16); }
   const envio=(T.match(/Envio:\s*(\d+)/i)||[])[1]||"";
   // CP: formato Flex ("CP: 1642" o número arriba) o Correo ("CP:2000")
   let cp=(T.match(/CP:\s*(\d{4})\b/)||[])[1]||"";
@@ -3853,7 +3860,9 @@ async function leerEtiquetaML(file){
   try{
     const texto=await pdfTextoRemito(file);
     // separo por N° de venta único (así una etiqueta con hoja de envío + picking no se duplica)
-    const ventas=[...new Set((texto.match(/Venta:\s*(\d+)/g)||[]).map(v=>v.replace(/Venta:\s*/,"")))];
+    // ventas: cada bloque "Venta:" une los dígitos partidos y toma los primeros 16
+    const ventasRaw=(texto.match(/Venta:\s*(\d[\d\s]{0,20})/g)||[]).map(v=>v.replace(/Venta:\s*/,"").replace(/\s/g,"").slice(0,16));
+    const ventas=[...new Set(ventasRaw.filter(v=>v.length>=11))];
     let filas=[];
     if(ventas.length<=1){ const f=parseEtiquetaML(texto); if(f) filas=[f]; }
     else {
@@ -3969,7 +3978,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v22jul-reparar";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v22jul-venta2";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
