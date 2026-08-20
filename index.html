@@ -159,6 +159,7 @@ textarea{resize:vertical;min-height:54px;font-size:14px;line-height:1.45}
 .btn.ghost:hover{background:var(--border-2);opacity:1}
 .btn.green{background:var(--green)}.btn.amber{background:var(--amber);color:#1d1d1f}.btn.red{background:var(--red)}
 .btn.sm{padding:6px 11px;font-size:12.5px}
+.btn.big{padding:15px 20px;font-size:17px;font-weight:700}
 .btn.sm .ico{width:15px;height:15px}
 
 /* ---- Segmented control ---- */
@@ -733,7 +734,7 @@ function sembrarDemo(write,read){
 /* =========================================================================
    5) ESTADO EN MEMORIA + UTILIDADES
    ========================================================================= */
-let PEDIDOS=[], ROL=null, CADETE_ACTIVO=null, FILTRO="todos", OPVIEW="panel", EMPLEADO=false, PED_Q="";
+let PEDIDOS=[], ROL=null, CADETE_ACTIVO=null, FILTRO="todos", OPVIEW="hoy", EMPLEADO=false, PED_Q="";
 let USER=null, USERROL=null, AUTH_READY=false, SUBSCRITO=false, PREVIEW=null;
 let STOCK_DESDE="", STOCK_HASTA="", STOCK_Q="", STOCK_TODOS=false;
 let ENT_DESDE="", ENT_HASTA="";
@@ -2371,7 +2372,8 @@ function pintarSidebar(){
   const ped=(typeof soloPedidos==="function")?soloPedidos():[];
   const nActivos=ped.filter(p=>!p.cerradoEn && !["entregado","confirmado","anulado"].includes(p.estado)).length;
   const nPrep=ped.filter(p=>p.estado==="pendiente").length;
-  const items=[["panel","Panel","▦",null],["pedidos","Pedidos","▤",nActivos||null],["preparacion","Preparación","☑",nPrep||null],
+  const nPend=ped.filter(p=>p.estado==="pendiente" && !p.metodo).length + ped.filter(p=>p.estado==="pendiente" && p.metodo).length + ped.filter(p=>p.estado==="preparado").length;
+  const items=[["hoy","Hoy","◈",nPend||null],["panel","Panel","▦",null],["pedidos","Pedidos","▤",nActivos||null],["preparacion","Preparación","☑",nPrep||null],
     ["stock","Stock","▣",null],["informes","Informes","▧",null],["ruta","Ruta","↗",null],["deposito","Depósito","▥",null]];
   sb.innerHTML=`<div class="logo">Fullminet<small>Despacho</small></div>
     ${items.map(([v,n,ic,b])=>`<button class="nav ${OPVIEW===v?'on':''}" onclick="OPVIEW='${v}';vistaOperador()">
@@ -2382,7 +2384,7 @@ function pintarSidebar(){
 }
 function segOp(active){
   if(ROL!=="admin" || PREVIEW) return "";   // operador (o admin previsualizando) no ve pestañas
-  const tabs=[["panel","Panel"],["pedidos","Pedidos"],["preparacion","Preparación"],["stock","Stock"],["informes","Informes"],["ruta","Ruta"],["deposito","Depósito"]];
+  const tabs=[["hoy","Hoy"],["panel","Panel"],["pedidos","Pedidos"],["preparacion","Preparación"],["stock","Stock"],["informes","Informes"],["ruta","Ruta"],["deposito","Depósito"]];
   return `<div class="row" style="justify-content:space-between;margin-bottom:14px"><div class="seg">${
     tabs.map(t=>`<button class="${active===t[0]?'on':''}" ${active===t[0]?'':`onclick="OPVIEW='${t[0]}';vistaOperador()"`}>${t[1]}</button>`).join("")
   }</div></div>`;
@@ -2399,6 +2401,50 @@ async function reasignarCadete(viejo,nuevo){
   toast("Actualizando "+peds.length+" pedidos…");
   for(const p of peds){ try{ await DB.update(p.id,{cadete:nuevo}); }catch(e){} }
   toast("Listo ✓"); render();
+}
+function vistaHoy(){
+  const ped=soloPedidos().filter(p=>!p.cerradoEn);
+  const act=ped.filter(p=>!["entregado","confirmado","anulado"].includes(p.estado));
+  const nSinAsig=act.filter(p=>p.estado==="pendiente" && !p.metodo).length;
+  const nPrep=act.filter(p=>p.estado==="pendiente" && p.metodo).length;   // asignados, falta preparar
+  const nListos=act.filter(p=>p.estado==="preparado").length;             // preparados, falta despachar
+  const nReparto=act.filter(p=>["asignado","en_reparto","despachado","en_camino"].includes(p.estado)).length;
+
+  // determino el paso actual
+  let paso, titulo, sub, accion, colorPaso;
+  if(act.length===0){ paso=0; titulo="Todo al día 👍"; sub="No hay pedidos pendientes. Cuando importes, van a aparecer acá."; }
+  else if(nSinAsig>0){ paso=2; colorPaso="var(--amber)"; titulo=nSinAsig+" pedido"+(nSinAsig>1?"s":"")+" sin asignar"; sub="Elegí quién lleva cada uno: Cardinal, Claudia o Correo."; accion=`<button class="btn block big" onclick="OPVIEW='pedidos';FILTRO='pendiente';vistaOperador()">Asignar reparto →</button>`; }
+  else if(nPrep>0){ paso=3; colorPaso="var(--accent)"; titulo=nPrep+" pedido"+(nPrep>1?"s":"")+" para preparar"; sub="Imprimí el checklist y armá los paquetes. Marcá cada uno como preparado."; accion=`<button class="btn block big" onclick="imprimirChecklistDia()">🖨️ Imprimir checklist</button><button class="btn ghost block" style="margin-top:8px" onclick="OPVIEW='preparacion';vistaOperador()">Ver preparación →</button>`; }
+  else if(nListos>0){ paso=4; colorPaso="#7f77dd"; titulo=nListos+" listo"+(nListos>1?"s":"")+" para despachar"; sub="Entregá los paquetes al cadete o llevalos al correo. Marcá cada uno como despachado."; accion=`<button class="btn block big" onclick="OPVIEW='pedidos';FILTRO='preparado';vistaOperador()">Despachar →</button>`; }
+  else { paso=5; colorPaso="var(--green)"; titulo="Todo despachado 🚚"; sub=nReparto+" en camino. Cuando confirmes que llegaron, marcalos como entregados."; accion=`<button class="btn ghost block" onclick="OPVIEW='pedidos';FILTRO='todos';vistaOperador()">Ver pedidos →</button>`; }
+
+  const pasos=[["Importar","↓",true],["Asignar","⇄",nSinAsig===0&&act.length>0],["Preparar","☑",nPrep===0&&nListos+nReparto>0],["Despachar","🚚",nListos===0&&nReparto>0]];
+  app().innerHTML=`
+    ${segOp('hoy')}
+    <div class="title">Hoy</div>
+    <div class="subtitle">${new Date().toLocaleDateString("es-AR",{weekday:'long',day:'numeric',month:'long'})}</div>
+
+    <div class="card" style="text-align:center;padding:26px 20px;margin-bottom:16px;border:1.5px solid ${colorPaso||'var(--border)'}">
+      ${paso>0?`<div style="font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:${colorPaso};margin-bottom:10px">Paso ${paso-1} de 4</div>`:''}
+      <div style="font-size:24px;font-weight:800;line-height:1.15;margin-bottom:6px">${titulo}</div>
+      <div class="muted" style="font-size:15px;margin-bottom:20px;max-width:400px;margin-left:auto;margin-right:auto">${sub}</div>
+      ${accion||''}
+    </div>
+
+    <div class="card" style="margin-bottom:16px">
+      <span class="label">El día en números</span>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;text-align:center;margin-top:4px">
+        <div><div style="font-size:26px;font-weight:800;color:${nSinAsig?'var(--amber)':'var(--text-3)'}">${nSinAsig}</div><div class="muted" style="font-size:11px">Sin asignar</div></div>
+        <div><div style="font-size:26px;font-weight:800;color:${nPrep?'var(--accent)':'var(--text-3)'}">${nPrep}</div><div class="muted" style="font-size:11px">Preparar</div></div>
+        <div><div style="font-size:26px;font-weight:800;color:${nListos?'#7f77dd':'var(--text-3)'}">${nListos}</div><div class="muted" style="font-size:11px">Despachar</div></div>
+        <div><div style="font-size:26px;font-weight:800;color:${nReparto?'var(--green)':'var(--text-3)'}">${nReparto}</div><div class="muted" style="font-size:11px">En camino</div></div>
+      </div>
+    </div>
+
+    <div class="row" style="gap:8px">
+      <button class="btn ghost" style="flex:1" onclick="formImportar()">↓ Importar pedidos</button>
+      <button class="btn ghost" style="flex:1" onclick="OPVIEW='pedidos';vistaOperador()">Ver todos los pedidos</button>
+    </div>`;
 }
 function vistaPanel(){
   const ped=soloPedidos();
@@ -2509,6 +2555,7 @@ function vistaPanel(){
 }
 function vistaOperador(){
   try{ pintarSidebar(); }catch(e){}
+  if(OPVIEW==="hoy") return vistaHoy();
   if(OPVIEW==="panel") return vistaPanel();
   if(OPVIEW==="deposito") return vistaDeposito();
   if(OPVIEW==="ruta") return vistaRuta();
@@ -3592,6 +3639,7 @@ function vistaStock(){
       <button class="btn ghost" onclick="guardarMinimos()">Guardar mínimos</button>
       <button class="btn ghost" onclick="imprimirStock()">${icon('printer')} Imprimir A4</button>
       <button class="btn ghost" onclick="agregarProductoNuevo()">➕ Agregar producto</button>
+      <button class="btn ghost" onclick="repararProdsPedidos()">🔧 Reparar productos de pedidos</button>
       <button class="btn ghost" onclick="imprimirReposicion()">${icon('printer')} Planilla de reposición</button>
       <button class="btn ghost" onclick="pantallaSalidas()">${icon('box')} Lo que salió</button>
       <button class="btn ghost" onclick="pantallaRepickeo()">↻ Re-pickear órdenes</button>
@@ -3761,56 +3809,93 @@ function parseRemito(text){
 function parseEtiquetaML(texto){
   const L=texto.split(/\n/).map(x=>x.trim()).filter(Boolean);
   const T=texto.replace(/[ \t]+/g," ");
-  let cp=(T.match(/CP:\s*(\d{4})\b/)||[])[1]||"";                       // "CP: 1642"
-  if(!cp){ const i=L.findIndex(x=>/^CP:?$/.test(x)); if(i>0){ const m=L[i-1].match(/^(\d{4})$/); if(m) cp=m[1]; } }  // o el número arriba
-  let loc=""; const iCP=L.findIndex(x=>/^CP:?$/.test(x)||/CP:\s*\d{4}/.test(x));
-  if(iCP>=0) for(let j=iCP+1;j<Math.min(iCP+4,L.length);j++){ const c=L[j];
-    if(c && !/^(RESIDENCIAL|COMERCIAL|Direccion|Barrio|Referencia|Destinatario)/i.test(c) && !/^\d{4}$/.test(c)){ loc=c; break; } }
-  const dir=(T.match(/Direccion:\s*(.+?)(?:\s*Barrio:|\s*Referencia:|\s*Destinatario:|\n|$)/i)||[])[1]||"";
-  let cli=(T.match(/Destinatario:\s*([^(\n]+)/i)||[])[1]||"";
-  const nota=(T.match(/Referencia:\s*(?:Referencia:\s*)?([^\n]+)/i)||[])[1]||"";
   const venta=(T.match(/Venta:\s*(\d+)/)||[])[1]||"";
   const envio=(T.match(/Envio:\s*(\d+)/i)||[])[1]||"";
-  const prods=[], items=[];
+  // CP: formato Flex ("CP: 1642" o número arriba) o Correo ("CP:2000")
+  let cp=(T.match(/CP:\s*(\d{4})\b/)||[])[1]||"";
+  if(!cp){ const i=L.findIndex(x=>/^CP:?$/.test(x)); if(i>0){ const m=L[i-1].match(/^(\d{4})$/); if(m) cp=m[1]; } }
+  // Cliente: "Destinatario:" (Flex) o el nombre antes de "Domicilio:" (Correo)
+  let cli=(T.match(/Destinatario:\s*([^(\n]+)/i)||[])[1]||"";
+  if(!cli){ const i=L.findIndex(x=>/^Domicilio:/i.test(x)); if(i>0){ cli=L[i-1].replace(/\s*\([^)]*\)\s*$/,"").trim(); } }
+  // Dirección: "Direccion:" (Flex) o "Domicilio:" (Correo)
+  let dir=(T.match(/Direccion:\s*(.+?)(?:\s*Barrio:|\s*Referencia:|\s*Destinatario:|\n|$)/i)||[])[1]||"";
+  if(!dir) dir=(T.match(/Domicilio:\s*(.+?)(?:\s*CP:|\s*Central:|\s*Ciudad de destino:|\n|$)/i)||[])[1]||"";
+  // Localidad/provincia
+  let loc="", prov="Buenos Aires";
+  const cd=(T.match(/Ciudad de destino:\s*(.+?)(?:\s*\(([^)]+)\))?(?:\n|Referencia:|$)/i));
+  if(cd){ loc=(cd[1]||"").trim(); if(cd[2]) prov=cd[2].trim(); }
+  else { const iCP=L.findIndex(x=>/^CP:?$/.test(x)||/CP:\s*\d{4}/.test(x));
+    if(iCP>=0) for(let j=iCP+1;j<Math.min(iCP+4,L.length);j++){ const c=L[j];
+      if(c && !/^(RESIDENCIAL|COMERCIAL|Direccion|Barrio|Referencia|Destinatario|Domicilio|Central|Ciudad)/i.test(c) && !/^\d{4}$/.test(c)){ loc=c; break; } } }
+  const nota=(T.match(/Referencia:\s*(?:Referencia:\s*)?([^\n]+)/i)||[])[1]||"";
+  // Productos por SKU (una sola vez cada uno)
+  const prods=[], items=[], vistos=new Set();
   const rx=/SKU:\s*(\d{6,})/g; let m;
   while((m=rx.exec(texto))!==null){
-    const sku=m[1];
+    const sku=m[1]; if(vistos.has(sku)) continue; vistos.add(sku);
     const cant=parseInt((texto.slice(m.index).match(/Cantidad:\s*(\d+)/)||[])[1],10)||1;
-    const prod=PRODUCTOS.find(p=>p.barcode===sku);                        // match exacto por código de barras
+    const prod=PRODUCTOS.find(p=>p.barcode===sku);
     let nom=""; const antes=texto.slice(0,m.index).split(/\n/).reverse();
     for(const c of antes){ const t=c.trim();
-      if(t.length>12 && !/^(Pack ID|Venta|Cantidad|Sabor|Tipo de envase|SKU)/i.test(t)){ nom=t.replace(/^\d{6,}\s*/,""); break; } }
+      if(t.length>12 && !/^(Pack ID|Venta|Cantidad|Sabor|Tipo de envase|SKU|Identifi)/i.test(t)){ nom=t.replace(/^[A-Z0-9]+\s+/,"").replace(/^\d{6,}\s*/,""); break; } }
     if(prod) prods.push({nombre:prod.nombre,cant});
     items.push(cant+"x "+(prod?prod.nombre:(nom||("SKU "+sku))));
   }
   if(!cli && !venta && !prods.length) return null;
   return { ref: venta?("#"+venta):(envio?("#"+envio):""), cliente:cli.trim(), tel:"", dir:dir.trim(),
-    ciudad:loc, provincia:"Buenos Aires", cp, items:items.join(" · "), prods, nota:nota.trim(), etiquetaML:true };
+    ciudad:loc, provincia:prov, cp, items:items.join(" · "), prods, nota:nota.trim(), etiquetaML:true };
 }
 async function leerEtiquetaML(file){
   if(!file) return;
   if(typeof pdfjsLib==="undefined"){ toast("El lector de PDF no cargó, probá de nuevo"); return; }
   pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
-  toast("Leyendo la etiqueta de Mercado Libre…");
+  toast("Leyendo la etiqueta…");
   try{
     const texto=await pdfTextoRemito(file);
-    // puede traer varias etiquetas: corto por "Destinatario" o por "Venta:"
-    const bloques=texto.split(/(?=NutriVibe|Despacha tus productos)/).filter(b=>/CP:|SKU:/.test(b));
+    // separo por N° de venta único (así una etiqueta con hoja de envío + picking no se duplica)
+    const ventas=[...new Set((texto.match(/Venta:\s*(\d+)/g)||[]).map(v=>v.replace(/Venta:\s*/,"")))];
     let filas=[];
-    if(bloques.length<=2){ const f=parseEtiquetaML(texto); if(f) filas=[f]; }
-    else { bloques.forEach(b=>{ const f=parseEtiquetaML(b); if(f&&(f.cliente||f.prods.length)) filas.push(f); }); }
+    if(ventas.length<=1){ const f=parseEtiquetaML(texto); if(f) filas=[f]; }
+    else {
+      // corto el texto en tramos por cada aparición de una venta nueva
+      ventas.forEach(v=>{ const idx=texto.indexOf("Venta:"+v)>=0?texto.indexOf("Venta:"+v):texto.indexOf("Venta: "+v);
+        const tramo=texto.slice(Math.max(0,idx-600), idx+800);
+        const f=parseEtiquetaML(tramo); if(f&&(f.cliente||f.prods.length)) filas.push(f); });
+      // dedup por ref
+      const seen=new Set(); filas=filas.filter(f=>{ if(seen.has(f.ref))return false; seen.add(f.ref); return true; });
+    }
     if(!filas.length){ toast("No reconocí la etiqueta. ¿Es el PDF de Mercado Libre?"); return; }
     // guardo el PDF para poder reimprimir la etiqueta desde el pedido
     let adj=null;
     try{ if(file.size<=700*1024){ adj={etiquetaPdf:await leerArchivoBase64(file), etiquetaPdfNombre:file.name||"etiqueta-ml.pdf"}; } }catch(e){}
-    const existentes=new Set(soloPedidos().map(p=>p.ref).filter(Boolean));
-    IMP_FILAS=filas.filter(f=>!f.ref||!existentes.has(f.ref)).map(f=>{
+    // busco la venta en TODOS los pedidos (incluso archivados/entregados), no solo los activos
+    const todos=PEDIDOS.filter(p=>p.tipo===undefined || p.cliente!==undefined);
+    const refsActivas=new Set(soloPedidos().map(p=>p.ref).filter(Boolean));
+    const yaEnSistema=filas.filter(f=>f.ref).map(f=>{
+      const match=todos.find(p=>p.ref===f.ref);
+      return match?{f, p:match}:null;
+    }).filter(Boolean);
+    IMP_FILAS=filas.filter(f=>!f.ref||!refsActivas.has(f.ref)).map(f=>{
       f.empresa=IMP_EMPRESA; f.canal="ml_flex";
       if(adj && filas.length===1){ f.etiquetaPdf=adj.etiquetaPdf; f.etiquetaPdfNombre=adj.etiquetaPdfNombre; }
       const rr=sugerirRuta(f.provincia,f.ciudad); f.origen=(rr&&rr.origen)||"bsas";
       if(llegaCadete(f)){ f.metodo="cadete"; f.correo=""; } else { f.metodo="correo"; f.correo="Correo Argentino"; }
       return f; });
-    if(!IMP_FILAS.length){ toast("Esa venta ya está cargada"); return; }
+    if(!IMP_FILAS.length){
+      // estaba cargada: digo dónde está en vez de solo bloquear
+      const info=yaEnSistema[0];
+      if(info){ const est=info.p.cerradoEn?"archivada (cierre anterior)":(estObj(info.p.estado).label||info.p.estado);
+        if(confirm("Esta venta ya figura en el sistema:\n\n"+esc(info.p.cliente||"")+" · N° "+esc(info.p.ref)+"\nEstado: "+est+"\n\n¿Querés cargarla igual como pedido nuevo?\n(Aceptar = crear de nuevo · Cancelar = no hacer nada)")){
+          IMP_FILAS=filas.map(f=>{ f.empresa=IMP_EMPRESA; f.canal="ml_flex"; f.ref=(f.ref||"")+"-b";
+            if(adj && filas.length===1){ f.etiquetaPdf=adj.etiquetaPdf; f.etiquetaPdfNombre=adj.etiquetaPdfNombre; }
+            const rr=sugerirRuta(f.provincia,f.ciudad); f.origen=(rr&&rr.origen)||"bsas";
+            if(llegaCadete(f)){ f.metodo="cadete"; f.correo=""; } else { f.metodo="correo"; f.correo="Correo Argentino"; }
+            return f; });
+          mostrarPreviewImport(); return;
+        } else { return; }
+      }
+      toast("Esa venta ya está cargada"); return;
+    }
     mostrarPreviewImport();
     toast(IMP_FILAS.length+" etiqueta"+(IMP_FILAS.length===1?"":"s")+" leída"+(IMP_FILAS.length===1?"":"s"));
   }catch(e){ console.error(e); toast("No pude leer el PDF de la etiqueta"); }
@@ -3884,7 +3969,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v22jul-checklist-pdf";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v22jul-reparar";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
@@ -4081,6 +4166,20 @@ function itemsPedido(p){
     out.push({nombre:it.nombre, cant:it.cant||1, prodNombre:prod?prod.nombre:it.nombre});
   });
   return out;
+}
+async function repararProdsPedidos(){
+  const sinProds=soloPedidos().filter(p=>(!p.prods||!p.prods.length) && (p.items||"").trim() && p.estado!=="anulado");
+  if(!sinProds.length){ toast("Todos los pedidos ya tienen sus productos cargados 👍"); return; }
+  let reparados=0, dudosos=[];
+  for(const p of sinProds){
+    const its=parseItems(p.items||"");
+    const prods=[];
+    its.forEach(it=>{ const prod=mejorProducto(it.nombre); if(prod) prods.push({nombre:prod.nombre, cant:it.cant||1}); else dudosos.push(p.cliente+": "+it.nombre); });
+    if(prods.length){ try{ await DB.update(p.id,{prods}); reparados++; }catch(e){} }
+  }
+  let msg="✅ "+reparados+" pedidos reparados (ahora descuentan bien).";
+  if(dudosos.length) msg+="\n\n⚠ "+dudosos.length+" productos no se reconocieron y quedaron sin cargar:\n"+dudosos.slice(0,10).join("\n");
+  alert(msg); render();
 }
 function pantallaPreparar(id){
   const p=PEDIDOS.find(x=>x.id===id);
