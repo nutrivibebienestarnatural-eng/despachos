@@ -2627,6 +2627,7 @@ function vistaHoy(){
       <button class="btn ghost" onclick="imprimirChecklistDia()">🖨️ Checklist preparación</button>
       <button class="btn ghost" onclick="OPVIEW='pedidos';vistaOperador()">▤ Ver todos los pedidos</button>
     </div>
+    <button class="btn block" style="margin-top:8px;background:var(--accent);color:#fff" onclick="copiarAcceso('operador')">🔗 Copiar link para mi empleada (solo preparar)</button>
     ${(()=>{
       const hoy0=new Date(); hoy0.setHours(0,0,0,0); const hoyIni=hoy0.getTime();
       const despHoy=soloPedidos().filter(p=>{
@@ -4314,7 +4315,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v24-flujo";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v24-linkemp";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
