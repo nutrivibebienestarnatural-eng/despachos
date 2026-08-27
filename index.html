@@ -291,6 +291,7 @@ hr{border:none;border-top:.5px solid var(--border);margin:20px 0}
 <!-- pdf.js: para importar el PDF de preparación de Tienda Nube -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
 <!-- ZXing: lector de códigos de barras por cámara (funciona en Android y iPhone) -->
 <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.20.0/umd/index.min.js"></script>
 
@@ -516,6 +517,37 @@ function anilloDe(p){
 }
 function anilloColor(n){ return n===0?"#8a44ad":n===1?"#1d9e75":n===2?"#0a84ff":n===3?"#e6a100":n===9?"#e5484d":"#8a8a8e"; }
 /* Kits: "Nmn + Resveratrol Pack X2" → escanear 2 productos (Nmn y Resveratrol) */
+/* ---- DICCIONARIO DE PACKS: un SKU o nombre de ML → qué productos y cuántos descuenta ----
+   Ejemplo: SKU "0714604143512" (Pack X 3 Óxido Nítrico) → [{prod:"Oxido Nitrico...", cant:3}]
+   Se aprende una vez al importar y queda guardado en la nube. */
+function packsRecord(){ return PEDIDOS.find(p=>p.tipo==="packs"); }
+function packsMap(){ const r=packsRecord(); return (r&&r.map)||{}; }
+function packKey(sku,nombre){ return (sku && String(sku).trim()) ? ("sku:"+String(sku).trim().toUpperCase()) : ("nom:"+String(nombre||"").trim().toLowerCase()); }
+function packDef(sku,nombre){
+  const m=packsMap();
+  if(sku && m["sku:"+String(sku).trim().toUpperCase()]) return m["sku:"+String(sku).trim().toUpperCase()];
+  if(nombre && m["nom:"+String(nombre).trim().toLowerCase()]) return m["nom:"+String(nombre).trim().toLowerCase()];
+  return null;
+}
+async function aprenderPack(sku,nombre,comps){
+  // comps = [{prod:"nombre catálogo", cant:3}, ...]
+  if(!comps || !comps.length) return;
+  const r=packsRecord(); const map=Object.assign({},(r&&r.map)||{});
+  map[packKey(sku,nombre)]={sku:sku||"", nombre:nombre||"", comps};
+  if(r) await DB.update(r.id,{map}); else await DB.create({tipo:"packs",map});
+}
+async function olvidarPack(key){
+  const r=packsRecord(); if(!r) return; const map=Object.assign({},r.map||{}); delete map[key];
+  await DB.update(r.id,{map});
+}
+/* ¿este item (nombre + sku opcional) es un pack conocido? devuelve sus componentes o null */
+function packComponentes(nombre,sku){
+  const def=packDef(sku,nombre);
+  return def ? def.comps.map(c=>({nombre:c.prod, cant:c.cant})) : null;
+}
+/* heurística: ¿parece un pack aunque no lo conozcamos? (para preguntarte) */
+function pareceePack(nombre){ return /\bpack\b|\bcombo\b|\bkit\b|\bx\s?\d\b|\b\d\s?unidades?\b|\+/i.test(nombre||""); }
+
 /* KITS ESPECIALES: composición manual (cuando el nombre no alcanza). Agregá acá los kits nuevos. */
 const KITS_DEF=[
   {match:/soporte\s+integral|kit\s+integral/i, comps:[{n:"Multi Magnesio 500 mg - 5 Magnesio en 1 (60 capsulas)", c:3}]},   // Soporte Integral | Multimagnesio x 3 = 3 Multi Magnesio
@@ -2374,7 +2406,7 @@ function pintarSidebar(){
   const nPrep=ped.filter(p=>p.estado==="pendiente").length;
   const nPend=ped.filter(p=>p.estado==="pendiente" && !p.metodo).length + ped.filter(p=>p.estado==="pendiente" && p.metodo).length + ped.filter(p=>p.estado==="preparado").length;
   const items=[["hoy","Hoy","◈",nPend||null],["panel","Panel","▦",null],["pedidos","Pedidos","▤",nActivos||null],["preparacion","Preparación","☑",nPrep||null],
-    ["stock","Stock","▣",null],["informes","Informes","▧",null],["ruta","Ruta","↗",null],["deposito","Depósito","▥",null]];
+    ["stock","Stock","▣",null],["informes","Informes","▧",null],["listados","Listados","≣",null],["ruta","Ruta","↗",null],["deposito","Depósito","▥",null]];
   sb.innerHTML=`<div class="logo">Fullminet<small>Despacho</small></div>
     ${items.map(([v,n,ic,b])=>`<button class="nav ${OPVIEW===v?'on':''}" onclick="OPVIEW='${v}';vistaOperador()">
       <span style="width:16px;text-align:center">${ic}</span>${n}${b?`<span class="b">${b}</span>`:''}</button>`).join("")}
@@ -2384,7 +2416,7 @@ function pintarSidebar(){
 }
 function segOp(active){
   if(ROL!=="admin" || PREVIEW) return "";   // operador (o admin previsualizando) no ve pestañas
-  const tabs=[["hoy","Hoy"],["panel","Panel"],["pedidos","Pedidos"],["preparacion","Preparación"],["stock","Stock"],["informes","Informes"],["ruta","Ruta"],["deposito","Depósito"]];
+  const tabs=[["hoy","Hoy"],["panel","Panel"],["pedidos","Pedidos"],["preparacion","Preparación"],["stock","Stock"],["informes","Informes"],["listados","Listados"],["ruta","Ruta"],["deposito","Depósito"]];
   return `<div class="row" style="justify-content:space-between;margin-bottom:14px"><div class="seg">${
     tabs.map(t=>`<button class="${active===t[0]?'on':''}" ${active===t[0]?'':`onclick="OPVIEW='${t[0]}';vistaOperador()"`}>${t[1]}</button>`).join("")
   }</div></div>`;
@@ -2401,6 +2433,146 @@ async function reasignarCadete(viejo,nuevo){
   toast("Actualizando "+peds.length+" pedidos…");
   for(const p of peds){ try{ await DB.update(p.id,{cadete:nuevo}); }catch(e){} }
   toast("Listo ✓"); render();
+}
+/* ===== LISTADOS: una pantalla, período rápido + calendario, 3 solapas en lista ===== */
+let LST_TAB="envios", LST_DESDE="", LST_HASTA="", LST_RANGO="hoy";
+function lstRango(){
+  const hoy=new Date(); hoy.setHours(0,0,0,0);
+  if(LST_RANGO==="rango" && (LST_DESDE||LST_HASTA)){
+    const d=LST_DESDE?new Date(LST_DESDE+"T00:00:00").getTime():0;
+    const h=LST_HASTA?new Date(LST_HASTA+"T23:59:59").getTime():Date.now()+864e5;
+    return {ini:d, fin:h};
+  }
+  if(LST_RANGO==="ayer"){ const a=hoy.getTime()-864e5; return {ini:a, fin:hoy.getTime()}; }
+  if(LST_RANGO==="semana"){ const dow=(new Date().getDay()+6)%7; const lun=hoy.getTime()-dow*864e5; return {ini:lun, fin:Date.now()+864e5}; }
+  if(LST_RANGO==="mes"){ const m=new Date(); const p=new Date(m.getFullYear(),m.getMonth(),1).getTime(); return {ini:p, fin:Date.now()+864e5}; }
+  if(LST_RANGO==="todo"){ return {ini:0, fin:Date.now()+864e5}; }
+  return {ini:hoy.getTime(), fin:Date.now()+864e5};   // hoy
+}
+function setLstRango(r){ LST_RANGO=r; if(r!=="rango"){ LST_DESDE=""; LST_HASTA=""; } vistaListados(); }
+function vistaListados(){
+  const {ini,fin}=lstRango();
+  const rBtn=(k,l)=>`<button class="${LST_RANGO===k?'on':''}" onclick="setLstRango('${k}')">${l}</button>`;
+  const tBtn=(k,l)=>`<button class="${LST_TAB===k?'on':''}" onclick="LST_TAB='${k}';vistaListados()">${l}</button>`;
+  const inp="padding:7px 9px;border:1px solid var(--border);border-radius:9px;font:inherit;background:var(--bg);font-size:13px";
+  app().innerHTML=`
+    ${segOp('listados')}
+    <div class="title">Listados</div>
+    <div class="subtitle">Todo lo del día en una lista. Elegí el período y la solapa.</div>
+    <div class="card" style="margin-bottom:12px">
+      <div class="seg" style="flex-wrap:wrap">${rBtn('hoy','Hoy')}${rBtn('ayer','Ayer')}${rBtn('semana','Esta semana')}${rBtn('mes','Este mes')}${rBtn('todo','Todo')}</div>
+      <div class="row" style="gap:8px;margin-top:10px;align-items:center;flex-wrap:wrap">
+        <span class="muted" style="font-size:12px">o entre fechas:</span>
+        <input type="date" value="${LST_DESDE}" onchange="LST_DESDE=this.value;LST_RANGO='rango';vistaListados()" style="${inp}">
+        <span class="muted">→</span>
+        <input type="date" value="${LST_HASTA}" onchange="LST_HASTA=this.value;LST_RANGO='rango';vistaListados()" style="${inp}">
+      </div>
+    </div>
+    <div class="seg" style="margin-bottom:12px">${tBtn('envios','🚚 Envíos')}${tBtn('caja','💵 Cobros y pagos')}${tBtn('stock','📦 Salió de stock')}</div>
+    <div id="lstBody">${lstContenido(ini,fin)}</div>`;
+}
+function lstContenido(ini,fin){
+  if(LST_TAB==="envios") return lstEnvios(ini,fin);
+  if(LST_TAB==="caja") return lstCaja(ini,fin);
+  return lstStock(ini,fin);
+}
+function lstFechaTit(){
+  const {ini,fin}=lstRango();
+  if(LST_RANGO==="hoy") return "hoy";
+  if(LST_RANGO==="ayer") return "ayer";
+  if(LST_RANGO==="rango") return (LST_DESDE||"…")+" al "+(LST_HASTA||"…");
+  return {semana:"esta semana",mes:"este mes",todo:"todo"}[LST_RANGO]||"";
+}
+function despachadoEnRango(p,ini,fin){
+  if(["pendiente","anulado"].includes(p.estado)) return false;
+  const ev=(p.eventos||[]).filter(e=>["preparado","asignado","en_reparto","despachado","en_camino","entregado"].includes(e.estado));
+  const t=ev.length?Math.min(...ev.map(e=>e.ts||0)):0;
+  return t>=ini && t<fin;
+}
+function lstEnvios(ini,fin){
+  const arr=soloPedidos().filter(p=>despachadoEnRango(p,ini,fin)).sort((a,b)=>(b.creado||0)-(a.creado||0));
+  if(!arr.length) return `<div class="card"><div class="muted" style="text-align:center;padding:20px">No hay envíos despachados ${lstFechaTit()}.</div></div>`;
+  const uds=arr.reduce((s,p)=>{ try{ return s+itemsPedido(p).reduce((x,i)=>x+i.cant,0); }catch(e){ return s; } },0);
+  const tot=arr.reduce((s,p)=>s+costoEnvio(p),0);
+  return `<div class="card">
+    <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:6px">
+      <span class="label" style="margin:0">${arr.length} envíos · ${uds} u · ${fmtAr(tot)}</span>
+      <button class="btn sm ghost" onclick="imprimirListado('envios')">${icon('printer')} Imprimir</button>
+    </div>
+    <div style="overflow-x:auto"><table class="tbl2" style="min-width:520px">
+      ${arr.map(p=>{ const quien=p.metodo==="correo"?"Correo":(p.cadete||"—");
+        return `<tr onclick="toggleExp('${p.id}')" style="cursor:pointer">
+          <td><b>${esc(p.cliente||'—')}</b><div class="muted" style="font-size:11px">N° ${esc(numOrden(p))}</div></td>
+          <td class="muted" style="font-size:12px">${esc(nombreEmp(p.empresa).split(" ")[0])}</td>
+          <td style="font-size:12px">${esc(anilloDe(p).label)} · ${esc(quien)}</td>
+          <td style="text-align:right;font-weight:700">${fmtAr(costoEnvio(p))}</td></tr>`; }).join("")}
+    </table></div>
+  </div>`;
+}
+function lstCaja(ini,fin){
+  const movs=cajaMovs().filter(m=>(m.ts||0)>=ini && (m.ts||0)<fin);
+  if(!movs.length) return `<div class="card"><div class="muted" style="text-align:center;padding:20px">No hay cobros ni pagos ${lstFechaTit()}.</div></div>`;
+  const cob=movs.filter(m=>m.clase==="cobro").reduce((s,m)=>s+(m.monto||0),0);
+  const pag=movs.filter(m=>m.clase!=="cobro").reduce((s,m)=>s+(m.monto||0),0);
+  return `<div class="card">
+    <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:6px">
+      <span class="label" style="margin:0">Cobrado ${fmtAr(cob)} · Pagado ${fmtAr(pag)}</span>
+      <button class="btn sm ghost" onclick="imprimirListado('caja')">${icon('printer')} Imprimir</button>
+    </div>
+    <div style="overflow-x:auto"><table class="tbl2" style="min-width:480px">
+      ${movs.map(m=>`<tr>
+        <td><b>${esc(m.quien||'—')}</b><div class="muted" style="font-size:11px">${esc(m.nro||'')} · ${m.ts?new Date(m.ts).toLocaleDateString("es-AR"):''}</div></td>
+        <td style="font-size:12px">${m.clase==="cobro"?'<span style="color:var(--green)">Cobro</span>':'<span style="color:#e5484d">Pago</span>'}</td>
+        <td style="text-align:right;font-weight:700;color:${m.clase==="cobro"?'var(--green)':'#e5484d'}">${m.clase==="cobro"?'+':'−'}${fmtAr(m.monto)}</td></tr>`).join("")}
+    </table></div>
+  </div>`;
+}
+function lstStock(ini,fin){
+  const desde=fDia(ini), hasta=fDia(fin-1);
+  const res=salidasResumen(desde,hasta);
+  if(!res.length) return `<div class="card"><div class="muted" style="text-align:center;padding:20px">No salió stock ${lstFechaTit()}.</div></div>`;
+  const uds=res.reduce((s,r)=>s+r.total,0);
+  return `<div class="card">
+    <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:6px">
+      <span class="label" style="margin:0">${res.length} productos · ${uds} unidades</span>
+      <button class="btn sm ghost" onclick="imprimirListado('stock')">${icon('printer')} Imprimir</button>
+    </div>
+    <table class="tbl2">
+      ${res.sort((a,b)=>b.total-a.total).map(r=>`<tr>
+        <td>${esc(r.prod)}</td>
+        <td style="text-align:right;font-weight:700">${r.total}</td></tr>`).join("")}
+    </table>
+  </div>`;
+}
+function imprimirListado(tab){
+  const {ini,fin}=lstRango();
+  const w=window.open("","_blank"); if(!w){ toast("Permití las ventanas emergentes"); return; }
+  let titulo, filas, cabeceras;
+  if(tab==="envios"){
+    const arr=soloPedidos().filter(p=>despachadoEnRango(p,ini,fin)).sort((a,b)=>(a.creado||0)-(b.creado||0));
+    titulo="Envíos despachados"; cabeceras=["#","Cliente","Orden","Marca","Reparto","Productos","Envío"];
+    filas=arr.map((p,i)=>{ let it=[]; try{it=itemsPedido(p);}catch(e){} const q=p.metodo==="correo"?"Correo":(p.cadete||"—");
+      return [i+1,p.cliente||"",numOrden(p),nombreEmp(p.empresa),anilloDe(p).label+" · "+q, it.map(x=>x.cant+"× "+x.prodNombre).join("<br>"), fmtAr(costoEnvio(p))]; });
+  } else if(tab==="caja"){
+    const movs=cajaMovs().filter(m=>(m.ts||0)>=ini && (m.ts||0)<fin).sort((a,b)=>(a.ts||0)-(b.ts||0));
+    titulo="Cobros y pagos"; cabeceras=["Fecha","Comprobante","Quién","Tipo","Monto"];
+    filas=movs.map(m=>[m.ts?new Date(m.ts).toLocaleDateString("es-AR"):"", m.nro||"", m.quien||"", m.clase==="cobro"?"Cobro":"Pago", (m.clase==="cobro"?"+":"−")+fmtAr(m.monto)]);
+  } else {
+    const res=salidasResumen(fDia(ini),fDia(fin-1)).sort((a,b)=>b.total-a.total);
+    titulo="Salió de stock"; cabeceras=["Producto","Unidades"];
+    filas=res.map(r=>[r.prod, r.total]);
+  }
+  const th=cabeceras.map(c=>`<th>${c}</th>`).join("");
+  const tr=filas.map(f=>`<tr>${f.map((c,i)=>`<td${i===f.length-1&&tab!=='stock'?' style="text-align:right"':''}>${c}</td>`).join("")}</tr>`).join("");
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${titulo}</title>
+  <style>@page{size:A4;margin:14mm}body{font-family:-apple-system,system-ui,Segoe UI,sans-serif;color:#111;font-size:12px}
+  h1{font-size:20px;margin:0 0 2px}.sub{color:#666;margin-bottom:12px}
+  table{width:100%;border-collapse:collapse}th{text-align:left;font-size:10px;text-transform:uppercase;color:#666;border-bottom:1.5px solid #111;padding:6px}
+  td{padding:6px;border-bottom:.5px solid #ddd;vertical-align:top}</style></head><body>
+  <h1>${titulo} · ${lstFechaTit()}</h1><div class="sub">Fullminet · ${new Date().toLocaleDateString("es-AR")}</div>
+  <table><thead><tr>${th}</tr></thead><tbody>${tr}</tbody></table>
+  <scr`+`ipt>window.onload=function(){setTimeout(function(){window.print()},400)}<\/scr`+`ipt></body></html>`);
+  w.document.close();
 }
 function vistaHoy(){
   const ped=soloPedidos().filter(p=>!p.cerradoEn);
@@ -2612,6 +2784,7 @@ function vistaPanel(){
 function vistaOperador(){
   try{ pintarSidebar(); }catch(e){}
   if(OPVIEW==="hoy") return vistaHoy();
+  if(OPVIEW==="listados") return vistaListados();
   if(OPVIEW==="panel") return vistaPanel();
   if(OPVIEW==="deposito") return vistaDeposito();
   if(OPVIEW==="ruta") return vistaRuta();
@@ -2685,7 +2858,7 @@ function vistaOperador(){
       <div class="row" style="margin-bottom:14px">
         <button class="btn ghost sm" onclick="imprimirLote()">Etiquetas de envío</button>
         <button class="btn ghost sm" onclick="pickeoPend()">Etiquetas de pickeo</button>
-        <button class="btn ghost sm" onclick="etiquetasML()">🏷️ Etiquetas ML</button>
+        <button class="btn ghost sm" onclick="bajarEtiquetasDelDia()">🏷️ Bajar etiquetas del día (10×15)</button>
         <button class="btn ghost sm" onclick="hojaEnvios()">Hoja de envíos</button>
         <button class="btn ghost sm" onclick="imprimirComprobante()">Comprobante cadete</button>
       </div>
@@ -2919,13 +3092,13 @@ function cardOperador(p){
   if(["pendiente","preparado","asignado","en_reparto"].includes(p.estado)) acts+=selectReparto(p);
   acts+=`<button class="btn sm green" onclick="waCliente('${p.id}')">WhatsApp</button>`;
   acts+=`<button class="btn sm ghost" onclick="imprimirPickeo('${p.id}')">${icon('printer')} Pickeo</button>`;
-  if(p.etiquetaPdf) acts+=`<button class="btn sm ghost" style="color:var(--accent)" onclick="imprimirEtiquetaML('${p.id}')">🏷️ Etiqueta 10×15</button>`;
+  if(p.etiquetaPdf) acts+=`<button class="btn sm ghost" style="color:var(--accent)" onclick="bajarEtiqueta1015('${p.id}')">🏷️ Etiqueta 10×15 PDF</button>`;
   let mas="";
   mas+=`<button class="btn sm ghost" onclick="cambiarRuta('${p.id}')">Editar</button>`;
   mas+=`<button class="btn sm ghost" style="color:${p.stockBajado?'var(--amber)':'var(--accent)'}" onclick="descontarAhora('${p.id}')">↻ ${p.stockBajado?'Volver a descontar':'Descontar del stock'}</button>`;
   if(p.stockBajado) mas+=`<button class="btn sm ghost" onclick="deshacerDescuento('${p.id}')">↺ Deshacer descuento</button>`;
   mas+=`<button class="btn sm ghost" onclick="imprimirEtiqueta('${p.id}')">${icon('printer')} Etiqueta</button>`;
-  if(p.etiquetaPdf) mas+=`<button class="btn sm ghost" onclick="imprimirEtiquetaML('${p.id}',true)">📄 Bajar etiqueta PDF</button>`;
+  if(p.etiquetaPdf) mas+=`<button class="btn sm ghost" onclick="imprimirEtiquetaML('${p.id}')">🖨️ Imprimir etiqueta</button>`;
   if(p.etiquetaPdf) mas+=`<button class="btn sm ghost" onclick='abrirEtiquetaPDF(PEDIDOS.find(x=>x.id==="${p.id}"))'>📄 PDF ML completo</button>`;
   if(p.tnId && !p.tnAvisado && ["preparado","asignado","en_reparto","despachado","en_camino","entregado","confirmado"].includes(p.estado))
     mas+=`<button class="btn sm ghost" onclick="marcarEnviadoTN('${p.id}')">🛍️ Avisar a Tienda Nube</button>`;
@@ -3177,6 +3350,63 @@ async function adjuntarEtiquetaImport(i,file){
   const dat=await archivoEtiqueta(file); if(!dat) return;
   Object.assign(IMP_FILAS[i],dat); toast("Etiqueta del correo adjuntada 📎"); mostrarPreviewImport();
 }
+/* Abre el editor para enseñarle al sistema qué descuenta un pack o producto no reconocido */
+let ENS_CTX=null;
+function enseniarPack(fi,pi){
+  const f=IMP_FILAS[fi]; if(!f||!f.prods||!f.prods[pi]) return;
+  const x=f.prods[pi];
+  const yaComps=packComponentes(x.nombre,x.sku);
+  ENS_CTX={fi,pi, sku:x.sku||"", nombre:x.nomML||x.nombre,
+    comps: yaComps ? yaComps.map(c=>({nombre:c.nombre,cant:c.cant})) : [{nombre:"", cant:1}] };
+  dibujarEnseniar();
+}
+function dibujarEnseniar(){
+  const c=ENS_CTX; if(!c) return;
+  let ov=document.getElementById("ensOverlay");
+  if(!ov){ ov=document.createElement("div"); ov.id="ensOverlay"; document.body.appendChild(ov); }
+  ov.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px";
+  const opciones=PRODUCTOS.map(p=>`<option value="${esc(p.nombre)}"></option>`).join("");
+  ov.innerHTML=`<div style="background:var(--bg-2);border-radius:16px;max-width:520px;width:100%;max-height:88vh;overflow:auto;padding:20px;box-shadow:0 20px 60px rgba(0,0,0,.5)">
+    <div style="font-size:18px;font-weight:800;margin-bottom:4px">¿Qué descuenta esto del stock?</div>
+    <div class="muted" style="font-size:13.5px;margin-bottom:6px"><b>${esc(c.nombre)}</b>${c.sku?` · SKU ${esc(c.sku)}`:''}</div>
+    <div class="hint" style="margin-bottom:14px">Elegí el/los productos reales y cuántos descuenta cada venta. Se guarda y no te vuelve a preguntar.</div>
+    <datalist id="ensProds">${opciones}</datalist>
+    <div id="ensRows">${c.comps.map((cm,i)=>filaEns(cm,i)).join("")}</div>
+    <button class="btn sm ghost" style="margin-top:6px" onclick="ensAddRow()">+ Agregar otro producto</button>
+    <div class="row" style="gap:8px;margin-top:18px">
+      <button class="btn block green" onclick="guardarEnseniado()">Guardar</button>
+      <button class="btn block ghost" onclick="cerrarEnseniar()">Cancelar</button>
+    </div>
+  </div>`;
+}
+function filaEns(cm,i){
+  const inp="padding:9px 11px;border:1px solid var(--border);border-radius:9px;font:inherit;background:var(--bg)";
+  return `<div class="row" style="gap:8px;margin-bottom:8px;align-items:center" data-row="${i}">
+    <input list="ensProds" value="${esc(cm.nombre||'')}" placeholder="Buscá el producto…" style="${inp};flex:1" oninput="ENS_CTX.comps[${i}].nombre=this.value">
+    <input type="number" min="1" value="${cm.cant||1}" style="${inp};width:64px;text-align:center" oninput="ENS_CTX.comps[${i}].cant=parseInt(this.value)||1">
+    <button class="btn sm ghost" style="padding:6px 10px" onclick="ensDelRow(${i})">✕</button>
+  </div>`;
+}
+function ensAddRow(){ ENS_CTX.comps.push({nombre:"",cant:1}); dibujarEnseniar(); }
+function ensDelRow(i){ ENS_CTX.comps.splice(i,1); if(!ENS_CTX.comps.length) ENS_CTX.comps.push({nombre:"",cant:1}); dibujarEnseniar(); }
+function cerrarEnseniar(){ const ov=document.getElementById("ensOverlay"); if(ov) ov.remove(); ENS_CTX=null; }
+async function guardarEnseniado(){
+  const c=ENS_CTX; if(!c) return;
+  const comps=c.comps.filter(x=>x.nombre&&x.nombre.trim()).map(x=>({prod:x.nombre.trim(), cant:parseInt(x.cant)||1}));
+  if(!comps.length){ toast("Elegí al menos un producto"); return; }
+  // valido que existan en el catálogo (o los agrego)
+  for(const cm of comps){ if(!PRODUCTOS.some(p=>p.nombre===cm.prod)){
+    if(confirm('"'+cm.prod+'" no está en el catálogo. ¿Lo agrego como producto nuevo?')){
+      PRODUCTOS.push({nombre:cm.prod,barcode:""}); const r=PEDIDOS.find(p=>p.tipo==="prodsExtra");
+      const lista=((r&&r.map)||(r&&r.lista)||[]).concat([{nombre:cm.prod,barcode:""}]);
+      if(r) await DB.update(r.id,{lista}); else await DB.create({tipo:"prodsExtra",lista});
+    } else return;
+  } }
+  await aprenderPack(c.sku, c.nombre, comps);
+  cerrarEnseniar();
+  toast("Aprendido ✓ No te vuelvo a preguntar por esto");
+  mostrarPreviewImport();
+}
 function mostrarPreviewImport(){
   if(!$("#impPrev")) formImportar();          // si la vista se re-dibujó durante la búsqueda, la reconstruyo
   const cont=$("#impPrev"); if(!cont){ toast("Traje "+IMP_FILAS.length+" pedidos. Entrá a Importar pedidos para verlos."); return; }
@@ -3206,7 +3436,16 @@ function mostrarPreviewImport(){
             ${elegis?`<span class="chip" style="margin-left:6px;background:#fff3cd;color:#7a5a00">elegís vos</span>`:''}
             ${f.etiquetaPdf?`<span class="chip" style="margin-left:6px;background:#d9f2e5;color:#0f6b40;font-weight:700">📎 ETIQUETA CORREO</span>`:''}
             <div class="muted" style="font-size:14px">${esc(f.dir)} — ${esc(f.ciudad)}, ${esc(f.provincia)}</div>
-            <div class="muted" style="font-size:14px">${esc(f.items||'—')}</div>
+            ${(()=>{ if(!f.prods||!f.prods.length) return `<div class="muted" style="font-size:14px">${esc(f.items||'—')}</div>`;
+              return f.prods.map((x,pi)=>{
+                const comps=packComponentes(x.nombre,x.sku);
+                const esPackND=(!comps && pareceePack(x.nomML||x.nombre));   // parece pack pero no lo conozco
+                if(comps){ return `<div style="font-size:13.5px;margin-top:3px">📦 <b>${esc(x.nomML||x.nombre)}</b> <span class="muted">→ descuenta:</span> ${comps.map(c=>c.cant*(x.cant||1)+"× "+esc(c.nombre)).join(", ")}
+                  <button class="btn sm ghost" style="padding:2px 8px;font-size:11px" onclick="enseniarPack(${i},${pi})">editar</button></div>`; }
+                if(esPackND){ return `<div style="font-size:13.5px;margin-top:3px;padding:6px 8px;background:#fff3cd;border-radius:7px">⚠ <b>${esc(x.nomML||x.nombre)}</b> parece un pack. <button class="btn sm" style="padding:3px 10px;font-size:12px" onclick="enseniarPack(${i},${pi})">Enseñar qué descuenta</button></div>`; }
+                if(!x.reconocido){ return `<div style="font-size:13.5px;margin-top:3px;padding:6px 8px;background:#ffe8e8;border-radius:7px">⚠ <b>${esc(x.nomML||x.nombre)}</b> no está en el catálogo. <button class="btn sm" style="padding:3px 10px;font-size:12px" onclick="enseniarPack(${i},${pi})">Vincular producto</button></div>`; }
+                return `<div class="muted" style="font-size:13.5px;margin-top:2px">${x.cant}× ${esc(x.nombre)}</div>`;
+              }).join(""); })()}
             <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px">
               <select onchange="setImpMetodo(${i},this.value)" style="${selStyle}">
                 <option value="cadete" ${impVal(f)==='cadete'?'selected':''}>🚴 Cadete (Cardinal)</option>
@@ -3891,18 +4130,20 @@ function parseEtiquetaML(texto){
     if(iCP>=0) for(let j=iCP+1;j<Math.min(iCP+4,L.length);j++){ const c=L[j];
       if(c && !/^(RESIDENCIAL|COMERCIAL|Direccion|Barrio|Referencia|Destinatario|Domicilio|Central|Ciudad)/i.test(c) && !/^\d{4}$/.test(c)){ loc=c; break; } } }
   const nota=(T.match(/Referencia:\s*(?:Referencia:\s*)?([^\n]+)/i)||[])[1]||"";
-  // Productos por SKU (una sola vez cada uno)
+  // Productos: capturo SKU (código de barras largo O código corto tipo LADY/Q10/CITPOT), nombre de ML y cantidad
   const prods=[], items=[], vistos=new Set();
-  const rx=/SKU:\s*(\d{6,})/g; let m;
+  const rx=/SKU:\s*([A-Za-z0-9]{2,})/g; let m;
   while((m=rx.exec(texto))!==null){
-    const sku=m[1]; if(vistos.has(sku)) continue; vistos.add(sku);
+    const sku=m[1].trim(); if(vistos.has(sku)) continue; vistos.add(sku);
     const cant=parseInt((texto.slice(m.index).match(/Cantidad:\s*(\d+)/)||[])[1],10)||1;
-    const prod=PRODUCTOS.find(p=>p.barcode===sku);
-    let nom=""; const antes=texto.slice(0,m.index).split(/\n/).reverse();
+    // nombre que muestra ML (la línea de producto, arriba del SKU)
+    let nomML=""; const antes=texto.slice(0,m.index).split(/\n/).reverse();
     for(const c of antes){ const t=c.trim();
-      if(t.length>12 && !/^(Pack ID|Venta|Cantidad|Sabor|Tipo de envase|SKU|Identifi)/i.test(t)){ nom=t.replace(/^[A-Z0-9]+\s+/,"").replace(/^\d{6,}\s*/,""); break; } }
-    if(prod) prods.push({nombre:prod.nombre,cant});
-    items.push(cant+"x "+(prod?prod.nombre:(nom||("SKU "+sku))));
+      if(t.length>10 && !/^(Pack ID|Venta|Cantidad|Sabor|Tipo de envase|SKU|Identifi|Despacha)/i.test(t)){ nomML=t.replace(/^[A-Z0-9]{2,}\s+/,"").replace(/^\d{6,}\s*/,""); break; } }
+    // ¿lo conozco? 1) diccionario de packs  2) código de barras exacto  3) nombre
+    const prodCat = PRODUCTOS.find(pp=>pp.barcode===sku) || (nomML?mejorProducto(nomML):null);
+    prods.push({ nombre: prodCat?prodCat.nombre:(nomML||("SKU "+sku)), cant, sku, nomML, reconocido: !!prodCat });
+    items.push(cant+"x "+(prodCat?prodCat.nombre:(nomML||("SKU "+sku))));
   }
   if(!cli && !venta && !prods.length) return null;
   return { ref: venta?("#"+venta):(envio?("#"+envio):""), cliente:cli.trim(), tel:"", dir:dir.trim(),
@@ -3930,9 +4171,35 @@ async function leerEtiquetaML(file){
       const seen=new Set(); filas=filas.filter(f=>{ if(seen.has(f.ref))return false; seen.add(f.ref); return true; });
     }
     if(!filas.length){ toast("No reconocí la etiqueta. ¿Es el PDF de Mercado Libre?"); return; }
-    // guardo el PDF para poder reimprimir la etiqueta desde el pedido
-    let adj=null;
-    try{ if(file.size<=700*1024){ adj={etiquetaPdf:await leerArchivoBase64(file), etiquetaPdfNombre:file.name||"etiqueta-ml.pdf"}; } }catch(e){}
+    // guardo el PDF completo (para 1 etiqueta) y también parto por página (para varias)
+    let adj=null, paginasPorVenta={};
+    try{
+      const b64=await leerArchivoBase64(file);
+      if(file.size<=700*1024) adj={etiquetaPdf:b64, etiquetaPdfNombre:file.name||"etiqueta-ml.pdf"};
+      // parto el PDF: una página de envío por cada venta (las hojas de picking se descartan)
+      if(filas.length>1 && typeof PDFLib!=="undefined"){
+        const { PDFDocument }=PDFLib;
+        const bin=atob(b64); const raw=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) raw[i]=bin.charCodeAt(i);
+        const src=await PDFDocument.load(raw);
+        // busco en qué página está cada N° de venta leyendo el texto por página
+        pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+        const pdfjs=await pdfjsLib.getDocument({data:raw.slice(0)}).promise;
+        for(let pn=1; pn<=pdfjs.numPages; pn++){
+          const tc=await (await pdfjs.getPage(pn)).getTextContent();
+          const txt=tc.items.map(it=>it.str).join(" ").replace(/\s/g,"");
+          for(const f of filas){ const num=(f.ref||"").replace(/\D/g,"");
+            if(num && txt.includes(num) && /CP|Destinatario|Domicilio/i.test(tc.items.map(it=>it.str).join(" ")) && !paginasPorVenta[f.ref]){
+              // esta es la hoja de envío de esa venta (tiene el QR)
+              const nuevo=await PDFDocument.create();
+              const [pg]=await nuevo.copyPages(src,[pn-1]); nuevo.addPage(pg);
+              const bytes=await nuevo.save();
+              let s=""; const u=new Uint8Array(bytes); for(let i=0;i<u.length;i++) s+=String.fromCharCode(u[i]);
+              paginasPorVenta[f.ref]=btoa(s);
+            }
+          }
+        }
+      }
+    }catch(e){ console.warn("split etiquetas:", e); }
     // busco la venta en TODOS los pedidos (incluso archivados/entregados), no solo los activos
     const todos=PEDIDOS.filter(p=>p.tipo===undefined || p.cliente!==undefined);
     const refsActivas=new Set(soloPedidos().map(p=>p.ref).filter(Boolean));
@@ -3942,7 +4209,8 @@ async function leerEtiquetaML(file){
     }).filter(Boolean);
     IMP_FILAS=filas.filter(f=>!f.ref||!refsActivas.has(f.ref)).map(f=>{
       f.empresa=IMP_EMPRESA; f.canal="ml_flex";
-      if(adj && filas.length===1){ f.etiquetaPdf=adj.etiquetaPdf; f.etiquetaPdfNombre=adj.etiquetaPdfNombre; }
+      if(paginasPorVenta[f.ref]){ f.etiquetaPdf=paginasPorVenta[f.ref]; f.etiquetaPdfNombre="etiqueta-"+(f.ref||"").replace(/\D/g,"")+".pdf"; }
+      else if(adj && filas.length===1){ f.etiquetaPdf=adj.etiquetaPdf; f.etiquetaPdfNombre=adj.etiquetaPdfNombre; }
       const rr=sugerirRuta(f.provincia,f.ciudad); f.origen=(rr&&rr.origen)||"bsas";
       if(llegaCadete(f)){ f.metodo="cadete"; f.correo=""; } else { f.metodo="correo"; f.correo="Correo Argentino"; }
       return f; });
@@ -4034,7 +4302,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v22jul-hoylista";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v23-listados";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
@@ -4216,8 +4484,15 @@ function procesarScan(code){
 let PREP_ID=null, PREP_SCAN={}, PREP_REAL={};   // PREP_SCAN: progreso por renglón del pedido · PREP_REAL: producto real escaneado (para descontar lo que salió)
 function itemsPedido(p){
   const out=[];
-  // Si la orden tiene productos elegidos del catálogo, esos mandan (exactos, sin adivinar)
-  if(p.prods && p.prods.length) return p.prods.filter(x=>x&&x.nombre&&x.cant>0).map(x=>({nombre:x.nombre, cant:+x.cant||1, prodNombre:x.nombre}));
+  // Si la orden tiene productos elegidos del catálogo, esos mandan — pero expandimos packs conocidos
+  if(p.prods && p.prods.length){
+    p.prods.filter(x=>x&&x.nombre&&x.cant>0).forEach(x=>{
+      const comps=packComponentes(x.nombre, x.sku);
+      if(comps){ comps.forEach(c=>out.push({nombre:c.nombre+"  (pack)", cant:(+x.cant||1)*c.cant, prodNombre:c.nombre, kit:true})); }
+      else out.push({nombre:x.nombre, cant:+x.cant||1, prodNombre:x.nombre});
+    });
+    return out;
+  }
   parseItems(p.items||"").forEach(it=>{
     const ke=kitEspecial(it.nombre);
     if(ke){ ke.comps.forEach(cmp=>{ const prod=mejorProducto(cmp.n);
@@ -4628,6 +4903,83 @@ function descargarEtiquetaPDF(){
   doc.save("etiqueta-"+String(e.cliente).replace(/[^a-zA-Z0-9]+/g,"-").toLowerCase()+".pdf");
 }
 /* Imprime SOLO la etiqueta de envío de ML (página 1, recortada) en 10x15 cm */
+/* Toma el PDF original de ML (página 1 = etiqueta de envío) y lo mete en una hoja 10x15
+   SIN rasterizar: el QR y el código de barras quedan vectoriales y nítidos. */
+async function etiqueta10x15Bytes(pedidos){
+  if(typeof PDFLib==="undefined") throw new Error("pdf-lib no cargó");
+  const { PDFDocument }=PDFLib;
+  const MM=2.83465; const W=100*MM, H=150*MM;      // 10x15 cm en puntos
+  const salida=await PDFDocument.create();
+  for(const p of pedidos){
+    if(!p.etiquetaPdf) continue;
+    const bin=atob(p.etiquetaPdf); const arr=new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
+    let src; try{ src=await PDFDocument.load(arr); }catch(e){ continue; }
+    // detecto el recuadro real de la etiqueta rasterizando en baja resolución (solo para medir, no para imprimir)
+    let box=null;
+    try{ box=await recorteEtiqueta(arr); }catch(e){}
+    const [emb]=await salida.embedPdf(src, [0]);
+    const dims=emb.size ? emb.size() : {width:emb.width, height:emb.height};
+    const bx = box || {x:0,y:0,w:dims.width,h:dims.height};
+    const esc=Math.min(W/bx.w, H/bx.h);
+    const w=bx.w*esc, h=bx.h*esc;
+    const page=salida.addPage([W,H]);
+    // dibujo la página desplazada para que el recorte quede centrado
+    page.drawPage(emb, { x:(W-w)/2 - bx.x*esc, y:(H-h)/2 - bx.y*esc, xScale:esc, yScale:esc });
+    // clip: recorto la hoja al área de la etiqueta (evita que se vean etiquetas vecinas)
+    page.setCropBox((W-w)/2, (H-h)/2, w, h);
+  }
+  if(salida.getPageCount()===0) throw new Error("sin etiquetas");
+  return await salida.save();
+}
+/* Mide (en puntos PDF) el rectángulo con contenido de la página 1, para recortar el blanco */
+async function recorteEtiqueta(arr){
+  pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+  const pdf=await pdfjsLib.getDocument({data:arr.slice(0)}).promise;
+  const page=await pdf.getPage(1);
+  const vpUnit=page.getViewport({scale:1});           // tamaño real en puntos
+  const S=2; const vp=page.getViewport({scale:S});
+  const cv=document.createElement("canvas"); cv.width=vp.width; cv.height=vp.height;
+  const cx=cv.getContext("2d"); cx.fillStyle="#fff"; cx.fillRect(0,0,cv.width,cv.height);
+  await page.render({canvasContext:cx, viewport:vp}).promise;
+  const d=cx.getImageData(0,0,cv.width,cv.height).data;
+  let x0=cv.width,y0=cv.height,x1=0,y1=0;
+  for(let y=0;y<cv.height;y+=2){ for(let x=0;x<cv.width;x+=2){ const i=(y*cv.width+x)*4;
+    if(d[i]<235||d[i+1]<235||d[i+2]<235){ if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y; } } }
+  if(x1<=x0||y1<=y0) return null;
+  const m=6*S; x0=Math.max(0,x0-m); y0=Math.max(0,y0-m); x1=Math.min(cv.width,x1+m); y1=Math.min(cv.height,y1+m);
+  // paso de píxeles (canvas, origen arriba) a puntos PDF (origen abajo)
+  const H=vpUnit.height;
+  return { x:x0/S, y:H-(y1/S), w:(x1-x0)/S, h:(y1-y0)/S };
+}
+function descargarBytesPDF(bytes, nombre){
+  const blob=new Blob([bytes], {type:"application/pdf"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a"); a.href=url; a.download=nombre;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 4000);
+}
+async function bajarEtiqueta1015(id){
+  const p=PEDIDOS.find(x=>x.id===id)||await DB.get(id);
+  if(!p||!p.etiquetaPdf){ toast("Este pedido no tiene etiqueta de ML guardada"); return; }
+  toast("Preparando etiqueta 10×15…");
+  try{
+    const bytes=await etiqueta10x15Bytes([p]);
+    descargarBytesPDF(bytes, "etiqueta-"+(p.cliente||"ml").replace(/[^a-zA-Z0-9]+/g,"-").toLowerCase()+".pdf");
+    toast("Listo ✓ QR intacto, lista para WhatsApp");
+  }catch(e){ console.error(e); toast("No pude preparar la etiqueta"); }
+}
+/* Varias etiquetas juntas en un solo PDF 10x15 (una por hoja) */
+async function bajarEtiquetasDelDia(){
+  const arr=soloPedidos().filter(p=>p.etiquetaPdf && ["pendiente","preparado","asignado","en_reparto"].includes(p.estado));
+  if(!arr.length){ toast("No hay etiquetas de ML pendientes"); return; }
+  toast("Armando "+arr.length+" etiquetas…");
+  try{
+    const bytes=await etiqueta10x15Bytes(arr);
+    descargarBytesPDF(bytes, "etiquetas-"+new Date().toLocaleDateString("es-AR").replace(/\//g,"-")+".pdf");
+    toast(arr.length+" etiquetas en un PDF ✓");
+  }catch(e){ console.error(e); toast("No pude armar las etiquetas"); }
+}
 async function imprimirEtiquetaML(id, soloPDF){
   const p=PEDIDOS.find(x=>x.id===id)||await DB.get(id);
   if(!p||!p.etiquetaPdf){ toast("Este pedido no tiene etiqueta de ML guardada"); return; }
