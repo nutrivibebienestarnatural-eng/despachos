@@ -2291,7 +2291,10 @@ function render(){
   const pid=q.get("p");
   if(pid){ ROL="cliente"; return vistaCliente(pid); }   // cliente: SIN login
 
-  if(DB.modo==="firebase"){
+  // el link ?rol=operador fuerza el modo preparar (para el celu de la empleada), aunque haya login
+  const rolLink=q.get("rol");
+  if(rolLink==="operador"||rolLink==="empleado"){ ROL="operador"; EMPLEADO=true; OPVIEW="prepararhoy"; }
+  else if(DB.modo==="firebase"){
     if(!AUTH_READY) return vistaCargando();
     if(!USER)       return vistaLogin();
     if(!USERROL)    return vistaSinAcceso();
@@ -2299,7 +2302,6 @@ function render(){
   } else {
     if(!ROL){ const r=q.get("rol");                       // modo demo: rol por link
       if(r==="cadete"){ ROL="cadete"; const c=q.get("cadete"); if(c) CADETE_ACTIVO=decodeURIComponent(c); }
-      else if(r==="operador"||r==="empleado"){ ROL="operador"; }
       else if(r==="admin"){ ROL="admin"; }
     }
     if(!ROL) return vistaInicio();
@@ -4315,7 +4317,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v24-linkemp";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v24-linkfix";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
@@ -5295,9 +5297,16 @@ function vistaSimulacion(){
   initDB();
   const q=new URLSearchParams(location.search);
   const esCliente=!!q.get("p");
+  const qInit=new URLSearchParams(location.search);
+  const rolInit=qInit.get("rol");
   if(esCliente){
     if(DB.modo!=="firebase") DB.subscribe(d=>{ PEDIDOS=d; cargarProdsExtra(); render(); });
     render();                                  // vistaCliente lee su pedido con DB.get
+  } else if((rolInit==="operador"||rolInit==="empleado") && DB.modo==="firebase"){
+    // empleada por link: sin login, cargo los pedidos directo para que pueda preparar
+    AUTH_READY=true;
+    if(!SUBSCRITO){ SUBSCRITO=true; DB.subscribe(d=>{ PEDIDOS=d; cargarProdsExtra(); render(); }); }
+    render();
   } else if(DB.modo==="firebase"){
     firebase.auth().onAuthStateChanged(async (user)=>{
       USER=user; USERROL=null; CADETE_ACTIVO=null;
