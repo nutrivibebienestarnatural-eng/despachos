@@ -2312,7 +2312,7 @@ function render(){
     if(PREVIEW==="cadete"){ if(!CADETE_ACTIVO){ vistaElegirCadete(); } else { vistaCadete(); } return bannerPreview("Reparto"); }
     return vistaOperador();
   }
-  if(ROL==="operador"){ OPVIEW="preparacion"; return vistaPreparacion(); }
+  if(ROL==="operador"){ OPVIEW="prepararhoy"; return vistaPrepararHoy(); }
   if(ROL==="cadete")   return CADETE_ACTIVO?vistaCadete():vistaElegirCadete();
 }
 function verComo(r){ PREVIEW=r; CADETE_ACTIVO=null; render(); }
@@ -2613,6 +2613,13 @@ function vistaHoy(){
       </div>
     </div>
 
+    ${(()=>{ const ca=pedidosConAviso(); if(!ca.length) return "";
+      return `<div class="card" style="margin-bottom:16px;border:1px solid #e5484d;background:#fff5f5">
+        <b style="color:#c62828">⚠ ${ca.length} ${ca.length===1?'pedido preparado con avisos':'pedidos preparados con avisos'}</b>
+        ${ca.slice(0,4).map(p=>`<div style="font-size:13px;color:#7a1f1f;margin-top:6px;padding-top:6px;border-top:.5px solid #f0caca">
+          <b>${esc(p.cliente||'—')}</b> · N° ${esc(numOrden(p))}<br>
+          ${p.prepAlertas.map(t=>"• "+esc(t)).join("<br>")}</div>`).join("")}
+      </div>`; })()}
     <span class="label" style="display:block;margin-bottom:8px">Acciones rápidas</span>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
       <button class="btn ghost" onclick="formImportar()">↓ Importar etiquetas</button>
@@ -4307,7 +4314,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v24-prep-escaner";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v24-flujo";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
@@ -4547,7 +4554,9 @@ function vistaPrepararHoy(){
           </div>
         </div>`; }).join("")}`;
 }
-function abrirPreparar(id){ PREP_ID=id; PREP_SCAN={}; PREP_REAL={}; OPVIEW='preparar'; render(); }
+function abrirPreparar(id){ PREP_ID=id; PREP_SCAN={}; PREP_REAL={}; PREP_ALERTAS=[]; OPVIEW='preparar'; render(); }
+/* muestra en Listados/Hoy los pedidos que se cerraron con inconsistencias autorizadas */
+function pedidosConAviso(){ return soloPedidos().filter(p=>p.prepConAviso && p.prepAlertas && p.prepAlertas.length); }
 function pantallaPreparar(id){
   const p=PEDIDOS.find(x=>x.id===id);
   if(!p){ PREP_ID=null; OPVIEW='prepararhoy'; return vistaOperador(); }
@@ -4573,9 +4582,49 @@ function pantallaPreparar(id){
             <button class="btn sm ghost" onclick="tocarItem('${encodeURIComponent(it.prodNombre)}',1)">+</button>
           </span></div>`; }).join("")}
     </div>
-    ${completo?`<div style="margin-top:14px;padding:12px;border-radius:12px;background:#d9f2e5;color:#0f6b40;font-weight:800;text-align:center;font-size:16px">🎉 ¡COMPLETO! Listo para imprimir la etiqueta</div>`:''}
-    <button class="btn block ${completo?'green':''}" style="margin-top:10px;${completo?'':'opacity:.55'}" onclick="${completo?`marcarListo('${id}')`:`avisarFaltantes('${id}')`}">${completo?'✓ Pedido listo':'Faltan productos'}</button>
-    <button class="btn ghost block" style="margin-top:10px" onclick="imprimirEtiqueta('${id}')">${icon('printer')} Imprimir etiqueta</button>`;
+    ${PREP_ALERTAS.length?`<div style="margin-top:14px;padding:12px 14px;border-radius:12px;background:#ffe8e8;border:1px solid #e5484d">
+      <b style="color:#c62828;font-size:14px">⚠ ${PREP_ALERTAS.length} ${PREP_ALERTAS.length===1?'aviso':'avisos'} en esta preparación</b>
+      ${PREP_ALERTAS.slice(-4).map(a=>`<div style="font-size:13px;color:#7a1f1f;margin-top:4px">• ${esc(a.texto)}</div>`).join("")}
+      <div style="font-size:12px;color:#7a1f1f;margin-top:6px;opacity:.8">Para cerrar con avisos hace falta la clave del encargado.</div>
+    </div>`:''}
+    ${!p.stockBajado ? `
+      ${completo?`<div style="margin-top:14px;padding:12px;border-radius:12px;background:#d9f2e5;color:#0f6b40;font-weight:800;text-align:center;font-size:15px">✅ Todo verificado — confirmá para imprimir</div>`:''}
+      <button class="btn block ${completo?'green':''}" style="margin-top:10px;${completo?'':'opacity:.55'}" onclick="${completo?`intentarCerrar('${id}')`:`avisarFaltantes('${id}')`}">${completo?'✓ Confirmar preparado':'Faltan productos'}</button>
+    ` : `
+      <div style="margin-top:14px;padding:14px;border-radius:12px;background:#d9f2e5;color:#0f6b40;font-weight:800;text-align:center;font-size:16px">🎉 ¡Preparado! Ahora imprimí la etiqueta</div>
+      <button class="btn block green big" style="margin-top:10px" onclick="${p.etiquetaPdf?`bajarEtiqueta1015('${id}')`:`imprimirEtiqueta('${id}')`}">🏷️ Imprimir etiqueta</button>
+      <button class="btn block" style="margin-top:8px" onclick="siguientePedidoPrep()">Siguiente pedido →</button>
+    `}`;
+}
+/* Va al próximo pedido pendiente de preparar, o vuelve a la lista si no queda ninguno */
+function siguientePedidoPrep(){
+  const quedan=soloPedidos().filter(p=>p.estado==="pendiente" && p.metodo && !p.cerradoEn).sort((a,b)=>(a.creado||0)-(b.creado||0));
+  if(quedan.length){ abrirPreparar(quedan[0].id); }
+  else { PREP_ID=null; toast("¡No quedan pedidos para preparar! 🎉"); OPVIEW="prepararhoy"; vistaOperador(); }
+}
+/* clave para autorizar cierres con inconsistencias (cambiala por la que quieras) */
+const CLAVE_AUTORIZA="1234";
+function intentarCerrar(id){
+  const p=PEDIDOS.find(x=>x.id===id); if(!p) return;
+  const its=itemsPedido(p);
+  const problemas=[...PREP_ALERTAS.map(a=>a.texto)];
+  its.forEach(i=>{ const real=PREP_REAL[i.prodNombre]||PREP_SCAN[i.prodNombre]||0;
+    if(real!==i.cant) problemas.push("Cantidad distinta en "+i.nombre.replace(/\s*\((kit|pack)\)$/,"")+": preparó "+real+", pedía "+i.cant); });
+  if(!problemas.length){ marcarListo(id); return; }   // todo limpio → cierra directo
+  const lista=problemas.map(t=>"• "+t).join("\n");
+  if(ROL==="operador" || EMPLEADO){
+    // la empleada necesita la clave del dueño para cerrar con avisos
+    alert("⚠ ESTE PEDIDO TIENE INCONSISTENCIAS:\n\n"+lista+"\n\nPara cerrarlo hace falta la autorización del encargado.");
+    const clave=prompt("Ingresá la clave de autorización para cerrar este pedido con avisos:");
+    if(clave===null) return;
+    if(clave!==CLAVE_AUTORIZA){ toast("🚫 Clave incorrecta — el pedido no se cerró"); return; }
+    p._prepAlertas=problemas.slice(); marcarListo(id, problemas);
+  } else {
+    // el dueño (admin) autoriza con un simple confirm
+    if(confirm("⚠ ESTE PEDIDO TIENE INCONSISTENCIAS:\n\n"+lista+"\n\n¿Autorizás cerrarlo igual?\n(Aceptar = lo cierro y queda registrado · Cancelar = reviso)")){
+      p._prepAlertas=problemas.slice(); marcarListo(id, problemas);
+    }
+  }
 }
 function avisarFaltantes(id){
   const p=PEDIDOS.find(x=>x.id===id); if(!p) return;
@@ -4584,43 +4633,45 @@ function avisarFaltantes(id){
   alert("FALTA ESCANEAR:\n\n"+faltan.map(x=>"• "+x.f+" x "+x.n).join("\n"));
 }
 function escanearParaPedido(){ abrirEscaner(scanPrep,{continuo:true,hint:"Escaneá los productos del pedido"}); }
+let PREP_ALERTAS=[];   // inconsistencias detectadas en esta preparación
+function alertaPrep(tipo, texto){
+  PREP_ALERTAS.push({tipo, texto, ts:Date.now()});
+  try{ navigator.vibrate && navigator.vibrate([300,100,300]); }catch(e){}
+}
 function scanPrep(code){
   const p=PEDIDOS.find(x=>x.id===PREP_ID); if(!p) return;
   const prod=prodPorBarcode(code);
-  if(!prod){ toast("⚠ Código "+String(code||"").replace(/\D/g,"")+" no está en el catálogo"); return; }
+  if(!prod){ const c=String(code||"").replace(/\D/g,""); alertaPrep("desconocido","Código "+c+" no está en el catálogo"); toast("⚠ Código "+c+" no está en el catálogo"); pantallaPreparar(PREP_ID); return; }
   let it=itemsPedido(p).find(i=>i.prodNombre===prod.nombre);
-  if(!it){ // el frasco escaneado puede ser la otra presentación del mismo producto (caps/comprimidos)
-    it=itemsPedido(p).find(i=>baseProducto(i.prodNombre)===baseProducto(prod.nombre));
-  }
-  if(!it){ toast(prod.nombre.split(" ")[0]+" no es de este pedido"); return; }
+  if(!it){ it=itemsPedido(p).find(i=>baseProducto(i.prodNombre)===baseProducto(prod.nombre)); }
+  if(!it){ alertaPrep("nova","⚠ "+prod.nombre+" NO va en este pedido"); toast("🚫 "+prod.nombre.split(" ").slice(0,3).join(" ")+" NO es de este pedido"); pantallaPreparar(PREP_ID); return; }
   const cur=PREP_SCAN[it.prodNombre]||0;
-  if(cur>=it.cant){ toast(it.nombre.split(" ").slice(0,2).join(" ")+" ya completo"); return; }
+  if(cur>=it.cant){ alertaPrep("demas","De más: "+prod.nombre+" (el pedido pedía "+it.cant+")"); toast("🚫 Ya escaneaste los "+it.cant+" de "+it.nombre.split(" ").slice(0,2).join(" ")); pantallaPreparar(PREP_ID); return; }
   PREP_SCAN[it.prodNombre]=cur+1;
-  PREP_REAL[prod.nombre]=(PREP_REAL[prod.nombre]||0)+1;   // lo que REALMENTE se escaneó (para descontar lo que salió, no lo nominal)
+  PREP_REAL[prod.nombre]=(PREP_REAL[prod.nombre]||0)+1;
   const its=itemsPedido(p);
   const completo=its.length && its.every(i=>(PREP_SCAN[i.prodNombre]||0)>=i.cant);
-  if(completo){
-    try{ navigator.vibrate && navigator.vibrate([180,80,180]); }catch(e){}
+  if(completo){ try{ navigator.vibrate && navigator.vibrate([180,80,180]); }catch(e){}
     toast("🎉 ¡PEDIDO COMPLETO! Tocá el botón verde e imprimí la etiqueta");
-  } else {
-    toast("✓ "+prod.nombre.split(" ").slice(0,2).join(" ")+" "+(cur+1)+"/"+it.cant);
-  }
+  } else { toast("✓ "+prod.nombre.split(" ").slice(0,2).join(" ")+" "+(cur+1)+"/"+it.cant); }
   pantallaPreparar(PREP_ID);
 }
 function tocarItem(enc,delta){ const n=decodeURIComponent(enc);
   PREP_SCAN[n]=Math.max(0,(PREP_SCAN[n]||0)+delta); pantallaPreparar(PREP_ID); }
-async function marcarListo(id){
+async function marcarListo(id, inconsistencias){
   const p=PEDIDOS.find(x=>x.id===id)||await DB.get(id);
   if(p && descuentoActivo()){
     const nominal=itemsPedido(p).reduce((s,i)=>s+i.cant,0);
     const real=Object.values(PREP_REAL).reduce((s,n)=>s+n,0);
-    // si escaneaste todo el pedido, descuenta lo REAL escaneado; si no, cae al nominal (red de seguridad)
     const scanMap = (real>0 && real>=nominal) ? PREP_REAL : null;
-    await descontarStockPedido(id, scanMap);   // deja stockBajado=true, así avanzar() no vuelve a descontar
+    await descontarStockPedido(id, scanMap);
   }
-  await avanzar(id,'preparado');   // marca preparado (el descuento ya se hizo arriba si estaba activo)
-  PREP_ID=null; PREP_SCAN={}; PREP_REAL={};
-  toast("Pedido listo ✅");
+  const nota=(inconsistencias&&inconsistencias.length)?("Preparado CON avisos autorizados: "+inconsistencias.join(" | ")):"Preparado (verificado con escáner)";
+  // guardo las inconsistencias en el pedido para poder revisarlas después
+  if(inconsistencias&&inconsistencias.length){ try{ await DB.update(id,{prepAlertas:inconsistencias, prepConAviso:true}); }catch(e){} }
+  await avanzar(id,'preparado',nota);
+  PREP_ID=null; PREP_SCAN={}; PREP_REAL={}; PREP_ALERTAS=[];
+  toast(inconsistencias&&inconsistencias.length?"Pedido cerrado con avisos ⚠":"Pedido listo ✅");
   OPVIEW='prepararhoy'; vistaOperador();
 }
 
