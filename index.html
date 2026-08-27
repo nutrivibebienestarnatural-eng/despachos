@@ -3859,6 +3859,37 @@ function cargarProdsExtra(){
 }
 /* Agregar un producto nuevo al catálogo (se guarda en la nube) */
 function prodsExtra(){ const r=PEDIDOS.find(p=>p.tipo==="prodsExtra"); return (r&&r.lista)||[]; }
+/* ===== DATOS DE PRUEBA: 3 compras realistas para probar el circuito ===== */
+async function crearComprasPrueba(){
+  if(!confirm("Voy a crear 3 pedidos de PRUEBA:\n\n• Tienda Nube (CABA, cadete) — 2 productos\n• ML Flex (CABA, cadete) — 1 producto\n• ML Correo (interior) — 1 pack x3\n\nSon para que pruebes preparar/escanear/despachar. Después los borrás con un botón. ¿Dale?")) return;
+  const base={tipo:"pedido", estado:"pendiente", creado:Date.now(), esPrueba:true, tel:"1122334455",
+    eventos:[{estado:"pendiente",ts:Date.now(),nota:"Pedido de PRUEBA"}]};
+  // 1) Tienda Nube - CABA - 2 productos simples
+  await DB.create(Object.assign({},base,{ empresa:"labs", canal:"tiendanube", ref:"#PRUEBA-TN",
+    cliente:"🧪 PRUEBA Tienda Nube", dir:"Av. Corrientes 1234", ciudad:"Balvanera", provincia:"CABA", cp:"1043",
+    metodo:"cadete", origen:"bsas", items:"1x Creatina (90 capsulas) · 2x Omega 3 (60 capsulas)",
+    prods:[{nombre:"Creatina (90 capsulas)",cant:1},{nombre:"Omega 3 (60 capsulas)",cant:2}] }));
+  // 2) ML Flex - CABA - 1 producto (cadete)
+  await DB.create(Object.assign({},base,{ empresa:"nutrivibe", canal:"ml_flex", ref:"#PRUEBA-FLEX",
+    cliente:"🧪 PRUEBA ML Flex", dir:"Thames 575", ciudad:"Villa Crespo", provincia:"CABA", cp:"1414",
+    metodo:"cadete", origen:"bsas", items:"1x Ashwagandha 100% Pura - Estrés, Insomnio, Fatiga (60 Capsulas)",
+    prods:[{nombre:"Ashwagandha 100% Pura - Estrés, Insomnio, Fatiga (60 Capsulas)",cant:1,sku:"ASHW"}] }));
+  // 3) ML Correo - interior - 1 pack x3
+  await DB.create(Object.assign({},base,{ empresa:"nutrivibe", canal:"ml_flex", ref:"#PRUEBA-CORREO",
+    cliente:"🧪 PRUEBA ML Correo", dir:"Via del Sol 1152", ciudad:"San Luis", provincia:"San Luis", cp:"5700",
+    metodo:"correo", correo:"Correo Argentino", origen:"bsas", items:"1x Pack X 3 - Multimagnesio 5 En 1",
+    prods:[{nombre:"Pack X 3 - Multimagnesio 5 En 1",cant:1,sku:"0714604143758",nomML:"Pack X 3 - Multimagnesio 5 En 1"}] }));
+  toast("✓ 3 compras de prueba creadas");
+  OPVIEW="hoy"; vistaOperador();
+}
+async function borrarComprasPrueba(){
+  const pruebas=PEDIDOS.filter(p=>p.esPrueba);
+  if(!pruebas.length){ toast("No hay compras de prueba"); return; }
+  if(!confirm("Borrar las "+pruebas.length+" compras de prueba? (no afecta tus pedidos reales)")) return;
+  for(const p of pruebas){ try{ await DB.delete(p.id); }catch(e){} }
+  toast("✓ Compras de prueba borradas");
+  OPVIEW="hoy"; vistaOperador();
+}
 async function agregarProductoNuevo(){
   const nombre=prompt("Nombre del producto nuevo (tal cual lo querés ver):");
   if(!nombre||!nombre.trim()) return;
@@ -3949,6 +3980,8 @@ function vistaStock(){
       <button class="btn ghost" onclick="guardarMinimos()">Guardar mínimos</button>
       <button class="btn ghost" onclick="imprimirStock()">${icon('printer')} Imprimir A4</button>
       <button class="btn ghost" onclick="agregarProductoNuevo()">➕ Agregar producto</button>
+      <button class="btn ghost" onclick="crearComprasPrueba()">🧪 Crear 3 compras de prueba</button>
+      ${PEDIDOS.some(p=>p.esPrueba)?`<button class="btn ghost" style="color:var(--red)" onclick="borrarComprasPrueba()">🗑️ Borrar compras de prueba</button>`:''}
       <button class="btn ghost" onclick="repararProdsPedidos()">🔧 Reparar productos de pedidos</button>
       <button class="btn ghost" onclick="imprimirReposicion()">${icon('printer')} Planilla de reposición</button>
       <button class="btn ghost" onclick="pantallaSalidas()">${icon('box')} Lo que salió</button>
@@ -4317,7 +4350,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v24-linkfix";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v24-prueba";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
