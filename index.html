@@ -603,12 +603,23 @@ function pickingConsolidado(){
 function prodPorBarcode(code){
   let c=String(code||"").replace(/\D/g,"");      // solo dígitos (saca espacios, enters, prefijos de lector)
   if(!c) return null;
+  // 1) códigos de frasco que aprendimos (el código físico real, distinto al SKU de ML)
+  const bm=barcodeMap()[c] || barcodeMap()[c.replace(/^0+/,"")];
+  if(bm){ const pr=PRODUCTOS.find(p=>p.nombre===bm); if(pr) return pr; }
   const norm=s=>String(s||"").replace(/\D/g,"").replace(/^0+/,"");
   const nc=norm(c);
   return PRODUCTOS.find(p=>p.barcode===c)
       || PRODUCTOS.find(p=>p.barcode && norm(p.barcode)===nc)
       || PRODUCTOS.find(p=>{ const nb=norm(p.barcode); return nb.length>=11 && nc.length>=11 && (nb.endsWith(nc)||nc.endsWith(nb)); })
       || null; }
+/* Códigos de frasco aprendidos: código físico real → nombre del producto (se guarda en la nube) */
+function barcodeRecord(){ return PEDIDOS.find(p=>p.tipo==="barcodes"); }
+function barcodeMap(){ const r=barcodeRecord(); return (r&&r.map)||{}; }
+async function aprenderBarcode(code, nombreProd){
+  const c=String(code||"").replace(/\D/g,""); if(!c||!nombreProd) return;
+  const r=barcodeRecord(); const map=Object.assign({},(r&&r.map)||{}); map[c]=nombreProd;
+  if(r) await DB.update(r.id,{map}); else await DB.create({tipo:"barcodes",map});
+}
 /* Nombre "base" de un producto: sin presentación (caps/comprimidos), sin tildes — para emparejar variantes */
 function baseProducto(n){
   return String(n||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"")
@@ -4350,7 +4361,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v24-prueba";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v24-barcode";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
@@ -4607,11 +4618,17 @@ function pantallaPreparar(id){
     <div class="title" style="margin-top:14px">Preparar pedido</div>
     <div class="subtitle">${esc(p.cliente||'—')} · N° ${esc(numOrden(p))} · ${esc(empresaObj(p.empresa).nombre)}</div>
     <button class="btn block" style="margin:14px 0" onclick="escanearParaPedido()">${cam}Escanear producto con la cámara</button>
+    ${(()=>{ const faltan=items.filter(i=>(PREP_SCAN[i.prodNombre]||0)<i.cant);
+      if(completo) return `<div style="padding:14px;border-radius:12px;background:#d9f2e5;color:#0f6b40;font-weight:800;text-align:center;font-size:16px;margin-bottom:12px">✅ ¡Todo escaneado! Ya podés confirmar</div>`;
+      return `<div style="padding:14px 16px;border-radius:12px;background:#fff3cd;border:1px solid #e0b000;margin-bottom:12px">
+        <b style="color:#7a5a00;font-size:15px">Todavía falta escanear:</b>
+        ${faltan.map(i=>{ const f=i.cant-(PREP_SCAN[i.prodNombre]||0); return `<div style="font-size:14px;color:#5a4400;margin-top:5px">• <b>${f}</b> de ${i.cant} · ${esc(i.prodNombre)}</div>`; }).join("")}
+      </div>`; })()}
     <div class="card">
       <div class="row" style="justify-content:space-between"><span class="label" style="margin:0">Productos del pedido</span><b style="color:${completo?'var(--green)':'inherit'}">${hechas}/${total}</b></div>
       ${items.map(it=>{ const done=Math.min(PREP_SCAN[it.prodNombre]||0,it.cant), ok=done>=it.cant;
         return `<div class="row" style="justify-content:space-between;align-items:center;padding:12px 0;border-top:.5px solid var(--border);gap:10px">
-          <span class="row" style="gap:8px;min-width:0;color:${ok?'var(--green)':'inherit'}">${ok?icon('check'):icon('box')}<span style="min-width:0;font-size:14px">${esc(it.nombre)}</span></span>
+          <span class="row" style="gap:8px;min-width:0;color:${ok?'var(--green)':'inherit'}">${ok?icon('check'):icon('box')}<span style="min-width:0;font-size:14px;${ok?'text-decoration:line-through;opacity:.6':''}">${esc(it.nombre)}</span></span>
           <span class="row" style="gap:6px;align-items:center;flex:0 0 auto">
             <button class="btn sm ghost" onclick="tocarItem('${encodeURIComponent(it.prodNombre)}',-1)">−</button>
             <b style="min-width:42px;text-align:center;color:${ok?'var(--green)':'var(--text-2)'}">${done}/${it.cant}</b>
@@ -4674,10 +4691,28 @@ function alertaPrep(tipo, texto){
   PREP_ALERTAS.push({tipo, texto, ts:Date.now()});
   try{ navigator.vibrate && navigator.vibrate([300,100,300]); }catch(e){}
 }
-function scanPrep(code){
+async function scanPrep(code){
   const p=PEDIDOS.find(x=>x.id===PREP_ID); if(!p) return;
   const prod=prodPorBarcode(code);
-  if(!prod){ const c=String(code||"").replace(/\D/g,""); alertaPrep("desconocido","Código "+c+" no está en el catálogo"); toast("⚠ Código "+c+" no está en el catálogo"); pantallaPreparar(PREP_ID); return; }
+  if(!prod){ const c=String(code||"").replace(/\D/g,"");
+    // código desconocido: ofrezco vincularlo a un producto que FALTA en este pedido
+    const faltantes=itemsPedido(p).filter(i=>(PREP_SCAN[i.prodNombre]||0)<i.cant);
+    if(faltantes.length===1){
+      // si falta uno solo, pregunto si este frasco es ese
+      if(confirm("Código "+c+" no está registrado.\n\n¿Este frasco es \""+faltantes[0].prodNombre+"\"?\n\n(Aceptar = lo aprendo y lo cuento · Cancelar = no)")){
+        await aprenderBarcode(c, faltantes[0].prodNombre);
+        toast("Aprendido ✓ La próxima lo reconoce solo");
+        return scanPrep(code);   // reintento: ahora sí lo encuentra
+      }
+      pantallaPreparar(PREP_ID); return;
+    } else if(faltantes.length>1){
+      const lista=faltantes.map((f,i)=>(i+1)+") "+f.prodNombre).join("\n");
+      const r=prompt("Código "+c+" no está registrado.\n\n¿Cuál de estos es este frasco? Poné el número:\n\n"+lista);
+      const idx=parseInt(r,10)-1;
+      if(idx>=0 && faltantes[idx]){ await aprenderBarcode(c, faltantes[idx].prodNombre); toast("Aprendido ✓"); return scanPrep(code); }
+      pantallaPreparar(PREP_ID); return;
+    }
+    alertaPrep("desconocido","Código "+c+" no está en el catálogo"); toast("⚠ Código "+c+" no está en el catálogo"); pantallaPreparar(PREP_ID); return; }
   let it=itemsPedido(p).find(i=>i.prodNombre===prod.nombre);
   if(!it){ it=itemsPedido(p).find(i=>baseProducto(i.prodNombre)===baseProducto(prod.nombre)); }
   if(!it){ alertaPrep("nova","⚠ "+prod.nombre+" NO va en este pedido"); toast("🚫 "+prod.nombre.split(" ").slice(0,3).join(" ")+" NO es de este pedido"); pantallaPreparar(PREP_ID); return; }
