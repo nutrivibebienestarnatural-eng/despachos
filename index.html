@@ -2503,59 +2503,81 @@ function despachadoEnRango(p,ini,fin){
   const t=ev.length?Math.min(...ev.map(e=>e.ts||0)):0;
   return t>=ini && t<fin;
 }
+function chipEstado(p){
+  const e=p.estado, m={pendiente:['#e0b000','Pendiente'],preparado:['var(--accent)','Preparado'],asignado:['#7f77dd','Asignado'],en_reparto:['#7f77dd','En reparto'],despachado:['#7f77dd','Despachado'],en_camino:['#7f77dd','En camino'],entregado:['var(--green)','Entregado'],confirmado:['var(--green)','Confirmado']};
+  const c=m[e]||['var(--text-3)',e];
+  return `<span style="display:inline-block;font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:20px;background:${c[0]}22;color:${c[0]}">${c[1]}</span>`;
+}
 function lstEnvios(ini,fin){
   const arr=soloPedidos().filter(p=>despachadoEnRango(p,ini,fin)).sort((a,b)=>(b.creado||0)-(a.creado||0));
-  if(!arr.length) return `<div class="card"><div class="muted" style="text-align:center;padding:20px">No hay envíos despachados ${lstFechaTit()}.</div></div>`;
+  if(!arr.length) return `<div class="card"><div class="muted" style="text-align:center;padding:28px">No hay envíos despachados ${lstFechaTit()}.</div></div>`;
   const uds=arr.reduce((s,p)=>{ try{ return s+itemsPedido(p).reduce((x,i)=>x+i.cant,0); }catch(e){ return s; } },0);
   const tot=arr.reduce((s,p)=>s+costoEnvio(p),0);
-  return `<div class="card">
-    <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:6px">
-      <span class="label" style="margin:0">${arr.length} envíos · ${uds} u · ${fmtAr(tot)}</span>
-      <button class="btn sm ghost" onclick="imprimirListado('envios')">${icon('printer')} Imprimir</button>
+  const th=(t,r)=>`<th style="text-align:${r?'right':'left'};font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-3);font-weight:600;padding:0 4px 8px">${t}</th>`;
+  return `<div class="card" style="padding:0;overflow:hidden">
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--border)">
+      <div style="background:var(--bg-2);padding:14px 16px"><div style="font-size:22px;font-weight:800">${arr.length}</div><div class="muted" style="font-size:11px">Envíos</div></div>
+      <div style="background:var(--bg-2);padding:14px 16px"><div style="font-size:22px;font-weight:800">${uds}</div><div class="muted" style="font-size:11px">Unidades</div></div>
+      <div style="background:var(--bg-2);padding:14px 16px"><div style="font-size:22px;font-weight:800;color:var(--green)">${fmtAr(tot)}</div><div class="muted" style="font-size:11px">A cobrar</div></div>
     </div>
-    <div style="overflow-x:auto"><table class="tbl2" style="min-width:520px">
-      ${arr.map(p=>{ const quien=p.metodo==="correo"?"Correo":(p.cadete||"—");
-        return `<tr onclick="toggleExp('${p.id}')" style="cursor:pointer">
-          <td><b>${esc(p.cliente||'—')}</b><div class="muted" style="font-size:11px">N° ${esc(numOrden(p))}</div></td>
-          <td class="muted" style="font-size:12px">${esc(nombreEmp(p.empresa).split(" ")[0])}</td>
-          <td style="font-size:12px">${esc(anilloDe(p).label)} · ${esc(quien)}</td>
-          <td style="text-align:right;font-weight:700">${fmtAr(costoEnvio(p))}</td></tr>`; }).join("")}
+    <div style="padding:14px 16px 4px;display:flex;justify-content:flex-end"><button class="btn sm ghost" onclick="imprimirListado('envios')">${icon('printer')} Imprimir listado</button></div>
+    <div style="overflow-x:auto;padding:0 6px 6px"><table style="width:100%;border-collapse:collapse;min-width:560px">
+      <thead><tr>${th('Cliente')}${th('Marca')}${th('Zona / Reparto')}${th('Estado')}${th('Envío',1)}</tr></thead>
+      <tbody>${arr.map(p=>{ const quien=p.metodo==="correo"?"Correo":(p.cadete||"—");
+        return `<tr onclick="toggleExp('${p.id}')" style="cursor:pointer;border-top:.5px solid var(--border)">
+          <td style="padding:11px 4px"><b style="font-size:13.5px">${esc(p.cliente||'—')}</b><div class="muted" style="font-size:11px">N° ${esc(numOrden(p))}</div></td>
+          <td style="padding:11px 4px;font-size:12.5px;color:var(--text-2)">${esc(nombreEmp(p.empresa).split(" ")[0])}</td>
+          <td style="padding:11px 4px;font-size:12.5px">${esc(anilloDe(p).label)}<div class="muted" style="font-size:11px">${esc(quien)}</div></td>
+          <td style="padding:11px 4px">${chipEstado(p)}</td>
+          <td style="padding:11px 4px;text-align:right;font-weight:700;font-size:13.5px">${fmtAr(costoEnvio(p))}</td></tr>`; }).join("")}</tbody>
+      <tfoot><tr style="border-top:1.5px solid var(--text-3)"><td colspan="4" style="padding:12px 4px;font-weight:700">Total ${lstFechaTit()}</td><td style="padding:12px 4px;text-align:right;font-weight:800;font-size:15px;color:var(--green)">${fmtAr(tot)}</td></tr></tfoot>
     </table></div>
   </div>`;
 }
 function lstCaja(ini,fin){
   const movs=cajaMovs().filter(m=>(m.ts||0)>=ini && (m.ts||0)<fin);
-  if(!movs.length) return `<div class="card"><div class="muted" style="text-align:center;padding:20px">No hay cobros ni pagos ${lstFechaTit()}.</div></div>`;
+  if(!movs.length) return `<div class="card"><div class="muted" style="text-align:center;padding:28px">No hay cobros ni pagos ${lstFechaTit()}.</div></div>`;
   const cob=movs.filter(m=>m.clase==="cobro").reduce((s,m)=>s+(m.monto||0),0);
   const pag=movs.filter(m=>m.clase!=="cobro").reduce((s,m)=>s+(m.monto||0),0);
-  return `<div class="card">
-    <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:6px">
-      <span class="label" style="margin:0">Cobrado ${fmtAr(cob)} · Pagado ${fmtAr(pag)}</span>
-      <button class="btn sm ghost" onclick="imprimirListado('caja')">${icon('printer')} Imprimir</button>
+  const th=(t,r)=>`<th style="text-align:${r?'right':'left'};font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-3);font-weight:600;padding:0 4px 8px">${t}</th>`;
+  return `<div class="card" style="padding:0;overflow:hidden">
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--border)">
+      <div style="background:var(--bg-2);padding:14px 16px"><div style="font-size:22px;font-weight:800;color:var(--green)">${fmtAr(cob)}</div><div class="muted" style="font-size:11px">Cobrado</div></div>
+      <div style="background:var(--bg-2);padding:14px 16px"><div style="font-size:22px;font-weight:800;color:#e5484d">${fmtAr(pag)}</div><div class="muted" style="font-size:11px">Pagado</div></div>
+      <div style="background:var(--bg-2);padding:14px 16px"><div style="font-size:22px;font-weight:800">${fmtAr(cob-pag)}</div><div class="muted" style="font-size:11px">Neto</div></div>
     </div>
-    <div style="overflow-x:auto"><table class="tbl2" style="min-width:480px">
-      ${movs.map(m=>`<tr>
-        <td><b>${esc(m.quien||'—')}</b><div class="muted" style="font-size:11px">${esc(m.nro||'')} · ${m.ts?new Date(m.ts).toLocaleDateString("es-AR"):''}</div></td>
-        <td style="font-size:12px">${m.clase==="cobro"?'<span style="color:var(--green)">Cobro</span>':'<span style="color:#e5484d">Pago</span>'}</td>
-        <td style="text-align:right;font-weight:700;color:${m.clase==="cobro"?'var(--green)':'#e5484d'}">${m.clase==="cobro"?'+':'−'}${fmtAr(m.monto)}</td></tr>`).join("")}
+    <div style="padding:14px 16px 4px;display:flex;justify-content:flex-end"><button class="btn sm ghost" onclick="imprimirListado('caja')">${icon('printer')} Imprimir listado</button></div>
+    <div style="overflow-x:auto;padding:0 6px 6px"><table style="width:100%;border-collapse:collapse;min-width:420px">
+      <thead><tr>${th('Quién / Comprobante')}${th('Tipo')}${th('Monto',1)}</tr></thead>
+      <tbody>${movs.map(m=>`<tr style="border-top:.5px solid var(--border)">
+        <td style="padding:11px 4px"><b style="font-size:13.5px">${esc(m.quien||'—')}</b><div class="muted" style="font-size:11px">${esc(m.nro||'')} · ${m.ts?new Date(m.ts).toLocaleDateString("es-AR"):''}</div></td>
+        <td style="padding:11px 4px">${m.clase==="cobro"?'<span style="display:inline-block;font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:20px;background:#1d9e7522;color:var(--green)">Cobro</span>':'<span style="display:inline-block;font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:20px;background:#e5484d22;color:#e5484d">Pago</span>'}</td>
+        <td style="padding:11px 4px;text-align:right;font-weight:700;font-size:13.5px;color:${m.clase==="cobro"?'var(--green)':'#e5484d'}">${m.clase==="cobro"?'+':'−'}${fmtAr(m.monto)}</td></tr>`).join("")}</tbody>
     </table></div>
   </div>`;
 }
 function lstStock(ini,fin){
   const desde=fDia(ini), hasta=fDia(fin-1);
   const res=salidasResumen(desde,hasta);
-  if(!res.length) return `<div class="card"><div class="muted" style="text-align:center;padding:20px">No salió stock ${lstFechaTit()}.</div></div>`;
+  if(!res.length) return `<div class="card"><div class="muted" style="text-align:center;padding:28px">No salió stock ${lstFechaTit()}.</div></div>`;
   const uds=res.reduce((s,r)=>s+r.total,0);
-  return `<div class="card">
-    <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:6px">
-      <span class="label" style="margin:0">${res.length} productos · ${uds} unidades</span>
-      <button class="btn sm ghost" onclick="imprimirListado('stock')">${icon('printer')} Imprimir</button>
+  const orden=res.sort((a,b)=>b.total-a.total);
+  const max=Math.max(1,...orden.map(r=>r.total));
+  return `<div class="card" style="padding:0;overflow:hidden">
+    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:1px;background:var(--border)">
+      <div style="background:var(--bg-2);padding:14px 16px"><div style="font-size:22px;font-weight:800">${res.length}</div><div class="muted" style="font-size:11px">Productos distintos</div></div>
+      <div style="background:var(--bg-2);padding:14px 16px"><div style="font-size:22px;font-weight:800">${uds}</div><div class="muted" style="font-size:11px">Unidades que salieron</div></div>
     </div>
-    <table class="tbl2">
-      ${res.sort((a,b)=>b.total-a.total).map(r=>`<tr>
-        <td>${esc(r.prod)}</td>
-        <td style="text-align:right;font-weight:700">${r.total}</td></tr>`).join("")}
-    </table>
+    <div style="padding:14px 16px 4px;display:flex;justify-content:flex-end"><button class="btn sm ghost" onclick="imprimirListado('stock')">${icon('printer')} Imprimir listado</button></div>
+    <div style="padding:0 16px 14px">
+      ${orden.map(r=>`<div style="padding:10px 0;border-top:.5px solid var(--border)">
+        <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:5px">
+          <span style="font-size:13.5px;min-width:0">${esc(r.prod)}</span>
+          <b style="font-size:14px;flex:0 0 auto;margin-left:10px">${r.total}</b>
+        </div>
+        <div style="height:5px;background:var(--bg-3);border-radius:3px;overflow:hidden"><div style="height:100%;width:${Math.round(r.total/max*100)}%;background:var(--accent);border-radius:3px"></div></div>
+      </div>`).join("")}
+    </div>
   </div>`;
 }
 function imprimirListado(tab){
@@ -4362,7 +4384,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v24-cuenta";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v24-listados2";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
