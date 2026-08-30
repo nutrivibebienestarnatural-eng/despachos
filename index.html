@@ -3422,7 +3422,7 @@ function dibujarEnseniar(){
   ov.innerHTML=`<div style="background:var(--bg-2);border-radius:16px;max-width:520px;width:100%;max-height:88vh;overflow:auto;padding:20px;box-shadow:0 20px 60px rgba(0,0,0,.5)">
     <div style="font-size:18px;font-weight:800;margin-bottom:4px">¿Qué descuenta esto del stock?</div>
     <div class="muted" style="font-size:13.5px;margin-bottom:6px"><b>${esc(c.nombre)}</b>${c.sku?` · SKU ${esc(c.sku)}`:''}</div>
-    <div class="hint" style="margin-bottom:14px">Elegí el/los productos reales y cuántos descuenta cada venta. Se guarda y no te vuelve a preguntar.</div>
+    <div class="hint" style="margin-bottom:14px">Poné cuántos frascos trae <b>UN</b> kit. Si el cliente compra 2 kits, el sistema multiplica solo (2 × lo que pongas). Se guarda y no vuelve a preguntar.</div>
     <datalist id="ensProds">${opciones}</datalist>
     <div id="ensRows">${c.comps.map((cm,i)=>filaEns(cm,i)).join("")}</div>
     <button class="btn sm ghost" style="margin-top:6px" onclick="ensAddRow()">+ Agregar otro producto</button>
@@ -3434,10 +3434,13 @@ function dibujarEnseniar(){
 }
 function filaEns(cm,i){
   const inp="padding:9px 11px;border:1px solid var(--border);border-radius:9px;font:inherit;background:var(--bg)";
-  return `<div class="row" style="gap:8px;margin-bottom:8px;align-items:center" data-row="${i}">
-    <input list="ensProds" value="${esc(cm.nombre||'')}" placeholder="Buscá el producto…" style="${inp};flex:1" oninput="ENS_CTX.comps[${i}].nombre=this.value">
-    <input type="number" min="1" value="${cm.cant||1}" style="${inp};width:64px;text-align:center" oninput="ENS_CTX.comps[${i}].cant=parseInt(this.value)||1">
-    <button class="btn sm ghost" style="padding:6px 10px" onclick="ensDelRow(${i})">✕</button>
+  return `<div style="margin-bottom:10px" data-row="${i}">
+    <div class="row" style="gap:8px;align-items:center">
+      <input list="ensProds" value="${esc(cm.nombre||'')}" placeholder="Buscá el producto…" style="${inp};flex:1" oninput="ENS_CTX.comps[${i}].nombre=this.value">
+      <input type="number" inputmode="numeric" min="1" step="1" value="${cm.cant||1}" style="${inp};width:70px;text-align:center;font-weight:700" oninput="ENS_CTX.comps[${i}].cant=Math.max(1,parseInt(this.value.replace(/[^0-9]/g,''))||1);this.value=ENS_CTX.comps[${i}].cant">
+      <button class="btn sm ghost" style="padding:6px 10px" onclick="ensDelRow(${i})">✕</button>
+    </div>
+    <div class="muted" style="font-size:11px;margin-top:3px">cuántos frascos de este producto trae UN kit</div>
   </div>`;
 }
 function ensAddRow(){ ENS_CTX.comps.push({nombre:"",cant:1}); dibujarEnseniar(); }
@@ -3928,6 +3931,35 @@ async function borrarComprasPrueba(){
   toast("✓ Compras de prueba borradas");
   OPVIEW="hoy"; vistaOperador();
 }
+function verPacksAprendidos(){
+  const map=packsMap(); const keys=Object.keys(map);
+  const cont=keys.length? keys.map(k=>{ const d=map[k];
+    const comps=(d.comps||[]).map(c=>c.cant+"× "+esc(c.prod)).join(", ");
+    return `<div class="card" style="margin-bottom:8px">
+      <div class="row" style="justify-content:space-between;align-items:flex-start;gap:10px">
+        <div style="min-width:0">
+          <b style="font-size:14px">${esc(d.nombre||d.sku||k)}</b>
+          ${d.sku?`<div class="muted" style="font-size:11px">SKU ${esc(d.sku)}</div>`:''}
+          <div style="font-size:13px;color:var(--accent);margin-top:4px">📦 descuenta: ${comps||'(nada)'}</div>
+        </div>
+        <button class="btn sm ghost" style="color:var(--red);flex:0 0 auto" onclick="borrarPackAprendido('${encodeURIComponent(k)}')">Borrar</button>
+      </div>
+    </div>`; }).join("")
+    : `<div class="card"><div class="muted" style="text-align:center;padding:20px">Todavía no enseñaste ningún pack.</div></div>`;
+  app().innerHTML=`
+    ${segOp('stock')}
+    <button class="btn sm ghost" onclick="OPVIEW='stock';vistaOperador()">← Volver a Stock</button>
+    <div class="title" style="margin-top:14px">Packs aprendidos</div>
+    <div class="subtitle">Lo que el sistema aprendió a descontar por cada pack. Si alguno está mal, borralo y volvé a enseñarlo al importar.</div>
+    ${cont}`;
+}
+async function borrarPackAprendido(encKey){
+  const k=decodeURIComponent(encKey);
+  if(!confirm("¿Borrar este pack aprendido? La próxima vez que importes una venta con ese SKU te va a preguntar de nuevo qué descuenta.")) return;
+  await olvidarPack(k);
+  toast("Pack borrado ✓ Se va a re-preguntar al importar");
+  verPacksAprendidos();
+}
 async function agregarProductoNuevo(){
   const nombre=prompt("Nombre del producto nuevo (tal cual lo querés ver):");
   if(!nombre||!nombre.trim()) return;
@@ -4018,6 +4050,7 @@ function vistaStock(){
       <button class="btn ghost" onclick="guardarMinimos()">Guardar mínimos</button>
       <button class="btn ghost" onclick="imprimirStock()">${icon('printer')} Imprimir A4</button>
       <button class="btn ghost" onclick="agregarProductoNuevo()">➕ Agregar producto</button>
+      <button class="btn ghost" onclick="verPacksAprendidos()">📦 Ver / corregir packs aprendidos</button>
       <button class="btn ghost" onclick="crearComprasPrueba()">🧪 Crear 3 compras de prueba</button>
       ${PEDIDOS.some(p=>p.esPrueba)?`<button class="btn ghost" style="color:var(--red)" onclick="borrarComprasPrueba()">🗑️ Borrar compras de prueba</button>`:''}
       <button class="btn ghost" onclick="repararProdsPedidos()">🔧 Reparar productos de pedidos</button>
@@ -4396,7 +4429,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v24-sku";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v24-verpacks";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
