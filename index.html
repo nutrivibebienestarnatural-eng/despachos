@@ -2513,29 +2513,45 @@ function chipEstado(p){
   return `<span style="display:inline-block;font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:20px;background:${c[0]}22;color:${c[0]}">${c[1]}</span>`;
 }
 function lstEnvios(ini,fin){
-  const arr=soloPedidos().filter(p=>despachadoEnRango(p,ini,fin)).sort((a,b)=>(b.creado||0)-(a.creado||0));
-  if(!arr.length) return `<div class="card"><div class="muted" style="text-align:center;padding:28px">No hay envíos despachados ${lstFechaTit()}.</div></div>`;
+  const todos=soloPedidos().filter(p=>despachadoEnRango(p,ini,fin)).sort((a,b)=>(b.creado||0)-(a.creado||0));
+  if(!todos.length) return `<div class="card"><div class="muted" style="text-align:center;padding:28px">No hay envíos despachados ${lstFechaTit()}.</div></div>`;
+  const arr=todos.filter(p=>!p.esReenvio);           // ventas reales (se cobran)
+  const reenvios=todos.filter(p=>p.esReenvio);       // reenvíos (costo, no se cobran)
   const uds=arr.reduce((s,p)=>{ try{ return s+itemsPedido(p).reduce((x,i)=>x+i.cant,0); }catch(e){ return s; } },0);
   const tot=arr.reduce((s,p)=>s+costoEnvio(p),0);
+  const costoReenvios=reenvios.reduce((s,p)=>s+costoEnvio(p),0);
   const th=(t,r)=>`<th style="text-align:${r?'right':'left'};font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-3);font-weight:600;padding:0 4px 8px">${t}</th>`;
+  const filaPed=p=>{ const quien=p.metodo==="correo"?"Correo":(p.cadete||"—");
+    return `<tr onclick="toggleExp('${p.id}')" style="cursor:pointer;border-top:.5px solid var(--border)">
+      <td style="padding:11px 4px"><b style="font-size:13.5px">${esc(p.cliente||'—')}</b><div class="muted" style="font-size:11px">N° ${esc(numOrden(p))}</div></td>
+      <td style="padding:11px 4px;font-size:12.5px;color:var(--text-2)">${esc(nombreEmp(p.empresa).split(" ")[0])}</td>
+      <td style="padding:11px 4px;font-size:12.5px">${esc(anilloDe(p).label)}<div class="muted" style="font-size:11px">${esc(quien)}</div></td>
+      <td style="padding:11px 4px">${chipEstado(p)}</td>
+      <td style="padding:11px 4px;text-align:right;font-weight:700;font-size:13.5px">${fmtAr(costoEnvio(p))}</td></tr>`; };
   return `<div class="card" style="padding:0;overflow:hidden">
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--border)">
+    <div style="display:grid;grid-template-columns:repeat(${reenvios.length?4:3},1fr);gap:1px;background:var(--border)">
       <div style="background:var(--bg-2);padding:14px 16px"><div style="font-size:22px;font-weight:800">${arr.length}</div><div class="muted" style="font-size:11px">Envíos</div></div>
       <div style="background:var(--bg-2);padding:14px 16px"><div style="font-size:22px;font-weight:800">${uds}</div><div class="muted" style="font-size:11px">Unidades</div></div>
       <div style="background:var(--bg-2);padding:14px 16px"><div style="font-size:22px;font-weight:800;color:var(--green)">${fmtAr(tot)}</div><div class="muted" style="font-size:11px">A cobrar</div></div>
+      ${reenvios.length?`<div style="background:var(--bg-2);padding:14px 16px"><div style="font-size:22px;font-weight:800;color:#e5484d">${fmtAr(costoReenvios)}</div><div class="muted" style="font-size:11px">🔁 ${reenvios.length} reenvío${reenvios.length>1?'s':''}</div></div>`:''}
     </div>
     <div style="padding:14px 16px 4px;display:flex;justify-content:flex-end"><button class="btn sm ghost" onclick="imprimirListado('envios')">${icon('printer')} Imprimir listado</button></div>
     <div style="overflow-x:auto;padding:0 6px 6px"><table style="width:100%;border-collapse:collapse;min-width:560px">
       <thead><tr>${th('Cliente')}${th('Marca')}${th('Zona / Reparto')}${th('Estado')}${th('Envío',1)}</tr></thead>
-      <tbody>${arr.map(p=>{ const quien=p.metodo==="correo"?"Correo":(p.cadete||"—");
-        return `<tr onclick="toggleExp('${p.id}')" style="cursor:pointer;border-top:.5px solid var(--border)">
-          <td style="padding:11px 4px"><b style="font-size:13.5px">${esc(p.cliente||'—')}</b><div class="muted" style="font-size:11px">N° ${esc(numOrden(p))}</div></td>
-          <td style="padding:11px 4px;font-size:12.5px;color:var(--text-2)">${esc(nombreEmp(p.empresa).split(" ")[0])}</td>
-          <td style="padding:11px 4px;font-size:12.5px">${esc(anilloDe(p).label)}<div class="muted" style="font-size:11px">${esc(quien)}</div></td>
-          <td style="padding:11px 4px">${chipEstado(p)}</td>
-          <td style="padding:11px 4px;text-align:right;font-weight:700;font-size:13.5px">${fmtAr(costoEnvio(p))}</td></tr>`; }).join("")}</tbody>
-      <tfoot><tr style="border-top:1.5px solid var(--text-3)"><td colspan="4" style="padding:12px 4px;font-weight:700">Total ${lstFechaTit()}</td><td style="padding:12px 4px;text-align:right;font-weight:800;font-size:15px;color:var(--green)">${fmtAr(tot)}</td></tr></tfoot>
+      <tbody>${arr.map(filaPed).join("")}</tbody>
+      <tfoot><tr style="border-top:1.5px solid var(--text-3)"><td colspan="4" style="padding:12px 4px;font-weight:700">Total a cobrar ${lstFechaTit()}</td><td style="padding:12px 4px;text-align:right;font-weight:800;font-size:15px;color:var(--green)">${fmtAr(tot)}</td></tr></tfoot>
     </table></div>
+    ${reenvios.length?`<div style="padding:6px 16px 16px">
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#e5484d;font-weight:700;margin:8px 0">🔁 Reenvíos del período (no se cobran)</div>
+      <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;min-width:560px">
+        <tbody>${reenvios.map(p=>{ const quien=p.metodo==="correo"?"Correo":(p.cadete||"—");
+          return `<tr onclick="toggleExp('${p.id}')" style="cursor:pointer;border-top:.5px solid var(--border)">
+            <td style="padding:11px 4px"><b style="font-size:13.5px">${esc(p.cliente||'—')}</b><div class="muted" style="font-size:11px">N° ${esc(numOrden(p))}${p.motivoReenvio?' · '+esc(p.motivoReenvio):''}</div></td>
+            <td style="padding:11px 4px;font-size:12.5px">${esc(anilloDe(p).label)} · ${esc(quien)}</td>
+            <td style="padding:11px 4px;text-align:right;font-weight:700;font-size:13.5px;color:#e5484d">${fmtAr(costoEnvio(p))}</td></tr>`; }).join("")}</tbody>
+        <tfoot><tr style="border-top:1.5px solid #e5484d"><td style="padding:12px 4px;font-weight:700">Te costaron</td><td></td><td style="padding:12px 4px;text-align:right;font-weight:800;color:#e5484d">${fmtAr(costoReenvios)}</td></tr></tfoot>
+      </table></div>
+    </div>`:''}
   </div>`;
 }
 function lstCaja(ini,fin){
@@ -2843,6 +2859,7 @@ function vistaOperador(){
   if(OPVIEW==="ruta") return vistaRuta();
   if(OPVIEW==="preparacion") return vistaPreparacion();
   if(OPVIEW==="stock") return vistaStock();
+  if(OPVIEW==="cupones") return vistaCupones();
   if(OPVIEW==="informes") return vistaInformes();
   const ped=soloPedidos();
   const hoy=new Date(); hoy.setHours(0,0,0,0);
@@ -3131,7 +3148,7 @@ function cardOperador(p){
   const quien=p.metodo==="correo"?"Correo":(p.cadete||"sin asignar");
   const head=`<div class="ord-head" onclick="toggleExp('${p.id}')">
       <div style="min-width:0;flex:1">
-        <div class="ord-name"><span class="ord-cli">${esc(p.cliente||'—')}</span></div>
+        <div class="ord-name"><span class="ord-cli">${esc(p.cliente||'—')}</span>${p.esReenvio?' <span style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:20px;background:#e0b00022;color:#b58600;vertical-align:1px">🔁 REENVÍO</span>':''}</div>
         <div class="ord-sub"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${anilloColor(an.n)};margin-right:5px;vertical-align:-1px"></span>N° ${esc(numOrden(p))}${emp?(' · '+esc(emp)):''}${p.creado?(' · '+fmtFechaCorta(p.creado)):''} · ${esc(quien)}</div>
       </div>
       <div style="display:flex;align-items:center;gap:7px;flex:0 0 auto">
@@ -3156,6 +3173,7 @@ function cardOperador(p){
   if(p.tnId && !p.tnAvisado && ["preparado","asignado","en_reparto","despachado","en_camino","entregado","confirmado"].includes(p.estado))
     mas+=`<button class="btn sm ghost" onclick="marcarEnviadoTN('${p.id}')">🛍️ Avisar a Tienda Nube</button>`;
   mas+=`<button class="btn sm ghost" onclick="copiarLink('${p.id}')">Link</button>`;
+  mas+=`<button class="btn sm ghost" style="color:${p.esReenvio?'var(--amber)':'inherit'}" onclick="marcarReenvio('${p.id}')">🔁 ${p.esReenvio?'Quitar reenvío':'Marcar reenvío'}</button>`;
   if(p.metodo==="correo"){
     if(p.etiquetaPdf) mas+=`<button class="btn sm ghost" style="color:var(--green)" onclick='abrirEtiquetaPDF(PEDIDOS.find(x=>x.id==="${p.id}"))'>📎 Etiqueta correo ✓</button>`;
     else mas+=`<label class="btn sm ghost" style="cursor:pointer">📎 Adjuntar PDF correo<input type="file" accept="application/pdf" style="display:none" onchange="adjuntarEtiquetaCorreo('${p.id}',this.files[0])"></label>`;
@@ -3304,6 +3322,20 @@ async function traerTiendaNube(){
   toast("Trajo "+IMP_FILAS.length+" pedidos"+(fallidos?(" · "+fallidos+" salteados"):""));
 }
 /* Le avisa a Tienda Nube que el pedido salió (marca enviado + manda el tracking si lo hay) */
+async function marcarReenvio(id){
+  const p=PEDIDOS.find(x=>x.id===id); if(!p) return;
+  if(p.esReenvio){
+    if(!confirm("¿Quitar la marca de reenvío de este pedido?")) return;
+    await DB.update(id,{esReenvio:false, motivoReenvio:""});
+    toast("Marca de reenvío quitada");
+  } else {
+    const motivo=prompt("¿Por qué es un reenvío? (opcional)\nEj: se perdió, error de preparación, dirección mal...","");
+    if(motivo===null) return;
+    await DB.update(id,{esReenvio:true, motivoReenvio:(motivo||"").trim(), reenvioTs:Date.now()});
+    toast("🔁 Marcado como reenvío");
+  }
+  render();
+}
 async function marcarEnviadoTN(id){
   const p=PEDIDOS.find(x=>x.id===id)||await DB.get(id);
   if(!p || !p.tnId){ toast("Este pedido no vino de Tienda Nube"); return; }
@@ -3977,6 +4009,73 @@ async function agregarProductoNuevo(){
   toast("Producto agregado ✓"+(cant>0?(" · +"+cant):""));
   vistaStock();
 }
+/* ===== CUPONES DE FIDELIZACIÓN: registro de a quién le diste el 10% OFF ===== */
+const CODIGO_FIEL="FIEL10";
+function cuponesRecord(){ return PEDIDOS.find(p=>p.tipo==="cupones"); }
+function cuponesLista(){ const r=cuponesRecord(); return ((r&&r.lista)||[]).slice().sort((a,b)=>(b.ts||0)-(a.ts||0)); }
+async function cuponAgregar(c){
+  const r=cuponesRecord(); const lista=((r&&r.lista)||[]).concat([c]);
+  if(r) await DB.update(r.id,{lista}); else await DB.create({tipo:"cupones",lista});
+}
+async function cuponEditar(id, patch){
+  const r=cuponesRecord(); if(!r) return;
+  const lista=(r.lista||[]).map(c=>c.id===id?Object.assign({},c,patch):c);
+  await DB.update(r.id,{lista});
+}
+async function cuponBorrar(id){
+  const r=cuponesRecord(); if(!r) return;
+  await DB.update(r.id,{lista:(r.lista||[]).filter(c=>c.id!==id)});
+}
+function vistaCupones(){
+  const lista=cuponesLista();
+  const pendientes=lista.filter(c=>!c.usado).length;
+  const usados=lista.filter(c=>c.usado).length;
+  app().innerHTML=`
+    ${segOp('stock')}
+    <button class="btn sm ghost" onclick="OPVIEW='stock';vistaOperador()">← Volver a Stock</button>
+    <div class="title" style="margin-top:14px">Cupones de fidelización</div>
+    <div class="subtitle">Registrá a quién le diste el 10% OFF. Código: <b>${CODIGO_FIEL}</b> (se aplica solo en tu Tienda Nube).</div>
+    <div class="card" style="padding:0;overflow:hidden;margin-bottom:12px">
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--border)">
+        <div style="background:var(--bg-2);padding:14px 16px"><div style="font-size:22px;font-weight:800">${lista.length}</div><div class="muted" style="font-size:11px">Entregados</div></div>
+        <div style="background:var(--bg-2);padding:14px 16px"><div style="font-size:22px;font-weight:800;color:var(--amber)">${pendientes}</div><div class="muted" style="font-size:11px">Sin usar</div></div>
+        <div style="background:var(--bg-2);padding:14px 16px"><div style="font-size:22px;font-weight:800;color:var(--green)">${usados}</div><div class="muted" style="font-size:11px">Ya usaron</div></div>
+      </div>
+    </div>
+    <button class="btn block" style="margin-bottom:12px;background:var(--accent);color:#fff" onclick="nuevoCupon()">➕ Registrar cliente que pidió el cupón</button>
+    ${lista.length? lista.map(c=>`
+      <div class="card" style="margin-bottom:8px">
+        <div class="row" style="justify-content:space-between;align-items:flex-start;gap:10px">
+          <div style="min-width:0">
+            <b style="font-size:14px">${esc(c.nombre||'—')}</b>
+            ${c.usado?'<span style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:20px;background:#1d9e7522;color:var(--green);margin-left:6px">✓ USÓ</span>':'<span style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:20px;background:#e0b00022;color:#b58600;margin-left:6px">PENDIENTE</span>'}
+            <div class="muted" style="font-size:11px;margin-top:2px">${c.tel?esc(c.tel)+' · ':''}${c.ts?new Date(c.ts).toLocaleDateString("es-AR"):''}${c.nota?' · '+esc(c.nota):''}</div>
+          </div>
+          <div class="row" style="gap:6px;flex:0 0 auto">
+            ${!c.usado?`<button class="btn sm" style="background:var(--green);color:#fff" onclick="marcarCuponUsado('${c.id}')">Marcar usado</button>`:`<button class="btn sm ghost" onclick="marcarCuponUsado('${c.id}',true)">Deshacer</button>`}
+            <button class="btn sm ghost" style="color:var(--red)" onclick="borrarCupon('${c.id}')">✕</button>
+          </div>
+        </div>
+      </div>`).join("")
+    : `<div class="card"><div class="muted" style="text-align:center;padding:20px">Todavía no registraste ningún cupón. Cuando un cliente te escriba por el QR, anotalo acá.</div></div>`}`;
+}
+async function nuevoCupon(){
+  const nombre=prompt("Nombre del cliente que pidió el 10% OFF:");
+  if(!nombre||!nombre.trim()) return;
+  const tel=prompt("Teléfono / WhatsApp (opcional):","")||"";
+  await cuponAgregar({id:"c"+Date.now(), nombre:nombre.trim(), tel:tel.trim(), ts:Date.now(), usado:false, nota:""});
+  toast("Cliente registrado ✓");
+  vistaCupones();
+}
+async function marcarCuponUsado(id, deshacer){
+  await cuponEditar(id, {usado:!deshacer, usadoTs:deshacer?null:Date.now()});
+  toast(deshacer?"Marcado como pendiente":"✓ Marcado como usado");
+  vistaCupones();
+}
+async function borrarCupon(id){
+  if(!confirm("¿Borrar este registro de cupón?")) return;
+  await cuponBorrar(id); toast("Borrado"); vistaCupones();
+}
 function vistaStock(){
   const st=stockState(), pick=pickingConsolidado();
   const desc=st.descontar!==false;
@@ -4051,6 +4150,7 @@ function vistaStock(){
       <button class="btn ghost" onclick="imprimirStock()">${icon('printer')} Imprimir A4</button>
       <button class="btn ghost" onclick="agregarProductoNuevo()">➕ Agregar producto</button>
       <button class="btn ghost" onclick="verPacksAprendidos()">📦 Ver / corregir packs aprendidos</button>
+      <button class="btn ghost" onclick="OPVIEW='cupones';vistaOperador()">🎟️ Cupones de fidelización</button>
       <button class="btn ghost" onclick="crearComprasPrueba()">🧪 Crear 3 compras de prueba</button>
       ${PEDIDOS.some(p=>p.esPrueba)?`<button class="btn ghost" style="color:var(--red)" onclick="borrarComprasPrueba()">🗑️ Borrar compras de prueba</button>`:''}
       <button class="btn ghost" onclick="repararProdsPedidos()">🔧 Reparar productos de pedidos</button>
@@ -4429,7 +4529,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v24-verpacks";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v25-qr-nitido";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
@@ -4677,6 +4777,7 @@ function pantallaPreparar(id){
   if(!p){ PREP_ID=null; OPVIEW='prepararhoy'; return vistaOperador(); }
   PREP_ID=id;
   const items=itemsPedido(p);
+  const sinProds=!items.length;
   const total=items.reduce((s,i)=>s+i.cant,0);
   const hechas=items.reduce((s,i)=>s+Math.min(PREP_SCAN[i.prodNombre]||0,i.cant),0);
   const completo=items.length>0 && items.every(i=>(PREP_SCAN[i.prodNombre]||0)>=i.cant);
@@ -4685,6 +4786,12 @@ function pantallaPreparar(id){
     <button class="btn sm ghost" onclick="PREP_ID=null;PREP_SCAN={};PREP_REAL={};PREP_MANUAL={};PREP_ALERTAS=[];OPVIEW='prepararhoy';vistaOperador()">← Volver a la lista</button>
     <div class="title" style="margin-top:14px">Preparar pedido</div>
     <div class="subtitle">${esc(p.cliente||'—')} · N° ${esc(numOrden(p))} · ${esc(empresaObj(p.empresa).nombre)}</div>
+    ${sinProds?`<div class="card" style="border:1.5px solid #e5484d;background:#fff5f5;text-align:center;padding:24px">
+      <b style="color:#c62828;font-size:16px">⚠ Este pedido no tiene productos cargados</b>
+      <div style="font-size:13.5px;color:#7a1f1f;margin-top:8px">No se puede preparar así. Avisale al encargado para que cargue los productos de este pedido antes de despacharlo.</div>
+      ${p.items?`<div class="muted" style="font-size:12px;margin-top:10px">La etiqueta decía: "${esc(p.items)}"</div>`:''}
+      <button class="btn ghost block" style="margin-top:14px" onclick="PREP_ID=null;PREP_MANUAL={};PREP_ALERTAS=[];OPVIEW='prepararhoy';vistaOperador()">← Volver a la lista</button>
+    </div>` : `
     <button class="btn block" style="margin:14px 0" onclick="escanearParaPedido()">${cam}Escanear producto con la cámara</button>
     ${(()=>{ const faltan=items.filter(i=>(PREP_SCAN[i.prodNombre]||0)<i.cant);
       if(completo) return `<div style="padding:14px;border-radius:12px;background:#d9f2e5;color:#0f6b40;font-weight:800;text-align:center;font-size:16px;margin-bottom:12px">✅ ¡Todo escaneado! Ya podés confirmar</div>`;
@@ -4718,7 +4825,7 @@ function pantallaPreparar(id){
       <div style="margin-top:14px;padding:14px;border-radius:12px;background:#d9f2e5;color:#0f6b40;font-weight:800;text-align:center;font-size:16px">🎉 ¡Preparado! Ahora imprimí la etiqueta</div>
       <button class="btn block green big" style="margin-top:10px" onclick="${p.etiquetaPdf?`bajarEtiqueta1015('${id}')`:`imprimirEtiqueta('${id}')`}">🏷️ Imprimir etiqueta</button>
       <button class="btn block" style="margin-top:8px" onclick="siguientePedidoPrep()">Siguiente pedido →</button>
-    `}`;
+    `}`}`;
 }
 /* Va al próximo pedido pendiente de preparar, o vuelve a la lista si no queda ninguno */
 function siguientePedidoPrep(){
@@ -4908,9 +5015,10 @@ async function abrirEscaner(onCode, opts){
     ov.remove(); };
   ov.querySelector(".scan-x").onclick=cerrar;
   const manejar=raw=>{ if(!raw) return; const now=Date.now();
-    if(raw===ult && now-ultTs<1600) return;      // no repetir la misma lectura al toque
+    if(raw===ult && now-ultTs<1400) return;      // no repetir la misma lectura al toque
     ult=raw; ultTs=now;
-    if(opts.continuo){ onCode(raw); const el=document.getElementById("scanLast"); if(el) el.textContent="✓ leído"; }
+    try{ navigator.vibrate && navigator.vibrate(60); }catch(e){}   // vibra al leer, así sabe que contó
+    if(opts.continuo){ onCode(raw); const el=document.getElementById("scanLast"); if(el){ el.textContent="✓ leído"; el.style.color="#1d9e75"; setTimeout(()=>{ if(el) el.style.color=""; },500); } }
     else { cerrar(); onCode(raw); } };
   try{
     if(typeof ZXing!=="undefined" && ZXing.BrowserMultiFormatReader){
@@ -5132,25 +5240,39 @@ async function etiqueta10x15Bytes(pedidos){
   if(typeof PDFLib==="undefined") throw new Error("pdf-lib no cargó");
   const { PDFDocument }=PDFLib;
   const MM=2.83465; const W=100*MM, H=150*MM;      // 10x15 cm en puntos
+  pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
   const salida=await PDFDocument.create();
   for(const p of pedidos){
     if(!p.etiquetaPdf) continue;
     const bin=atob(p.etiquetaPdf); const arr=new Uint8Array(bin.length);
     for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
-    let src; try{ src=await PDFDocument.load(arr); }catch(e){ continue; }
-    // detecto el recuadro real de la etiqueta rasterizando en baja resolución (solo para medir, no para imprimir)
-    let box=null;
-    try{ box=await recorteEtiqueta(arr); }catch(e){}
-    const [emb]=await salida.embedPdf(src, [0]);
-    const dims=emb.size ? emb.size() : {width:emb.width, height:emb.height};
-    const bx = box || {x:0,y:0,w:dims.width,h:dims.height};
-    const esc=Math.min(W/bx.w, H/bx.h);
-    const w=bx.w*esc, h=bx.h*esc;
-    const page=salida.addPage([W,H]);
-    // dibujo la página desplazada para que el recorte quede centrado
-    page.drawPage(emb, { x:(W-w)/2 - bx.x*esc, y:(H-h)/2 - bx.y*esc, xScale:esc, yScale:esc });
-    // clip: recorto la hoja al área de la etiqueta (evita que se vean etiquetas vecinas)
-    page.setCropBox((W-w)/2, (H-h)/2, w, h);
+    try{
+      const pdf=await pdfjsLib.getDocument({data:arr.slice(0)}).promise;
+      const page=await pdf.getPage(1);
+      // 1) mido el recuadro con contenido (en baja) para recortar el blanco
+      const box=await recorteEtiqueta(arr);
+      const vpU=page.getViewport({scale:1});
+      const rx=box? box.x : 0, rw=box? box.w : vpU.width, rh=box? box.h : vpU.height;
+      const ry=box? (vpU.height-box.y-box.h) : 0;   // paso a coords desde arriba
+      // 2) rasterizo el recorte a ALTA resolución (300+ dpi) → el QR queda nítido aunque sea imagen
+      const targetPx=1200;                          // ancho objetivo en píxeles
+      const scale=Math.max(3, targetPx/rw);
+      const vp=page.getViewport({scale});
+      const cv=document.createElement("canvas");
+      cv.width=Math.round(rw*scale); cv.height=Math.round(rh*scale);
+      const cx=cv.getContext("2d"); cx.fillStyle="#fff"; cx.fillRect(0,0,cv.width,cv.height);
+      // desplazo el render para que quede solo el recorte
+      await page.render({ canvasContext:cx, viewport:vp,
+        transform:[1,0,0,1, -rx*scale, -ry*scale] }).promise;
+      const png=cv.toDataURL("image/png");
+      const bytes=Uint8Array.from(atob(png.split(",")[1]), c=>c.charCodeAt(0));
+      const img=await salida.embedPng(bytes);
+      // 3) meto la imagen en la hoja 10x15, ajustada sin deformar
+      const esc=Math.min(W/rw, H/rh);
+      const w=rw*esc, h=rh*esc;
+      const pg=salida.addPage([W,H]);
+      pg.drawImage(img, { x:(W-w)/2, y:(H-h)/2, width:w, height:h });
+    }catch(e){ console.warn("etiqueta:", e); }
   }
   if(salida.getPageCount()===0) throw new Error("sin etiquetas");
   return await salida.save();
