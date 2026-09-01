@@ -1996,11 +1996,10 @@ function imprimirCheckout(){
 /* Checklist de preparación del día en 10x15 para la impresora térmica */
 function imprimirChecklistDia(){
   const dia=chkDia();
-  const ini=new Date(dia+"T00:00:00").getTime(), fin=ini+86400000;
   const peds=soloPedidos().filter(p=>p.estado!=="anulado" && (p.cliente||"")!=="_PRUEBA_DIAGNOSTICO"
-    && (p.creado||0)>=ini && (p.creado||0)<fin && ["pendiente","preparado"].includes(p.estado))
+    && !p.cerradoEn && ["pendiente","preparado"].includes(p.estado))
     .sort((a,b)=>(a.creado||0)-(b.creado||0));
-  if(!peds.length){ toast("No hay pedidos para preparar este día"); return; }
+  if(!peds.length){ toast("No hay pedidos para preparar"); return; }
   let udsTot=0; peds.forEach(p=>{ try{ itemsPedido(p).forEach(it=>udsTot+=it.cant||0); }catch(e){} });
   const filasOrd=peds.map((p,i)=>{
     let it=[]; try{ it=itemsPedido(p); }catch(e){}
@@ -2709,7 +2708,10 @@ function vistaHoy(){
               <td style="text-align:right;font-weight:700">${fmtAr(costoEnvio(p))}</td></tr>`; }).join("")}
         </table></div>
       </div>`;
-    })()}`;
+    })()}
+    <div style="text-align:center;margin-top:20px;padding-top:12px;border-top:.5px solid var(--border)">
+      <span class="muted" style="font-size:11px">Fullminet · versión <b>${APP_VERSION}</b></span>
+    </div>`;
 }
 function imprimirDespachadosHoy(){
   const hoy0=new Date(); hoy0.setHours(0,0,0,0); const hoyIni=hoy0.getTime();
@@ -4529,7 +4531,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v25-prep-todos";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v25-checklist-todos";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
