@@ -1138,6 +1138,42 @@ function imprimirActaCierre(ts){
   <scr`+`ipt>window.onload=function(){setTimeout(function(){window.print()},400)}<\/scr`+`ipt></body></html>`);
   w.document.close();
 }
+let FECHA_CORTE="";
+async function cerrarDesdeFecha(){
+  if(!FECHA_CORTE){ toast("Elegí primero la fecha de corte"); return; }
+  const corte=new Date(FECHA_CORTE+"T00:00:00").getTime();
+  const aCerrar=PEDIDOS.filter(p=>p.tipo==="pedido" && !p.cerradoEn && p.estado!=="anulado" && (p.creado||0)<corte);
+  const quedan=PEDIDOS.filter(p=>p.tipo==="pedido" && !p.cerradoEn && p.estado!=="anulado" && (p.creado||0)>=corte);
+  const fC=new Date(corte).toLocaleDateString("es-AR");
+  if(!confirm("Corte: "+fC+"\n\nQuedan A LA VISTA: "+quedan.length+" pedidos (desde "+fC+" en adelante).\nSe ARCHIVAN: "+aCerrar.length+" pedidos anteriores.\n\n¿Confirmás?")) return;
+  const sello=corte; let ok=0;
+  for(const p of aCerrar){ try{ await DB.update(p.id,{cerradoEn:sello, estado:(p.estado==="entregado"?"confirmado":p.estado)}); ok++; }catch(e){} }
+  const r=cierresRecord();
+  const lista=((r&&r.lista)||[]).concat([{ts:sello, fecha:fC, nota:"Corte manual "+fC}]);
+  if(r) await DB.update(r.id,{lista}); else await DB.create({tipo:"cierres",lista});
+  alert("✅ Listo.\n\nA la vista: "+quedan.length+" · Archivados: "+ok);
+  OPVIEW="pedidos"; FILTRO="todos"; render();
+}
+async function cerrarAnterioresAEstaSemana(){
+  // deja visible SOLO esta semana (lunes 00:00 a hoy); archiva todo lo anterior
+  const hoy=new Date(); hoy.setHours(0,0,0,0);
+  const dow=(hoy.getDay()+6)%7;                    // 0=lunes ... 6=domingo
+  const lunes=hoy.getTime()-dow*86400000;          // lunes de esta semana a las 00:00
+  const aCerrar=PEDIDOS.filter(p=>p.tipo==="pedido" && !p.cerradoEn && p.estado!=="anulado" && (p.creado||0)<lunes);
+  const quedan=PEDIDOS.filter(p=>p.tipo==="pedido" && !p.cerradoEn && p.estado!=="anulado" && (p.creado||0)>=lunes);
+  if(!aCerrar.length){ toast("No hay pedidos anteriores a esta semana para archivar"); return; }
+  const fLunes=new Date(lunes).toLocaleDateString("es-AR");
+  if(!confirm("Voy a dejar A LA VISTA solo los pedidos de ESTA SEMANA (desde el lunes "+fLunes+"): "+quedan.length+" pedidos.\n\nY voy a ARCHIVAR "+aCerrar.length+" pedidos anteriores.\n\nNo se borran, quedan archivados y recuperables. ¿Confirmás?")) return;
+  const sello=lunes;
+  let ok=0;
+  for(const p of aCerrar){ try{ await DB.update(p.id,{cerradoEn:sello, estado:(p.estado==="entregado"?"confirmado":p.estado)}); ok++; }catch(e){} }
+  const r=cierresRecord();
+  const nuevo={ts:sello, fecha:fLunes, nota:"Archivó anteriores a esta semana"};
+  const lista=((r&&r.lista)||[]).concat([nuevo]);
+  if(r) await DB.update(r.id,{lista}); else await DB.create({tipo:"cierres",lista});
+  alert("✅ Listo.\n\nQuedaron A LA VISTA: "+quedan.length+" pedidos (esta semana).\nSe archivaron: "+ok+" pedidos anteriores.");
+  OPVIEW="pedidos"; FILTRO="todos"; render();
+}
 async function cerrarHastaAnteayer(){
   // deja a cobrar SOLO ayer y hoy; cierra (archiva) todo lo anterior
   const hoy0=new Date(); hoy0.setHours(0,0,0,0);
@@ -2721,7 +2757,14 @@ function vistaHoy(){
           <button class="btn sm" style="flex:1;background:var(--amber);color:#3a2e00" onclick="revertirUltimoCierre()">↩️ Revertir último cierre</button>
           <button class="btn sm ghost" style="flex:1" onclick="verArchivados()">👁️ Ver archivados</button>
         </div>
-        <button class="btn sm block" style="margin-top:8px;background:#e5484d;color:#fff" onclick="recuperarTodo()">🔄 Recuperar TODO (traer todos y borrar cierres)</button>
+        <button class="btn sm block" style="margin-top:8px;background:var(--accent);color:#fff" onclick="cerrarAnterioresAEstaSemana()">📅 Dejar solo esta semana a la vista (archivar lo viejo)</button>
+        <div style="margin-top:10px;padding-top:10px;border-top:.5px dashed #e0c060">
+          <div style="font-size:12px;color:#7a5a00;margin-bottom:6px">O elegí una fecha exacta de corte (deja a la vista desde ese día en adelante):</div>
+          <div class="row" style="gap:8px;align-items:center">
+            <input type="date" onchange="FECHA_CORTE=this.value" style="padding:7px 9px;border:1px solid var(--border);border-radius:9px;font:inherit;background:var(--bg);flex:1">
+            <button class="btn sm" style="background:#7a5a00;color:#fff;flex:0 0 auto" onclick="cerrarDesdeFecha()">Aplicar corte</button>
+          </div>
+        </div>
       </div>`; })()}
 
     <div class="card" style="text-align:center;padding:26px 20px;margin-bottom:16px;border:1.5px solid ${colorPaso||'var(--border)'}">
@@ -4604,7 +4647,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v25-recuperar-todo";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v25-corte-fecha";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
