@@ -1138,6 +1138,40 @@ function imprimirActaCierre(ts){
   <scr`+`ipt>window.onload=function(){setTimeout(function(){window.print()},400)}<\/scr`+`ipt></body></html>`);
   w.document.close();
 }
+async function cerrarHastaAnteayer(){
+  // deja a cobrar SOLO ayer y hoy; cierra (archiva) todo lo anterior
+  const hoy0=new Date(); hoy0.setHours(0,0,0,0);
+  const ayer0=hoy0.getTime()-86400000;                 // ayer a las 00:00
+  // pedidos a cerrar: los creados ANTES de ayer, que no estén ya cerrados ni anulados
+  const aCerrar=PEDIDOS.filter(p=>p.tipo==="pedido" && !p.cerradoEn && p.estado!=="anulado" && (p.creado||0)<ayer0);
+  const quedan=PEDIDOS.filter(p=>p.tipo==="pedido" && !p.cerradoEn && p.estado!=="anulado" && (p.creado||0)>=ayer0);
+  if(!aCerrar.length){ toast("No hay pedidos anteriores a ayer para cerrar"); return; }
+  const fAyer=new Date(ayer0).toLocaleDateString("es-AR");
+  if(!confirm("Voy a dejar A COBRAR solo los pedidos de AYER y HOY ("+quedan.length+" pedidos).\n\nY voy a CERRAR (archivar) "+aCerrar.length+" pedidos anteriores al "+fAyer+".\n\nLos cerrados no se borran, quedan archivados. ¿Confirmás?")) return;
+  const sello=ayer0;   // el cierre queda marcado a las 00:00 de ayer
+  let ok=0;
+  for(const p of aCerrar){ try{ await DB.update(p.id,{cerradoEn:sello, estado:(p.estado==="entregado"?"confirmado":p.estado)}); ok++; }catch(e){} }
+  // registro el cierre
+  const r=cierresRecord();
+  const nuevo={ts:sello, fecha:fAyer, nota:"Cierre hasta anteayer (dejó ayer y hoy)"};
+  const lista=((r&&r.lista)||[]).concat([nuevo]);
+  if(r) await DB.update(r.id,{lista}); else await DB.create({tipo:"cierres",lista});
+  alert("✅ Listo.\n\nQuedaron A COBRAR: "+quedan.length+" pedidos (ayer y hoy).\nSe archivaron: "+ok+" pedidos anteriores.\n\nEntrá a la cuenta a cobrar y fijate que estén los de ayer y hoy.");
+  OPVIEW="listados"; render();
+}
+async function recuperarTodo(){
+  // trae de vuelta TODOS los pedidos archivados y borra TODOS los cierres → vuelve al punto cero
+  const archivados=PEDIDOS.filter(p=>p.tipo==="pedido" && p.cerradoEn);
+  if(!archivados.length){ toast("No hay pedidos archivados, ya está todo a la vista"); return; }
+  if(!confirm("Voy a traer de vuelta TODOS los pedidos archivados ("+archivados.length+") y borrar todos los cierres.\n\nAsí volvés a ver TODO junto, sin ningún cierre. Después decidís con calma.\n\n¿Dale?")) return;
+  let ok=0;
+  for(const p of archivados){ try{ await DB.update(p.id,{cerradoEn:null}); ok++; }catch(e){} }
+  // borro todos los cierres
+  const r=cierresRecord();
+  if(r){ try{ await DB.update(r.id,{lista:[]}); }catch(e){} }
+  alert("✅ Recuperé "+ok+" pedidos.\n\nAhora tenés TODO a la vista, sin cierres. Andá a Pedidos y fijate que estén todos.");
+  OPVIEW="pedidos"; FILTRO="todos"; render();
+}
 async function revertirUltimoCierre(){
   const cierres=cierresLista();
   if(!cierres.length){ toast("No hay cierres para revertir"); return; }
@@ -2509,6 +2543,7 @@ function vistaListados(){
       </div>
     </div>
     <button class="btn block" style="margin-bottom:8px;background:var(--green);color:#fff" onclick="pantallaCuenta()">💵 Ver cuenta · detalle a cobrar y recibos</button>
+    <button class="btn block ghost" style="margin-bottom:8px" onclick="cerrarHastaAnteayer()">📅 Dejar a cobrar solo ayer y hoy (cerrar lo anterior)</button>
     <div class="row" style="gap:8px;margin-bottom:12px">
       <button class="btn ghost sm" style="flex:1" onclick="pantallaZonas()">🗺️ Envíos por zona</button>
       <button class="btn ghost sm" style="flex:1" onclick="pantallaCierre()">🔒 Cierre de período</button>
@@ -2686,6 +2721,7 @@ function vistaHoy(){
           <button class="btn sm" style="flex:1;background:var(--amber);color:#3a2e00" onclick="revertirUltimoCierre()">↩️ Revertir último cierre</button>
           <button class="btn sm ghost" style="flex:1" onclick="verArchivados()">👁️ Ver archivados</button>
         </div>
+        <button class="btn sm block" style="margin-top:8px;background:#e5484d;color:#fff" onclick="recuperarTodo()">🔄 Recuperar TODO (traer todos y borrar cierres)</button>
       </div>`; })()}
 
     <div class="card" style="text-align:center;padding:26px 20px;margin-bottom:16px;border:1.5px solid ${colorPaso||'var(--border)'}">
@@ -4568,7 +4604,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v25-recuperar-hoy";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v25-recuperar-todo";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
