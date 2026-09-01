@@ -2634,7 +2634,7 @@ function vistaHoy(){
   const ped=soloPedidos().filter(p=>!p.cerradoEn);
   const act=ped.filter(p=>!["entregado","confirmado","anulado"].includes(p.estado));
   const nSinAsig=act.filter(p=>p.estado==="pendiente" && !p.metodo).length;
-  const nPrep=act.filter(p=>p.estado==="pendiente" && p.metodo).length;   // asignados, falta preparar
+  const nPrep=act.filter(p=>p.estado==="pendiente").length;   // pendientes de preparar (con o sin método)
   const nListos=act.filter(p=>p.estado==="preparado").length;             // preparados, falta despachar
   const nReparto=act.filter(p=>["asignado","en_reparto","despachado","en_camino"].includes(p.estado)).length;
 
@@ -4529,7 +4529,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v25-qr-nitido";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v25-prep-todos";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
@@ -4749,7 +4749,7 @@ async function repararProdsPedidos(){
   alert(msg); render();
 }
 function vistaPrepararHoy(){
-  const arr=soloPedidos().filter(p=>p.estado==="pendiente" && p.metodo && !p.cerradoEn).sort((a,b)=>(a.creado||0)-(b.creado||0));
+  const arr=soloPedidos().filter(p=>p.estado==="pendiente" && !p.cerradoEn).sort((a,b)=>(a.creado||0)-(b.creado||0));
   app().innerHTML=`
     ${segOp('hoy')}
     <button class="btn sm ghost" onclick="OPVIEW='hoy';vistaOperador()">← Volver a Hoy</button>
@@ -4829,7 +4829,7 @@ function pantallaPreparar(id){
 }
 /* Va al próximo pedido pendiente de preparar, o vuelve a la lista si no queda ninguno */
 function siguientePedidoPrep(){
-  const quedan=soloPedidos().filter(p=>p.estado==="pendiente" && p.metodo && !p.cerradoEn).sort((a,b)=>(a.creado||0)-(b.creado||0));
+  const quedan=soloPedidos().filter(p=>p.estado==="pendiente" && !p.cerradoEn).sort((a,b)=>(a.creado||0)-(b.creado||0));
   if(quedan.length){ abrirPreparar(quedan[0].id); }
   else { PREP_ID=null; toast("¡No quedan pedidos para preparar! 🎉"); OPVIEW="prepararhoy"; vistaOperador(); }
 }
