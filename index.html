@@ -4647,7 +4647,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v25-corte-fecha";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v25-qr-termica";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
@@ -5372,9 +5372,12 @@ async function etiqueta10x15Bytes(pedidos){
       const vpU=page.getViewport({scale:1});
       const rx=box? box.x : 0, rw=box? box.w : vpU.width, rh=box? box.h : vpU.height;
       const ry=box? (vpU.height-box.y-box.h) : 0;   // paso a coords desde arriba
-      // 2) rasterizo el recorte a ALTA resolución (300+ dpi) → el QR queda nítido aunque sea imagen
-      const targetPx=1200;                          // ancho objetivo en píxeles
-      const scale=Math.max(3, targetPx/rw);
+      // 2) rasterizo alineado a la resolución de impresoras térmicas (203 DPI) para que no rompa el QR
+      //    uso 4x (812 DPI) → múltiplo exacto de 203, la térmica lo baja limpio sin moiré
+      const DPI_TERMICA=203, MULT=4;
+      const anchoMM=rw/MM;                          // ancho del recorte en mm
+      const target=Math.round(anchoMM/25.4*DPI_TERMICA*MULT);
+      const scale=Math.max(4, target/rw);
       const vp=page.getViewport({scale});
       const cv=document.createElement("canvas");
       cv.width=Math.round(rw*scale); cv.height=Math.round(rh*scale);
