@@ -2885,6 +2885,38 @@ function imprimirListado(tab){
   <scr`+`ipt>window.onload=function(){setTimeout(function(){window.print()},400)}<\/scr`+`ipt></body></html>`);
   w.document.close();
 }
+/* Detecta productos en riesgo de quedarse sin stock: se acaban en <=3 días, venta disparada, o bajo mínimo */
+function alertasQuiebre(){
+  const st=stockState();
+  const salidas=(st.movs||[]).filter(m=>m.tipo==="salida");
+  if(!salidas.length) return [];
+  const ahora=Date.now();
+  const tsList=salidas.map(m=>m.ts||0).filter(Boolean);
+  const primero=Math.min(...tsList), ultimo=Math.max(...tsList);
+  const diasHist=Math.max(1,(ultimo-primero)/86400000);
+  // ventas totales y ventas de los últimos 7 días, por producto
+  const total={}, reciente={};
+  const hace7=ahora-7*86400000;
+  salidas.forEach(m=>{ total[m.prod]=(total[m.prod]||0)+m.cant;
+    if((m.ts||0)>=hace7) reciente[m.prod]=(reciente[m.prod]||0)+m.cant; });
+  const res=[];
+  Object.keys(total).forEach(prod=>{
+    const stk=nivel(prod,st);
+    if(stk<=0) { res.push({prod, stk, dias:0, motivo:"sin stock", nivel:3}); return; }
+    const promDia=total[prod]/diasHist;              // ritmo histórico
+    const recDia=(reciente[prod]||0)/7;              // ritmo últimos 7 días
+    const ritmo=Math.max(promDia, recDia);           // uso el más alto (si se disparó, ese manda)
+    const diasRestantes=ritmo>0 ? Math.floor(stk/ritmo) : 999;
+    const mn=minDe(prod,st);
+    const disparo = recDia > promDia*1.8 && recDia>0.5;   // vende 80%+ más que su promedio
+    let motivo="", nivel=0;
+    if(diasRestantes<=3){ motivo="se acaba en "+diasRestantes+(diasRestantes===1?" día":" días"); nivel=3; }
+    else if(disparo){ motivo="se disparó la venta"; nivel=2; }
+    else if(mn>0 && stk<mn){ motivo="bajo el mínimo ("+stk+"/"+mn+")"; nivel=1; }
+    if(nivel>0) res.push({prod, stk, dias:diasRestantes, motivo, nivel, disparo});
+  });
+  return res.sort((a,b)=>b.nivel-a.nivel || a.dias-b.dias);
+}
 function vistaHoy(){
   const ped=soloPedidos().filter(p=>!p.cerradoEn);
   const act=ped.filter(p=>!["entregado","confirmado","anulado"].includes(p.estado));
@@ -2906,6 +2938,16 @@ function vistaHoy(){
     ${segOp('hoy')}
     <div class="title">Hoy</div>
     <div class="subtitle">${new Date().toLocaleDateString("es-AR",{weekday:'long',day:'numeric',month:'long'})}</div>
+    ${(()=>{ const aq=alertasQuiebre(); if(!aq.length) return "";
+      const criticos=aq.filter(a=>a.nivel>=2);
+      if(!criticos.length) return "";
+      return `<div class="card" style="margin-bottom:16px;border:1.5px solid #e5484d;background:#fff5f5">
+        <b style="color:#c62828;font-size:15px">⚠ ${criticos.length} ${criticos.length===1?'producto en riesgo de quiebre':'productos en riesgo de quiebre'}</b>
+        <div style="font-size:12.5px;color:#7a1f1f;margin:4px 0 8px">Reponé pronto para no quedarte sin stock:</div>
+        ${criticos.slice(0,6).map(a=>`<div style="font-size:13.5px;color:#7a1f1f;padding:4px 0;border-top:.5px solid #f0caca">
+          ${a.disparo?'🔥':'📉'} <b>${esc(a.prod)}</b> — quedan ${a.stk} · ${esc(a.motivo)}</div>`).join("")}
+        <button class="btn sm ghost" style="margin-top:8px" onclick="OPVIEW='stock';vistaOperador()">Ver stock →</button>
+      </div>`; })()}
     ${(()=>{ const arch=PEDIDOS.filter(p=>p.tipo==="pedido" && p.cerradoEn); if(!arch.length) return "";
       return `<div class="card" style="margin-bottom:16px;border:1.5px solid var(--amber);background:#fffbea">
         <b style="color:#b58600;font-size:14px">📦 Hay ${arch.length} pedidos archivados</b>
@@ -4913,7 +4955,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v26-minimos";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v26-alerta-quiebre";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
