@@ -295,6 +295,7 @@ hr{border:none;border-top:.5px solid var(--border);margin:20px 0}
 <!-- pdf.js: para importar el PDF de preparación de Tienda Nube -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
 <!-- ZXing: lector de códigos de barras por cámara (funciona en Android y iPhone) -->
 <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.20.0/umd/index.min.js"></script>
@@ -783,7 +784,7 @@ function sembrarDemo(write,read){
    ========================================================================= */
 let PEDIDOS=[], ROL=null, CADETE_ACTIVO=null, FILTRO="todos", OPVIEW="hoy", EMPLEADO=false, PED_Q="";
 let USER=null, USERROL=null, AUTH_READY=false, SUBSCRITO=false, PREVIEW=null;
-let STOCK_DESDE="", STOCK_HASTA="", STOCK_Q="", STOCK_TODOS=false;
+let STOCK_DESDE="", STOCK_HASTA="", STOCK_Q="", STOCK_TODOS=false, DEPOSITO_ACTIVO="";
 let ENT_DESDE="", ENT_HASTA="";
 let SIM=null, SIM_STEP=0, SIM_METODO="cadete", SIM_TIMER=null;   // simulación del ciclo
 let LISTA_OP=[];   // último listado mostrado al operador (para imprimir en lote)
@@ -903,6 +904,14 @@ async function repararStock(){
   for(const d of docs){ if(d.id!==main.id) await DB.update(d.id,{tipo:"stock_viejo",movs:[]}); }
   toast("Stock reparado: "+(docs.length-1)+" registro(s) duplicado(s) fusionado(s) ✅");
   setTimeout(()=>vistaOperador(),700);
+}
+/* ===== DEPÓSITOS POR MARCA: cada producto pertenece a una marca (su dueño) ===== */
+function marcasRecord(){ return PEDIDOS.find(p=>p.tipo==="marcasProd"); }
+function marcasProdMap(){ const r=marcasRecord(); return (r&&r.map)||{}; }
+function marcaDeProducto(nombre){ return marcasProdMap()[nombre] || "labs"; }   // default: todo lo viejo es Labs
+async function setMarcaProducto(nombre, marca){
+  const r=marcasRecord(); const map=Object.assign({},(r&&r.map)||{}); map[nombre]=marca;
+  if(r) await DB.update(r.id,{map}); else await DB.create({tipo:"marcasProd",map});
 }
 function stockState(){
   const r=stockRecord()||{}; let min={...(r.min||{})}, movs=(r.movs||[]).slice();
@@ -2567,6 +2576,145 @@ function lstRango(){
   return {ini:hoy.getTime(), fin:Date.now()+864e5};   // hoy
 }
 function setLstRango(r){ LST_RANGO=r; if(r!=="rango"){ LST_DESDE=""; LST_HASTA=""; } vistaListados(); }
+function vistaCorteCaja(){
+  const hoy0=new Date(); hoy0.setHours(0,0,0,0); const ini=hoy0.getTime(), fin=Date.now()+1000;
+  const arr=soloPedidos().filter(p=>despachadoEnRango(p,ini,fin) && !p.esReenvio).sort((a,b)=>(a.creado||0)-(b.creado||0));
+  const tot=arr.reduce((s,p)=>s+costoEnvio(p),0);
+  // agrupo por quién cobra (cadete/correo)
+  const porQuien={};
+  arr.forEach(p=>{ const q=p.metodo==="correo"?"Correo":(p.cadete||"Sin asignar"); if(!porQuien[q]) porQuien[q]={n:0,monto:0}; porQuien[q].n++; porQuien[q].monto+=costoEnvio(p); });
+  // agrupo por marca
+  const porMarca={};
+  arr.forEach(p=>{ const m=nombreEmp(p.empresa); if(!porMarca[m]) porMarca[m]={n:0,monto:0}; porMarca[m].n++; porMarca[m].monto+=costoEnvio(p); });
+  app().innerHTML=`
+    ${segOp('listados')}
+    <button class="btn sm ghost" onclick="OPVIEW='listados';vistaOperador()">← Volver a Listados</button>
+    <div class="title" style="margin-top:14px">Corte de caja de hoy</div>
+    <div class="subtitle">${new Date().toLocaleDateString("es-AR",{weekday:'long',day:'numeric',month:'long'})} · ${arr.length} envíos despachados</div>
+    ${!arr.length?`<div class="card"><div class="muted" style="text-align:center;padding:24px">Todavía no despachaste nada hoy.</div></div>`:`
+    <div class="card" style="text-align:center;padding:22px;margin-bottom:14px;border:1.5px solid var(--green)">
+      <div class="muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.06em">Total a cobrar hoy</div>
+      <div style="font-size:38px;font-weight:800;color:var(--green);margin-top:4px">${fmtAr(tot)}</div>
+      <div class="muted" style="font-size:13px;margin-top:2px">${arr.length} envíos</div>
+    </div>
+    <div class="card" style="margin-bottom:12px">
+      <span class="label">Por quién reparte</span>
+      ${Object.entries(porQuien).map(([q,d])=>`<div class="row" style="justify-content:space-between;padding:8px 0;border-top:.5px solid var(--border)">
+        <span style="font-size:14px">${esc(q)} <span class="muted">· ${d.n} env\u00edos</span></span>
+        <b style="font-size:15px">${fmtAr(d.monto)}</b></div>`).join("")}
+    </div>
+    <div class="card" style="margin-bottom:12px">
+      <span class="label">Por marca</span>
+      ${Object.entries(porMarca).map(([m,d])=>`<div class="row" style="justify-content:space-between;padding:8px 0;border-top:.5px solid var(--border)">
+        <span style="font-size:14px">${esc(m)} <span class="muted">· ${d.n}</span></span>
+        <b style="font-size:15px">${fmtAr(d.monto)}</b></div>`).join("")}
+    </div>
+    <button class="btn block" onclick="imprimirCorteCaja()">${icon('printer')} Imprimir corte de caja</button>`}`;
+}
+function imprimirCorteCaja(){
+  const hoy0=new Date(); hoy0.setHours(0,0,0,0); const ini=hoy0.getTime(), fin=Date.now()+1000;
+  const arr=soloPedidos().filter(p=>despachadoEnRango(p,ini,fin) && !p.esReenvio).sort((a,b)=>(a.creado||0)-(b.creado||0));
+  if(!arr.length){ toast("No despachaste nada hoy"); return; }
+  const tot=arr.reduce((s,p)=>s+costoEnvio(p),0);
+  const w=window.open("","_blank"); if(!w){ toast("Permití las ventanas emergentes"); return; }
+  const filas=arr.map((p,i)=>{ const q=p.metodo==="correo"?"Correo":(p.cadete||"—");
+    return `<tr><td>${i+1}</td><td>${esc(p.cliente||"")}</td><td>${esc(numOrden(p))}</td><td>${esc(nombreEmp(p.empresa))}</td><td>${esc(anilloDe(p).label)} · ${esc(q)}</td><td style="text-align:right">${fmtAr(costoEnvio(p))}</td></tr>`; }).join("");
+  const dia=new Date().toLocaleDateString("es-AR");
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Corte de caja ${dia}</title>
+  <style>@page{size:A4;margin:14mm}body{font-family:-apple-system,system-ui,Segoe UI,sans-serif;color:#111;font-size:12px}
+  h1{font-size:20px;margin:0 0 2px}.sub{color:#666;margin-bottom:14px}
+  table{width:100%;border-collapse:collapse}th{text-align:left;font-size:10px;text-transform:uppercase;color:#666;border-bottom:1.5px solid #111;padding:6px}
+  td{padding:6px;border-bottom:.5px solid #ddd}tfoot td{border-top:2px solid #111;font-weight:700;font-size:15px}
+  </style></head><body>
+  <h1>Corte de caja</h1><div class="sub">${dia} · ${arr.length} envíos</div>
+  <table><thead><tr><th>#</th><th>Cliente</th><th>Orden</th><th>Marca</th><th>Reparto</th><th style="text-align:right">A cobrar</th></tr></thead>
+  <tbody>${filas}</tbody>
+  <tfoot><tr><td colspan="5">TOTAL A COBRAR</td><td style="text-align:right">${fmtAr(tot)}</td></tr></tfoot></table>
+  <scr`+`ipt>window.onload=function(){setTimeout(function(){window.print()},400)}<\/scr`+`ipt></body></html>`);
+  w.document.close();
+}
+let EXP_EMP="", EXP_DESDE="", EXP_HASTA="";
+function vistaExportar(){
+  const inp="padding:9px 11px;border:1px solid var(--border);border-radius:10px;font:inherit;background:var(--bg);width:100%";
+  app().innerHTML=`
+    ${segOp('listados')}
+    <button class="btn sm ghost" onclick="OPVIEW='listados';vistaOperador()">← Volver a Listados</button>
+    <div class="title" style="margin-top:14px">Exportar a Excel</div>
+    <div class="subtitle">Descargá qué productos despachaste de cada empresa en un período. Sirve para rendir, controlar y facturar.</div>
+    <div class="card" style="margin-bottom:14px">
+      <span class="label">Empresa</span>
+      <select id="expEmp" style="${inp};margin-bottom:12px" onchange="EXP_EMP=this.value">
+        <option value="">Todas las empresas</option>
+        ${EMPRESAS.map(e=>`<option value="${e.id}" ${EXP_EMP===e.id?'selected':''}>${esc(e.nombre)}</option>`).join("")}
+      </select>
+      <div class="row" style="gap:10px">
+        <div style="flex:1"><span class="label">Desde</span><input type="date" value="${EXP_DESDE}" onchange="EXP_DESDE=this.value" style="${inp}"></div>
+        <div style="flex:1"><span class="label">Hasta</span><input type="date" value="${EXP_HASTA}" onchange="EXP_HASTA=this.value" style="${inp}"></div>
+      </div>
+      <div class="hint" style="margin-top:8px">Si no elegís fechas, exporta todo lo despachado.</div>
+    </div>
+    <div class="row" style="gap:8px">
+      <button class="btn block" onclick="exportarExcel('detalle')">📊 Excel detallado (pedido x pedido)</button>
+    </div>
+    <button class="btn block ghost" style="margin-top:8px" onclick="exportarExcel('resumen')">📋 Excel resumen (productos y cantidades)</button>
+    <div id="expPreview" style="margin-top:14px"></div>`;
+  actualizarPreviewExport();
+}
+function rangoExport(){
+  const ini=EXP_DESDE?new Date(EXP_DESDE+"T00:00:00").getTime():0;
+  const fin=EXP_HASTA?new Date(EXP_HASTA+"T23:59:59").getTime():Date.now()+864e5;
+  return {ini,fin};
+}
+function pedidosExport(){
+  const {ini,fin}=rangoExport();
+  return soloPedidos().filter(p=>{
+    if(p.estado==="anulado" || p.esReenvio) return false;
+    if(EXP_EMP && p.empresa!==EXP_EMP) return false;
+    return despachadoEnRango(p,ini,fin);
+  }).sort((a,b)=>(a.creado||0)-(b.creado||0));
+}
+function actualizarPreviewExport(){
+  const el=document.getElementById("expPreview"); if(!el) return;
+  const arr=pedidosExport();
+  let uds=0; arr.forEach(p=>{ try{ uds+=itemsPedido(p).reduce((s,i)=>s+i.cant,0); }catch(e){} });
+  el.innerHTML=`<div class="card"><div class="muted" style="text-align:center;font-size:13px">Se van a exportar <b>${arr.length}</b> envíos · <b>${uds}</b> unidades${EXP_EMP?(' de '+esc(nombreEmp(EXP_EMP))):''}</div></div>`;
+}
+function exportarExcel(tipo){
+  if(typeof XLSX==="undefined"){ toast("El exportador no cargó, probá de nuevo"); return; }
+  const arr=pedidosExport();
+  if(!arr.length){ toast("No hay envíos para exportar en ese período/empresa"); return; }
+  const empTxt=EXP_EMP?nombreEmp(EXP_EMP):"Todas";
+  const per=(EXP_DESDE||EXP_HASTA)?((EXP_DESDE||"inicio")+"_a_"+(EXP_HASTA||"hoy")):"todo";
+  let ws, nombreArch;
+  if(tipo==="resumen"){
+    // resumen: producto → cantidad total
+    const acc={};
+    arr.forEach(p=>{ try{ itemsPedido(p).forEach(i=>{ acc[i.prodNombre]=(acc[i.prodNombre]||0)+i.cant; }); }catch(e){} });
+    const rows=[["Producto","Cantidad despachada"]];
+    Object.entries(acc).sort((a,b)=>b[1]-a[1]).forEach(([n,c])=>rows.push([n,c]));
+    rows.push([]); rows.push(["TOTAL UNIDADES", Object.values(acc).reduce((s,n)=>s+n,0)]);
+    ws=XLSX.utils.aoa_to_sheet(rows);
+    ws["!cols"]=[{wch:45},{wch:20}];
+    nombreArch=`resumen_${empTxt}_${per}.xlsx`;
+  } else {
+    // detallado: una fila por producto de cada pedido
+    const rows=[["Fecha","Cliente","N° Orden","Empresa","Producto","Cantidad","Zona","Reparto","Envío $"]];
+    arr.forEach(p=>{ const fecha=p.creado?new Date(p.creado).toLocaleDateString("es-AR"):"";
+      const quien=p.metodo==="correo"?"Correo":(p.cadete||"—");
+      let its=[]; try{ its=itemsPedido(p); }catch(e){}
+      if(!its.length) its=[{prodNombre:(p.items||"—"),cant:""}];
+      its.forEach((it,idx)=>{ rows.push([ idx===0?fecha:"", idx===0?(p.cliente||""):"", idx===0?numOrden(p):"",
+        idx===0?nombreEmp(p.empresa):"", it.prodNombre, it.cant, idx===0?anilloDe(p).label:"", idx===0?quien:"", idx===0?costoEnvio(p):"" ]); });
+    });
+    ws=XLSX.utils.aoa_to_sheet(rows);
+    ws["!cols"]=[{wch:11},{wch:22},{wch:16},{wch:14},{wch:40},{wch:9},{wch:9},{wch:12},{wch:10}];
+    nombreArch=`despachos_${empTxt}_${per}.xlsx`;
+  }
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, empTxt.slice(0,28));
+  XLSX.writeFile(wb, nombreArch.replace(/[^a-zA-Z0-9._-]/g,"-"));
+  toast("Excel descargado ✓");
+}
 function vistaListados(){
   const {ini,fin}=lstRango();
   const rBtn=(k,l)=>`<button class="${LST_RANGO===k?'on':''}" onclick="setLstRango('${k}')">${l}</button>`;
@@ -2585,6 +2733,8 @@ function vistaListados(){
         <input type="date" value="${LST_HASTA}" onchange="LST_HASTA=this.value;LST_RANGO='rango';vistaListados()" style="${inp}">
       </div>
     </div>
+    <button class="btn block" style="margin-bottom:8px;background:var(--green);color:#fff" onclick="OPVIEW='cortecaja';vistaOperador()">🧾 Corte de caja de hoy</button>
+    <button class="btn block ghost" style="margin-bottom:8px" onclick="OPVIEW='exportar';vistaOperador()">📊 Exportar a Excel (por empresa)</button>
     <button class="btn block" style="margin-bottom:8px;background:var(--green);color:#fff" onclick="pantallaCuenta()">💵 Ver cuenta · detalle a cobrar y recibos</button>
     <button class="btn block ghost" style="margin-bottom:8px" onclick="cerrarHastaAnteayer()">📅 Dejar a cobrar solo ayer y hoy (cerrar lo anterior)</button>
     <div class="row" style="gap:8px;margin-bottom:12px">
@@ -2979,6 +3129,8 @@ function vistaOperador(){
   if(OPVIEW==="prepararhoy") return vistaPrepararHoy();
   if(OPVIEW==="preparar" && PREP_ID) return pantallaPreparar(PREP_ID);
   if(OPVIEW==="listados") return vistaListados();
+  if(OPVIEW==="cortecaja") return vistaCorteCaja();
+  if(OPVIEW==="exportar") return vistaExportar();
   if(OPVIEW==="panel") return vistaPanel();
   if(OPVIEW==="deposito") return vistaDeposito();
   if(OPVIEW==="ruta") return vistaRuta();
@@ -3234,10 +3386,16 @@ function tablaPedidos(lista){
     </table></div>`;
 }
 function listaPorFecha(lista){
-  const arr=lista.slice().sort((a,b)=>(b.creado||0)-(a.creado||0));   // más nuevos arriba
-  if(!arr.length) return empty('box','Sin pedidos en este filtro.');
-  let html="", ult="";
-  arr.forEach(p=>{ const d=fechaDia(p.creado); if(d!==ult){ html+=`<div class="dia-h">${esc(d)}</div>`; ult=d; } html+=cardOperador(p); });
+  if(!lista.length) return empty('box','Sin pedidos en este filtro.');
+  const prio={pendiente:1, preparado:2, asignado:3, en_reparto:3, despachado:3, en_camino:3, entregado:4, confirmado:5, anulado:9};
+  const arr=lista.slice().sort((a,b)=>{
+    const pa=prio[a.estado]||6, pb=prio[b.estado]||6;
+    if(pa!==pb) return pa-pb;
+    return (b.creado||0)-(a.creado||0);
+  });
+  const grupos={1:"📦 Para preparar",2:"✅ Preparados · listos para despachar",3:"🚚 En reparto",4:"📬 Entregados",5:"🔒 Confirmados",6:"Otros",9:"Anulados"};
+  let html="", ult=null;
+  arr.forEach(p=>{ const g=prio[p.estado]||6; if(g!==ult){ html+=`<div class="dia-h">${grupos[g]||""}</div>`; ult=g; } html+=cardOperador(p); });
   return html;
 }
 function accionPrincipal(p){   // el botón del paso siguiente, a la derecha de la fila
@@ -4141,12 +4299,18 @@ async function agregarProductoNuevo(){
   const n=nombre.trim();
   if(PRODUCTOS.some(p=>p.nombre.toLowerCase()===n.toLowerCase())){ toast("Ese producto ya existe"); return; }
   const codigo=prompt("Código de barras / SKU (opcional, dejalo vacío si no tenés):","")||"";
+  // marca dueña del producto (a qué depósito pertenece)
+  let marca=DEPOSITO_ACTIVO||"labs";
+  const opts=EMPRESAS.map((e,i)=>(i+1)+") "+e.nombre).join("\n");
+  const rM=prompt("¿De qué marca es este producto? (a qué depósito va)\n\n"+opts+"\n\nPoné el número:", String(EMPRESAS.findIndex(e=>e.id===marca)+1||1));
+  const idx=parseInt(rM,10)-1; if(EMPRESAS[idx]) marca=EMPRESAS[idx].id;
   const cantIni=prompt("¿Cuántas unidades cargás ahora? (0 si no querés cargar todavía)","0");
   const cant=parseInt(cantIni,10)||0;
   const r=PEDIDOS.find(p=>p.tipo==="prodsExtra");
   const nuevo={nombre:n, barcode:codigo.trim()};
   const lista=((r&&r.lista)||[]).concat([nuevo]);
   if(r) await DB.update(r.id,{lista}); else await DB.create({tipo:"prodsExtra",lista});
+  await setMarcaProducto(n, marca);                       // guarda a qué depósito pertenece
   PRODUCTOS.push(nuevo);                                  // disponible al toque
   if(cant>0) await pushMov(n,"entrada",cant,"Alta de producto");
   toast("Producto agregado ✓"+(cant>0?(" · +"+cant):""));
@@ -4227,7 +4391,8 @@ function vistaStock(){
   const q=(STOCK_Q||"").toLowerCase().trim();
   const rows=PRODUCTOS.map((p,i)=>{ const stk=nivel(p.nombre,st), mn=minDe(p.nombre,st), d=demandaDe(p,pick);
     const tieneMov=(st.movs||[]).some(m=>m.prod===p.nombre);
-    return {p,i,stk,mn,d,rep:pedirDe(p.nombre,st),tieneMov}; })
+    return {p,i,stk,mn,d,rep:pedirDe(p.nombre,st),tieneMov, marca:marcaDeProducto(p.nombre)}; })
+    .filter(r=> !DEPOSITO_ACTIVO || r.marca===DEPOSITO_ACTIVO )
     .filter(r=> (q ? r.p.nombre.toLowerCase().includes(q) : (STOCK_TODOS||r.tieneMov)) );   // por defecto solo los cargados; buscador o "ver todos" muestran el resto
   const reponer=rows.filter(r=>r.rep>0);
   const movs=(st.movs||[]).slice(-12).reverse();
@@ -4243,6 +4408,10 @@ function vistaStock(){
     </div>`:''}
     <div class="title">Stock</div>
     <div class="subtitle">${rows.length} ${(STOCK_TODOS||q)?'productos':'productos cargados'} · ${reponer.length} por reponer</div>
+    <div class="seg" style="margin-bottom:12px">
+      <button class="${!DEPOSITO_ACTIVO?'on':''}" onclick="DEPOSITO_ACTIVO='';vistaStock()">Todos</button>
+      ${EMPRESAS.map(e=>`<button class="${DEPOSITO_ACTIVO===e.id?'on':''}" onclick="DEPOSITO_ACTIVO='${e.id}';vistaStock()">${esc(e.nombre.split(" ")[0])}</button>`).join("")}
+    </div>
     <input id="stockQtop" autocomplete="off" placeholder="🔍 Buscá un producto (ej: multimagnesio)…" value="${esc(STOCK_Q||'')}" oninput="STOCK_Q=this.value;clearTimeout(window.__sq);window.__sq=setTimeout(vistaStock,250)" style="width:100%;padding:12px 14px;border:1px solid var(--border);border-radius:12px;font:inherit;font-size:16px;background:var(--bg);margin-bottom:12px;box-shadow:var(--sh-sm)">
     ${q?`<div class="card" style="margin-bottom:16px;border:1px solid var(--accent)">
       <span class="label">Resultado de "${esc(STOCK_Q)}"</span>
@@ -4680,7 +4849,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v26-stock-import";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v26-depositos";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
@@ -4943,23 +5112,27 @@ function pantallaPreparar(id){
       ${p.items?`<div class="muted" style="font-size:12px;margin-top:10px">La etiqueta decía: "${esc(p.items)}"</div>`:''}
       <button class="btn ghost block" style="margin-top:14px" onclick="PREP_ID=null;PREP_MANUAL={};PREP_ALERTAS=[];OPVIEW='prepararhoy';vistaOperador()">← Volver a la lista</button>
     </div>` : `
-    <button class="btn block" style="margin:14px 0" onclick="escanearParaPedido()">${cam}Escanear producto con la cámara</button>
     ${(()=>{ const faltan=items.filter(i=>(PREP_SCAN[i.prodNombre]||0)<i.cant);
-      if(completo) return `<div style="padding:14px;border-radius:12px;background:#d9f2e5;color:#0f6b40;font-weight:800;text-align:center;font-size:16px;margin-bottom:12px">✅ ¡Todo escaneado! Ya podés confirmar</div>`;
-      return `<div style="padding:14px 16px;border-radius:12px;background:#fff3cd;border:1px solid #e0b000;margin-bottom:12px">
-        <b style="color:#7a5a00;font-size:15px">Todavía falta escanear:</b>
+      if(completo) return `<div style="padding:14px;border-radius:12px;background:#d9f2e5;color:#0f6b40;font-weight:800;text-align:center;font-size:16px;margin:14px 0">✅ ¡Todo marcado! Ya podés confirmar</div>`;
+      return `<div style="padding:14px 16px;border-radius:12px;background:#fff3cd;border:1px solid #e0b000;margin:14px 0">
+        <b style="color:#7a5a00;font-size:15px">Todavía falta marcar:</b>
         ${faltan.map(i=>{ const f=i.cant-(PREP_SCAN[i.prodNombre]||0); return `<div style="font-size:14px;color:#5a4400;margin-top:5px">• <b>${f}</b> de ${i.cant} · ${esc(i.prodNombre)}</div>`; }).join("")}
       </div>`; })()}
     <div class="card">
-      <div class="row" style="justify-content:space-between"><span class="label" style="margin:0">Productos del pedido</span><b style="color:${completo?'var(--green)':'inherit'}">${hechas}/${total}</b></div>
+      <div class="row" style="justify-content:space-between;margin-bottom:4px"><span class="label" style="margin:0">Tocá cada producto a medida que lo ponés en la caja</span><b style="color:${completo?'var(--green)':'inherit'}">${hechas}/${total}</b></div>
       ${items.map(it=>{ const done=Math.min(PREP_SCAN[it.prodNombre]||0,it.cant), ok=done>=it.cant;
-        return `<div class="row" style="justify-content:space-between;align-items:center;padding:12px 0;border-top:.5px solid var(--border);gap:10px">
-          <span class="row" style="gap:8px;min-width:0;color:${ok?'var(--green)':'inherit'}">${ok?icon('check'):icon('box')}<span style="min-width:0;font-size:14px;${ok?'text-decoration:line-through;opacity:.6':''}">${esc(it.nombre)}</span></span>
-          <span class="row" style="gap:6px;align-items:center;flex:0 0 auto">
-            <button class="btn sm ghost" onclick="tocarItem('${encodeURIComponent(it.prodNombre)}',-1)">−</button>
-            <b style="min-width:42px;text-align:center;color:${ok?'var(--green)':'var(--text-2)'}">${done}/${it.cant}</b>
-            <button class="btn sm ghost" onclick="tocarItem('${encodeURIComponent(it.prodNombre)}',1)">+</button>
+        return `<div onclick="tocarItem('${encodeURIComponent(it.prodNombre)}',1)" style="display:flex;justify-content:space-between;align-items:center;padding:16px 14px;margin-top:8px;border-radius:12px;cursor:pointer;background:${ok?'#d9f2e5':'var(--bg-3)'};border:1.5px solid ${ok?'var(--green)':'var(--border)'};transition:.15s">
+          <span style="display:flex;gap:12px;align-items:center;min-width:0">
+            <span style="font-size:22px;flex:0 0 auto">${ok?'✅':'⬜'}</span>
+            <span style="min-width:0;font-size:15px;font-weight:600;${ok?'color:#0f6b40':''}">${esc(it.nombre)}</span>
+          </span>
+          <span style="display:flex;gap:10px;align-items:center;flex:0 0 auto">
+            <b style="font-size:18px;min-width:44px;text-align:center;color:${ok?'var(--green)':'var(--text-2)'}">${done}/${it.cant}</b>
+            <button class="btn sm ghost" style="padding:8px 12px;font-size:16px" onclick="event.stopPropagation();tocarItem('${encodeURIComponent(it.prodNombre)}',-1)">−</button>
           </span></div>`; }).join("")}
+      <div style="text-align:center;margin-top:12px">
+        <button class="btn sm ghost" onclick="escanearParaPedido()">${cam}O escanear con la cámara</button>
+      </div>
     </div>
     ${PREP_ALERTAS.length?`<div style="margin-top:14px;padding:12px 14px;border-radius:12px;background:#ffe8e8;border:1px solid #e5484d">
       <b style="color:#c62828;font-size:14px">⚠ ${PREP_ALERTAS.length} ${PREP_ALERTAS.length===1?'aviso':'avisos'} en esta preparación</b>
@@ -4967,9 +5140,7 @@ function pantallaPreparar(id){
       <div style="font-size:12px;color:#7a1f1f;margin-top:6px;opacity:.8">Para cerrar con avisos hace falta la clave del encargado.</div>
     </div>`:''}
     ${!p.stockBajado ? `
-      ${(()=>{ const hayManual=items.some(i=>(PREP_MANUAL[i.prodNombre]||0)>0);
-        if(completo && hayManual) return `<div style="margin-top:14px;padding:12px;border-radius:12px;background:#fff3cd;color:#7a5a00;font-weight:700;text-align:center;font-size:14px">⚠ Cargaste productos a mano (sin escanear). Al confirmar va a pedir la clave del encargado.</div>`;
-        if(completo) return `<div style="margin-top:14px;padding:12px;border-radius:12px;background:#d9f2e5;color:#0f6b40;font-weight:800;text-align:center;font-size:15px">✅ Todo escaneado y verificado — confirmá para imprimir</div>`;
+      ${(()=>{ if(completo) return `<div style="margin-top:14px;padding:12px;border-radius:12px;background:#d9f2e5;color:#0f6b40;font-weight:800;text-align:center;font-size:15px">✅ Todo marcado — confirmá para imprimir</div>`;
         return ''; })()}
       <button class="btn block ${completo?'green':''}" style="margin-top:10px;${completo?'':'opacity:.55'}" onclick="${completo?`intentarCerrar('${id}')`:`avisarFaltantes('${id}')`}">${completo?'✓ Confirmar preparado':'Faltan productos'}</button>
     ` : `
@@ -4991,11 +5162,8 @@ function intentarCerrar(id){
   const its=itemsPedido(p);
   const problemas=[...PREP_ALERTAS.map(a=>a.texto)];
   its.forEach(i=>{
-    const total=PREP_SCAN[i.prodNombre]||0;              // lo marcado (escaneado + a mano)
-    const escaneado=PREP_REAL[i.prodNombre]||0;          // solo lo escaneado de verdad
-    const aMano=PREP_MANUAL[i.prodNombre]||0;            // lo tildado a mano
+    const total=PREP_SCAN[i.prodNombre]||0;              // lo marcado
     if(total!==i.cant) problemas.push("Cantidad distinta en "+i.nombre.replace(/\s*\((kit|pack)\)$/,"")+": marcó "+total+", pedía "+i.cant);
-    else if(aMano>0) problemas.push(i.nombre.replace(/\s*\((kit|pack)\)$/,"")+": "+aMano+" cargado"+(aMano>1?"s":"")+" a mano (sin escanear)");
   });
   if(!problemas.length){ marcarListo(id); return; }   // todo escaneado y correcto → cierra directo
   const lista=problemas.map(t=>"• "+t).join("\n");
