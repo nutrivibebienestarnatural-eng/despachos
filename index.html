@@ -3137,6 +3137,7 @@ function vistaOperador(){
   if(OPVIEW==="preparacion") return vistaPreparacion();
   if(OPVIEW==="stock") return vistaStock();
   if(OPVIEW==="cupones") return vistaCupones();
+  if(OPVIEW==="minimos") return vistaMinimos();
   if(OPVIEW==="informes") return vistaInformes();
   const ped=soloPedidos();
   const hoy=new Date(); hoy.setHours(0,0,0,0);
@@ -4383,6 +4384,68 @@ async function borrarCupon(id){
   if(!confirm("¿Borrar este registro de cupón?")) return;
   await cuponBorrar(id); toast("Borrado"); vistaCupones();
 }
+/* Sugiere mínimos según el promedio de ventas: cubre 15 días, sobre todo el historial */
+function calcularMinimosSugeridos(){
+  const st=stockState();
+  const salidas=(st.movs||[]).filter(m=>m.tipo==="salida");
+  if(!salidas.length) return [];
+  // rango real de datos (primera y última salida) para saber cuántos días abarca el historial
+  const tsList=salidas.map(m=>m.ts||0).filter(Boolean);
+  const primero=Math.min(...tsList), ultimo=Math.max(...tsList);
+  const dias=Math.max(1,(ultimo-primero)/86400000);   // días que abarca el historial
+  // total vendido por producto
+  const porProd={};
+  salidas.forEach(m=>{ porProd[m.prod]=(porProd[m.prod]||0)+m.cant; });
+  const res=[];
+  Object.entries(porProd).forEach(([prod,total])=>{
+    const porDia=total/dias;
+    const sugerido=Math.max(1, Math.ceil(porDia*15));   // cubre 15 días
+    const actualMin=minDe(prod,st);
+    const stkActual=nivel(prod,st);
+    res.push({prod, total, porDia, sugerido, actualMin, stkActual});
+  });
+  return res.sort((a,b)=>b.total-a.total);
+}
+function REP_MIN(){ return REP_MIN_LISTA||[]; }
+let REP_MIN_LISTA=null;
+function vistaMinimos(){
+  REP_MIN_LISTA=calcularMinimosSugeridos();
+  const lista=REP_MIN_LISTA;
+  app().innerHTML=`
+    ${segOp('stock')}
+    <button class="btn sm ghost" onclick="OPVIEW='stock';vistaOperador()">← Volver a Stock</button>
+    <div class="title" style="margin-top:14px">Mínimos sugeridos</div>
+    <div class="subtitle">Calculado según tus ventas: el mínimo cubre <b>15 días</b> de venta promedio. Revisá y aplicá si te parece bien.</div>
+    ${!lista.length?`<div class="card"><div class="muted" style="text-align:center;padding:24px">Todavía no hay ventas registradas para calcular. Cuando despaches, vuelvo a calcular.</div></div>`:`
+    <div class="card" style="padding:0;overflow:hidden;margin-bottom:14px">
+      <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;min-width:520px">
+        <thead><tr>
+          <th style="text-align:left;font-size:10px;text-transform:uppercase;color:var(--text-3);padding:10px 8px">Producto</th>
+          <th style="text-align:right;font-size:10px;text-transform:uppercase;color:var(--text-3);padding:10px 8px">Vendido total</th>
+          <th style="text-align:right;font-size:10px;text-transform:uppercase;color:var(--text-3);padding:10px 8px">Mín. actual</th>
+          <th style="text-align:right;font-size:10px;text-transform:uppercase;color:var(--accent);padding:10px 8px">Mín. sugerido</th>
+        </tr></thead>
+        <tbody>${lista.map(r=>`<tr style="border-top:.5px solid var(--border)">
+          <td style="padding:10px 8px;font-size:13.5px">${esc(r.prod)}</td>
+          <td style="padding:10px 8px;text-align:right;font-size:13px;color:var(--text-2)">${r.total}</td>
+          <td style="padding:10px 8px;text-align:right;font-size:13px;color:var(--text-2)">${r.actualMin}</td>
+          <td style="padding:10px 8px;text-align:right;font-weight:800;font-size:15px;color:var(--accent)">${r.sugerido}</td>
+        </tr>`).join("")}</tbody>
+      </table></div>
+    </div>
+    <button class="btn block green" onclick="aplicarMinimosSugeridos()">✓ Aplicar estos ${lista.length} mínimos</button>
+    <div class="hint" style="margin-top:8px;text-align:center">Al aplicar, se guardan como el mínimo de cada producto. Después el sistema te avisa cuando reponer.</div>`}`;
+}
+async function aplicarMinimosSugeridos(){
+  const lista=REP_MIN();
+  if(!lista.length) return;
+  if(!confirm("¿Aplicar los "+lista.length+" mínimos sugeridos?\n\nSe van a guardar como el mínimo de cada producto. Podés cambiarlos después a mano.")) return;
+  const st=stockState(); const min={...(st.min||{})};
+  lista.forEach(r=>{ min[r.prod]=r.sugerido; });
+  st.min=min; await persistStock(st);
+  toast("✓ "+lista.length+" mínimos aplicados");
+  OPVIEW="stock"; render();
+}
 function vistaStock(){
   const st=stockState(), pick=pickingConsolidado();
   const desc=st.descontar!==false;
@@ -4470,6 +4533,7 @@ function vistaStock(){
       <button class="btn ghost" onclick="imprimirStock()">${icon('printer')} Imprimir A4</button>
       <button class="btn ghost" onclick="agregarProductoNuevo()">➕ Agregar producto</button>
       <button class="btn ghost" onclick="verPacksAprendidos()">📦 Ver / corregir packs aprendidos</button>
+      <button class="btn ghost" onclick="OPVIEW='minimos';vistaOperador()">🎯 Calcular mínimos según ventas</button>
       <button class="btn ghost" onclick="OPVIEW='cupones';vistaOperador()">🎟️ Cupones de fidelización</button>
       <button class="btn ghost" onclick="crearComprasPrueba()">🧪 Crear 3 compras de prueba</button>
       ${PEDIDOS.some(p=>p.esPrueba)?`<button class="btn ghost" style="color:var(--red)" onclick="borrarComprasPrueba()">🗑️ Borrar compras de prueba</button>`:''}
@@ -4849,7 +4913,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v26-depositos";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v26-minimos";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
