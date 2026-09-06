@@ -68,6 +68,10 @@ a{color:var(--accent);text-decoration:none}
     background:var(--bg-2);border-right:.5px solid var(--border);padding:16px 12px;z-index:50;overflow-y:auto}
   body.sys #sidebar .logo{font-weight:800;font-size:16px;padding:6px 10px 14px;letter-spacing:-.01em}
   body.sys #sidebar .logo small{display:block;font-weight:500;font-size:11px;color:var(--text-2);letter-spacing:.06em;text-transform:uppercase}
+  body.sys #sidebar .logo-sys{display:flex;align-items:center;gap:10px;padding:4px 8px 16px;margin-bottom:4px;border-bottom:.5px solid var(--border)}
+  body.sys #sidebar .logo-mark{width:34px;height:34px;border-radius:9px;background:linear-gradient(145deg,var(--accent),color-mix(in srgb,var(--accent) 55%,#000));color:#fff;font-weight:800;font-size:18px;display:flex;align-items:center;justify-content:center;flex:none;box-shadow:var(--sh-sm)}
+  body.sys #sidebar .logo-txt{font-weight:800;font-size:16px;letter-spacing:-.02em;line-height:1.05}
+  body.sys #sidebar .logo-txt small{display:block;font-weight:500;font-size:10px;color:var(--text-2);letter-spacing:.05em;text-transform:uppercase;margin-top:2px}
   body.sys #sidebar .nav{font-size:14px;font-weight:600;color:var(--text-2);padding:9px 12px;border-radius:9px;cursor:pointer;
     display:flex;align-items:center;gap:9px;margin-bottom:2px;border:none;background:none;width:100%;text-align:left}
   body.sys #sidebar .nav:hover{background:var(--bg-3);color:var(--text)}
@@ -2515,14 +2519,17 @@ function pintarSidebar(){
   const nActivos=ped.filter(p=>!p.cerradoEn && !["entregado","confirmado","anulado"].includes(p.estado)).length;
   const nPrep=ped.filter(p=>p.estado==="pendiente").length;
   const nPend=ped.filter(p=>p.estado==="pendiente" && !p.metodo).length + ped.filter(p=>p.estado==="pendiente" && p.metodo).length + ped.filter(p=>p.estado==="preparado").length;
-  const items=[["hoy","Hoy","◈",nPend||null],["pedidos","Pedidos","▤",nActivos||null],
-    ["stock","Stock","▣",null],["listados","Listados","≣",null]];
-  sb.innerHTML=`<div class="logo">Fullminet<small>Despacho</small></div>
+  const items=[["hoy","Hoy","📋",nPend||null],["pedidos","Pedidos","📦",nActivos||null],
+    ["stock","Stock","🗃️",null],["listados","Listados","📊",null]];
+  sb.innerHTML=`<div class="logo-sys">
+      <div class="logo-mark">F</div>
+      <div class="logo-txt">Fullminet<small>Sistema de despacho</small></div>
+    </div>
     ${items.map(([v,n,ic,b])=>`<button class="nav ${OPVIEW===v?'on':''}" onclick="OPVIEW='${v}';vistaOperador()">
-      <span style="width:16px;text-align:center">${ic}</span>${n}${b?`<span class="b">${b}</span>`:''}</button>`).join("")}
+      <span style="width:20px;text-align:center;font-size:15px">${ic}</span>${n}${b?`<span class="b">${b}</span>`:''}</button>`).join("")}
     <div class="sp"></div>
-    <button class="nav" onclick="formImportar()"><span style="width:16px;text-align:center">↓</span>Importar</button>
-    <button class="nav" onclick="salir()"><span style="width:16px;text-align:center">⎋</span>Salir</button>`;
+    <button class="nav" onclick="formImportar()"><span style="width:20px;text-align:center;font-size:15px">⬇️</span>Importar</button>
+    <button class="nav" onclick="salir()"><span style="width:20px;text-align:center;font-size:15px">🚪</span>Salir</button>`;
 }
 function segOp(active){
   if(ROL!=="admin" || PREVIEW) return "";   // operador (o admin previsualizando) no ve pestañas
@@ -4647,7 +4654,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v25-qr-termica";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v26-diseno";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
