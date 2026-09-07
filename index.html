@@ -464,6 +464,7 @@ const EMPRESAS = [
     review:"https://search.google.com/local/writereview?placeid=ChIJ7busWp5vzZURXziOZFmcOhI" },
   { id:"nutrivibe", nombre:"Nutrivibe",      canalDefault:"ml_flex", review:"" },
   { id:"sc",        nombre:"SC.CANDLE",      canalDefault:"tiendanube", review:"", fragil:true },   // velas: siempre FRÁGIL
+  { id:"supemundo", nombre:"Supemundo",      canalDefault:"ml_flex", review:"" },
 ];
 /* CANALES de venta (independientes de la empresa). costo = tarifa fija de envío */
 const CANALES = [
@@ -2747,9 +2748,23 @@ async function cambiarOrigen(id){
   toast(nuevo==="riotercero"?"📍 Ahora sale de Río Tercero (no descuenta stock Bs As)":"📍 Ahora sale de Bs As");
   render();
 }
+/* ¿Qué pedidos van al laboratorio de Río Tercero?
+   Regla: Labs Nutrition + canal Tienda Nube + destino interior (otra provincia, por correo).
+   Se respeta lo que elijas a mano: si marcaste 📍 "sale de Río Tercero" entra siempre;
+   si marcaste que sale de Bs As, no entra. Nutrivibe nunca (siempre sale de Bs As). */
+function pedidosConsolidadoRT(){
+  return soloPedidos().filter(p=>{
+    if(["entregado","confirmado","anulado"].includes(p.estado) || p.cerradoEn) return false;
+    if(p.empresa==="nutrivibe") return false;              // Nutrivibe siempre sale de Bs As
+    if(p.origen==="riotercero") return true;               // lo marcaste a mano → va sí o sí
+    if(p.origen==="bsas") return false;                    // lo marcaste a mano por Bs As → no va
+    // por defecto: Labs · Tienda Nube · interior (otra provincia) → se produce en Río Tercero
+    return p.empresa==="labs" && canalDe(p)==="tiendanube" && anilloDe(p).n===null;
+  });
+}
 /* Consolidado: productos sumados de los pedidos que salen de Río Tercero, para el laboratorio */
 function vistaConsolidado(){
-  const arr=soloPedidos().filter(p=>p.origen==="riotercero" && p.empresa!=="nutrivibe" && !["entregado","confirmado","anulado"].includes(p.estado) && !p.cerradoEn);
+  const arr=pedidosConsolidadoRT();
   const acc={};
   arr.forEach(p=>{ try{ itemsPedido(p).forEach(i=>{ acc[i.prodNombre]=(acc[i.prodNombre]||0)+i.cant; }); }catch(e){} });
   const prods=Object.entries(acc).sort((a,b)=>b[1]-a[1]);
@@ -2758,8 +2773,8 @@ function vistaConsolidado(){
     ${segOp('listados')}
     <button class="btn sm ghost" onclick="OPVIEW='listados';vistaOperador()">← Volver a Listados</button>
     <div class="title" style="margin-top:14px">Consolidado Río Tercero</div>
-    <div class="subtitle">Productos a preparar en el laboratorio de Río Tercero (pedidos del interior que marcaste que salen de ahí).</div>
-    ${!arr.length?`<div class="card"><div class="muted" style="text-align:center;padding:24px">No hay pedidos marcados "sale de Río Tercero".<br><span style="font-size:12px">Marcá los del interior con el botón 📍 en cada pedido.</span></div></div>`:`
+    <div class="subtitle">Productos a preparar en el laboratorio de Río Tercero: pedidos de Labs Nutrition (Tienda Nube) al interior. Los kits ya vienen abiertos en sus frascos.</div>
+    ${!arr.length?`<div class="card"><div class="muted" style="text-align:center;padding:24px">No hay pedidos de Labs (Tienda Nube) al interior para producir en Río Tercero.<br><span style="font-size:12px">Los del interior entran solos. Con el botón 📍 en cada pedido podés forzar que uno salga de Río Tercero o de Bs As.</span></div></div>`:`
     <div class="card" style="text-align:center;padding:18px;margin-bottom:14px;border:1.5px solid var(--accent)">
       <div class="muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.06em">Total a preparar</div>
       <div style="font-size:32px;font-weight:800;color:var(--accent);margin-top:4px">${totU} unidades</div>
@@ -2780,7 +2795,7 @@ function vistaConsolidado(){
     <button class="btn block ghost" style="margin-top:8px" onclick="exportarConsolidadoExcel()">📊 Descargar en Excel</button>`}`;
 }
 function consolidadoRT(){
-  const arr=soloPedidos().filter(p=>p.origen==="riotercero" && p.empresa!=="nutrivibe" && !["entregado","confirmado","anulado"].includes(p.estado) && !p.cerradoEn);
+  const arr=pedidosConsolidadoRT();
   const acc={}; arr.forEach(p=>{ try{ itemsPedido(p).forEach(i=>{ acc[i.prodNombre]=(acc[i.prodNombre]||0)+i.cant; }); }catch(e){} });
   return {arr, prods:Object.entries(acc).sort((a,b)=>b[1]-a[1])};
 }
