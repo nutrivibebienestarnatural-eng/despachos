@@ -296,7 +296,6 @@ hr{border:none;border-top:.5px solid var(--border);margin:20px 0}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
 <!-- ZXing: lector de códigos de barras por cámara (funciona en Android y iPhone) -->
 <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.20.0/umd/index.min.js"></script>
@@ -465,7 +464,7 @@ const EMPRESAS = [
     review:"https://search.google.com/local/writereview?placeid=ChIJ7busWp5vzZURXziOZFmcOhI" },
   { id:"nutrivibe", nombre:"Nutrivibe",      canalDefault:"ml_flex", review:"" },
   { id:"sc",        nombre:"SC.CANDLE",      canalDefault:"tiendanube", review:"", fragil:true },   // velas: siempre FRÁGIL
-  { id:"suplemundo", nombre:"SupleMundo",     canalDefault:"ml_flex", review:"", depositoDe:"labs" },  // comparte stock con Labs
+  { id:"suplemundo", nombre:"Suplemundo",     canalDefault:"ml_flex", review:"" },
 ];
 /* CANALES de venta (independientes de la empresa). costo = tarifa fija de envío */
 const CANALES = [
@@ -568,6 +567,27 @@ function esKit(nombre){ return !!kitEspecial(nombre) || /\bpack\b|\bcombo\b|\bki
 function componentesKit(nombre){
   let base=(nombre||"").replace(/\(.*?\)/g," ").replace(/pack.*$/i," ").replace(/\bx\d+\b/ig," ").trim();
   return base.split("+").map(s=>s.trim()).filter(s=>s.length>2);
+}
+/* ¿este nombre es un kit del catálogo? (los kits van cargados con barcode "NO CORRESPONDE") */
+function esKitCatalogo(nombre){
+  const pr=PRODUCTOS.find(p=>p.nombre===nombre);
+  return !!(pr && String(pr.barcode||"").toUpperCase().includes("NO CORRESPONDE"));
+}
+/* ¿este ítem es un kit que TODAVÍA no aprendí qué descuenta? (para pedir que me lo enseñen al preparar) */
+function kitPorAprender(nombre,sku){
+  if(!nombre) return false;
+  if(packComponentes(nombre,sku)) return false;     // ya lo aprendiste una vez
+  if(kitEspecial(nombre)) return false;             // ya está definido a mano (KITS_DEF)
+  if(esKitCatalogo(nombre)) return true;            // kit del catálogo sin aprender
+  return pareceePack(nombre) && !PRODUCTOS.some(p=>p.nombre===nombre);   // parece pack y no es un producto real del catálogo
+}
+/* lista de kits sin aprender de UN pedido (revisa tanto los productos elegidos como el texto de la etiqueta) */
+function kitsSinAprender(p){
+  const out=[], seen={};
+  const add=(nombre,sku)=>{ if(nombre && kitPorAprender(nombre,sku) && !seen[nombre]){ seen[nombre]=1; out.push({nombre, sku:sku||""}); } };
+  if(p && p.prods && p.prods.length){ p.prods.filter(x=>x&&x.nombre&&x.cant>0).forEach(x=>add(x.nombre, x.sku)); }
+  else if(p){ parseItems(p.items||"").forEach(it=>add(it.nombre,"")); }
+  return out;
 }
 const MIN_DEFAULT=5;   // cuánto pedir cuando un producto que manejás baja del mínimo
 function minDe(n,st){ st=st||stockState(); return (st&&st.min&&st.min[n]!=null)?st.min[n]:MIN_DEFAULT; }
@@ -2111,60 +2131,74 @@ function imprimirCheckout(){
   w.document.close();
 }
 /* Checklist de preparación del día en 10x15 para la impresora térmica */
+/* Checklist de preparación del día en 10x15 (térmica), AGRUPADO POR EMPRESA.
+   Se muestra DENTRO de la app (sin abrir ventana nueva) para que aparezca siempre, también en el celular. */
 function imprimirChecklistDia(){
   const dia=chkDia();
   const peds=soloPedidos().filter(p=>p.estado!=="anulado" && (p.cliente||"")!=="_PRUEBA_DIAGNOSTICO"
-    && !p.cerradoEn && ["pendiente","preparado"].includes(p.estado))
-    .sort((a,b)=>(a.creado||0)-(b.creado||0));
+    && !p.cerradoEn && ["pendiente","preparado"].includes(p.estado));
   if(!peds.length){ toast("No hay pedidos para preparar"); return; }
   let udsTot=0; peds.forEach(p=>{ try{ itemsPedido(p).forEach(it=>udsTot+=it.cant||0); }catch(e){} });
-  const filasOrd=peds.map((p,i)=>{
-    let it=[]; try{ it=itemsPedido(p); }catch(e){}
-    const prods=it.map(x=>'<div class="pl">☐ '+x.cant+'× '+esc(x.prodNombre)+'</div>').join("");
-    const esCorreo=p.metodo==="correo";
-    const via=esCorreo?"CORREO":"CADETE";
-    const detalle=esCorreo?"Correo":(p.cadete||"—");
-    const marca=nombreEmp(p.empresa);
-    return '<div class="ord">'+
-      '<div class="oh"><span class="chk">☐</span><b>'+(i+1)+'. '+esc(p.cliente||"—")+'</b>'+
-        '<span class="via '+(esCorreo?'vc':'vd')+'">'+via+'</span></div>'+
-      '<div class="marca">'+esc(marca)+'</div>'+
-      '<div class="om">N° '+esc(numOrden(p))+' · '+esc(detalle)+' · '+esc(anilloDe(p).label)+'</div>'+
-      prods+'</div>';
-  }).join("");
-  const estilos='<style>@media screen{body{background:#f5f5f7}#bar{position:sticky;top:0;display:flex;gap:8px;justify-content:center;padding:10px;background:#fff;border-bottom:1px solid #ddd}#bar button{font:inherit;font-size:14px;padding:8px 16px;border-radius:8px;border:1px solid #0a84ff;background:#0a84ff;color:#fff;cursor:pointer}#hoja{width:100mm;margin:12px auto;background:#fff;box-shadow:0 2px 12px rgba(0,0,0,.15)}}'+
-  '@media print{#bar{display:none}#hoja{margin:0;box-shadow:none}}'+
-  '@page{size:100mm 150mm;margin:0}*{box-sizing:border-box}'+
-  '#hoja{color:#000;padding:3mm;width:100mm;font-family:Arial,Helvetica,sans-serif;font-size:9px;line-height:1.25}'+
-  'h1{font-size:12px;margin:0;text-align:center}.sub{text-align:center;font-size:8.5px;color:#333;margin:.5mm 0 2mm;border-bottom:1.2px solid #000;padding-bottom:1.5mm}'+
-  '.ord{border:1px solid #000;border-radius:1mm;padding:1.4mm 2mm;margin-bottom:1.4mm}'+
-  '.oh{font-size:10px;display:flex;gap:1.5mm;align-items:center}.chk{font-size:13px;line-height:1}.oh b{flex:1;min-width:0}'+
-  '.via{font-size:8px;font-weight:800;letter-spacing:.05em;padding:1px 5px;border-radius:2px;border:1.2px solid #000;white-space:nowrap}'+
-  '.vc{background:#000;color:#fff}.vd{background:#fff;color:#000}'+
-  '.om{font-size:8px;color:#333;margin:.4mm 0 .8mm}.pl{font-size:9.5px;padding:.3mm 0 .3mm 2.5mm}'+
-  '.marca{font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.03em;background:#000;color:#fff;display:inline-block;padding:.6mm 2mm;border-radius:1mm;margin:.8mm 0 .4mm}'+
-  '.foot{margin-top:2mm;font-size:8.5px;border-top:1.2px solid #000;padding-top:1.5mm}</style>';
-  const cuerpo='<div id="hoja"><h1>Preparación · '+dia+'</h1><div class="sub">'+peds.length+' órdenes · '+udsTot+' unidades</div>'+
-    filasOrd+'<div class="foot">Preparó: ______________  Fecha: ______</div></div>';
-  const html='<!doctype html><html><head><meta charset="utf-8"><title>Preparación '+dia+'</title>'+estilos+'</head><body>'+
-    '<div id="bar"><button onclick="window.print()">🖨️ Imprimir</button>'+
-    '<button onclick="descargarPDF()">📄 Descargar PDF</button></div>'+cuerpo+
-    '<scr'+'ipt src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></scr'+'ipt>'+
-    '<scr'+'ipt src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></scr'+'ipt>'+
-    '<scr'+'ipt>function descargarPDF(){var el=document.getElementById("hoja");html2canvas(el,{scale:3,backgroundColor:"#fff"}).then(function(cv){'+
-    'var img=cv.toDataURL("image/png");var jsPDF=window.jspdf.jsPDF;var doc=new jsPDF({orientation:"portrait",unit:"mm",format:[100,150]});'+
-    'var h=cv.height*100/cv.width;doc.addImage(img,"PNG",0,0,100,h>150?150:h);doc.save("preparacion-'+dia+'.pdf");});}<\/scr'+'ipt>'+
-    '</body></html>';
-  // intento abrir en pestaña nueva; si el navegador la bloquea, uso la misma con un blob
-  const w=window.open("","_blank");
-  if(w){ w.document.write(html); w.document.close(); }
-  else {
-    const blob=new Blob([html],{type:"text/html"});
-    const url=URL.createObjectURL(blob);
-    const a=document.createElement("a"); a.href=url; a.target="_blank"; a.rel="noopener";
-    document.body.appendChild(a); a.click(); a.remove();
-    toast("Se abrió en otra pestaña. Si no, permití las ventanas emergentes.");
-  }
+
+  // agrupar por empresa, respetando el orden de EMPRESAS
+  const grupos={}; peds.forEach(p=>{ (grupos[p.empresa]=grupos[p.empresa]||[]).push(p); });
+  Object.values(grupos).forEach(g=>g.sort((a,b)=>(a.creado||0)-(b.creado||0)));
+  let cuerpo=""; let n=0;
+  EMPRESAS.forEach(e=>{
+    const g=grupos[e.id]; if(!g||!g.length) return;
+    let uEmp=0; g.forEach(p=>{ try{ itemsPedido(p).forEach(it=>uEmp+=it.cant||0);}catch(_){} });
+    cuerpo+='<div class="marca">'+esc(e.nombre)+' · '+g.length+' ped · '+uEmp+' u</div>';
+    g.forEach(p=>{ n++;
+      let it=[]; try{ it=itemsPedido(p); }catch(_){}
+      const prods=it.map(x=>'<div class="pl">&#9744; '+x.cant+'&times; '+esc(x.prodNombre)+'</div>').join("");
+      const esCorreo=p.metodo==="correo";
+      const via=esCorreo?"CORREO":"CADETE";
+      const detalle=esCorreo?"Correo":(p.cadete||"\u2014");
+      cuerpo+='<div class="ord">'+
+        '<div class="oh"><span class="chk">&#9744;</span><b>'+n+'. '+esc(p.cliente||"\u2014")+'</b>'+
+          '<span class="via '+(esCorreo?'vc':'vd')+'">'+via+'</span></div>'+
+        '<div class="om">N&deg; '+esc(numOrden(p))+' &middot; '+esc(detalle)+' &middot; '+esc(anilloDe(p).label)+'</div>'+
+        prods+'</div>';
+    });
+  });
+
+  const estilos='<style id="chkCss">'+
+    '#chkOverlay{position:fixed;inset:0;z-index:99999;background:#f5f5f7;overflow:auto;-webkit-overflow-scrolling:touch}'+
+    '#chkBar{position:sticky;top:0;display:flex;gap:8px;justify-content:center;padding:10px;background:#fff;border-bottom:1px solid #ddd}'+
+    '#chkBar button{font-family:Arial,Helvetica,sans-serif;font-size:15px;padding:9px 18px;border-radius:9px;border:1px solid #0a84ff;background:#0a84ff;color:#fff;cursor:pointer}'+
+    '#chkBar button.sec{background:#fff;color:#0a84ff}'+
+    '#hoja{width:100mm;margin:12px auto;background:#fff;box-shadow:0 2px 12px rgba(0,0,0,.15);color:#000;padding:3mm;font-family:Arial,Helvetica,sans-serif;font-size:11.5px;line-height:1.3}'+
+    '#hoja h1{font-size:15px;margin:0;text-align:center}'+
+    '#hoja .sub{text-align:center;font-size:10.5px;color:#333;margin:.5mm 0 2mm;border-bottom:1.4px solid #000;padding-bottom:1.5mm}'+
+    '#hoja .marca{font-size:12.5px;font-weight:800;text-transform:uppercase;letter-spacing:.02em;background:#000;color:#fff;padding:1.2mm 2mm;border-radius:1mm;margin:2.6mm 0 1.4mm}'+
+    '#hoja .ord{border:1.2px solid #000;border-radius:1mm;padding:1.6mm 2mm;margin-bottom:1.6mm}'+
+    '#hoja .oh{font-size:12.5px;display:flex;gap:1.5mm;align-items:center}#hoja .chk{font-size:16px;line-height:1}#hoja .oh b{flex:1;min-width:0}'+
+    '#hoja .via{font-size:9.5px;font-weight:800;letter-spacing:.05em;padding:1px 6px;border-radius:2px;border:1.2px solid #000;white-space:nowrap}'+
+    '#hoja .vc{background:#000;color:#fff}#hoja .vd{background:#fff;color:#000}'+
+    '#hoja .om{font-size:9.5px;color:#333;margin:.5mm 0 1mm}#hoja .pl{font-size:11.5px;padding:.4mm 0 .4mm 3mm}'+
+    '#hoja .foot{margin-top:2mm;font-size:10px;border-top:1.4px solid #000;padding-top:1.5mm}'+
+    '@media print{@page{size:100mm 150mm;margin:0}'+
+      'body{visibility:hidden}#chkOverlay,#chkOverlay *{visibility:visible}'+
+      '#chkOverlay{position:absolute;inset:0;background:#fff;overflow:visible}'+
+      '#chkBar{display:none}#hoja{margin:0;box-shadow:none;width:100mm}}'+
+    '</style>';
+
+  const hoja='<div id="hoja"><h1>Preparaci&oacute;n &middot; '+dia+'</h1>'+
+    '<div class="sub">'+peds.length+' &oacute;rdenes &middot; '+udsTot+' unidades</div>'+
+    cuerpo+'<div class="foot">Prepar&oacute;: ______________  Fecha: ______</div></div>';
+
+  const prev=document.getElementById("chkOverlay"); if(prev) prev.remove();
+  const prevCss=document.getElementById("chkCss"); if(prevCss) prevCss.remove();
+  document.head.insertAdjacentHTML("beforeend", estilos);
+  const ov=document.createElement("div"); ov.id="chkOverlay";
+  ov.innerHTML='<div id="chkBar">'+
+    '<button onclick="window.print()">&#128424;&#65039; Imprimir / Guardar PDF</button>'+
+    '<button class="sec" onclick="cerrarChecklistDia()">&times; Cerrar</button></div>'+hoja;
+  document.body.appendChild(ov);
+}
+function cerrarChecklistDia(){
+  const o=document.getElementById("chkOverlay"); if(o) o.remove();
+  const c=document.getElementById("chkCss"); if(c) c.remove();
 }
 function pantallaEntregas(){
   const arr=entregadosEn(ENT_DESDE,ENT_HASTA);
@@ -2570,7 +2604,7 @@ async function reasignarCadete(viejo,nuevo){
   toast("Listo ✓"); render();
 }
 /* ===== LISTADOS: una pantalla, período rápido + calendario, 3 solapas en lista ===== */
-let LST_TAB="envios", LST_DESDE="", LST_HASTA="", LST_RANGO="hoy", LST_EMP="";
+let LST_TAB="envios", LST_DESDE="", LST_HASTA="", LST_RANGO="hoy";
 function lstRango(){
   const hoy=new Date(); hoy.setHours(0,0,0,0);
   if(LST_RANGO==="rango" && (LST_DESDE||LST_HASTA)){
@@ -2731,9 +2765,23 @@ async function cambiarOrigen(id){
   toast(nuevo==="riotercero"?"📍 Ahora sale de Río Tercero (no descuenta stock Bs As)":"📍 Ahora sale de Bs As");
   render();
 }
+/* ¿Qué pedidos van al laboratorio de Río Tercero?
+   Regla: Labs Nutrition + canal Tienda Nube + destino interior (otra provincia, por correo).
+   Se respeta lo que elijas a mano: si marcaste 📍 "sale de Río Tercero" entra siempre;
+   si marcaste que sale de Bs As, no entra. Nutrivibe nunca (siempre sale de Bs As). */
+function pedidosConsolidadoRT(){
+  return soloPedidos().filter(p=>{
+    if(["entregado","confirmado","anulado"].includes(p.estado) || p.cerradoEn) return false;
+    if(p.empresa==="nutrivibe") return false;              // Nutrivibe siempre sale de Bs As
+    if(p.origen==="riotercero") return true;               // lo marcaste a mano → va sí o sí
+    if(p.origen==="bsas") return false;                    // lo marcaste a mano por Bs As → no va
+    // por defecto: Labs · Tienda Nube · interior (otra provincia) → se produce en Río Tercero
+    return p.empresa==="labs" && canalDe(p)==="tiendanube" && anilloDe(p).n===null;
+  });
+}
 /* Consolidado: productos sumados de los pedidos que salen de Río Tercero, para el laboratorio */
 function vistaConsolidado(){
-  const arr=soloPedidos().filter(p=>p.origen==="riotercero" && p.empresa!=="nutrivibe" && !["entregado","confirmado","anulado"].includes(p.estado) && !p.cerradoEn);
+  const arr=pedidosConsolidadoRT();
   const acc={};
   arr.forEach(p=>{ try{ itemsPedido(p).forEach(i=>{ acc[i.prodNombre]=(acc[i.prodNombre]||0)+i.cant; }); }catch(e){} });
   const prods=Object.entries(acc).sort((a,b)=>b[1]-a[1]);
@@ -2742,8 +2790,8 @@ function vistaConsolidado(){
     ${segOp('listados')}
     <button class="btn sm ghost" onclick="OPVIEW='listados';vistaOperador()">← Volver a Listados</button>
     <div class="title" style="margin-top:14px">Consolidado Río Tercero</div>
-    <div class="subtitle">Productos a preparar en el laboratorio de Río Tercero (pedidos del interior que marcaste que salen de ahí).</div>
-    ${!arr.length?`<div class="card"><div class="muted" style="text-align:center;padding:24px">No hay pedidos marcados "sale de Río Tercero".<br><span style="font-size:12px">Marcá los del interior con el botón 📍 en cada pedido.</span></div></div>`:`
+    <div class="subtitle">Productos a preparar en el laboratorio de Río Tercero: pedidos de Labs Nutrition (Tienda Nube) al interior. Los kits ya vienen abiertos en sus frascos.</div>
+    ${!arr.length?`<div class="card"><div class="muted" style="text-align:center;padding:24px">No hay pedidos de Labs (Tienda Nube) al interior para producir en Río Tercero.<br><span style="font-size:12px">Los del interior entran solos. Con el botón 📍 en cada pedido podés forzar que uno salga de Río Tercero o de Bs As.</span></div></div>`:`
     <div class="card" style="text-align:center;padding:18px;margin-bottom:14px;border:1.5px solid var(--accent)">
       <div class="muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.06em">Total a preparar</div>
       <div style="font-size:32px;font-weight:800;color:var(--accent);margin-top:4px">${totU} unidades</div>
@@ -2764,7 +2812,7 @@ function vistaConsolidado(){
     <button class="btn block ghost" style="margin-top:8px" onclick="exportarConsolidadoExcel()">📊 Descargar en Excel</button>`}`;
 }
 function consolidadoRT(){
-  const arr=soloPedidos().filter(p=>p.origen==="riotercero" && p.empresa!=="nutrivibe" && !["entregado","confirmado","anulado"].includes(p.estado) && !p.cerradoEn);
+  const arr=pedidosConsolidadoRT();
   const acc={}; arr.forEach(p=>{ try{ itemsPedido(p).forEach(i=>{ acc[i.prodNombre]=(acc[i.prodNombre]||0)+i.cant; }); }catch(e){} });
   return {arr, prods:Object.entries(acc).sort((a,b)=>b[1]-a[1])};
 }
@@ -2798,50 +2846,6 @@ function exportarConsolidadoExcel(){
   const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Consolidado RT");
   XLSX.writeFile(wb, "consolidado-riotercero-"+new Date().toLocaleDateString("es-AR").replace(/\//g,"-")+".xlsx");
   toast("Excel descargado ✓");
-}
-let EDIT_ENVIO=null;
-function editarEnvio(id){
-  const p=PEDIDOS.find(x=>x.id===id); if(!p) return;
-  EDIT_ENVIO={id, empresa:p.empresa, estado:p.estado, metodo:p.metodo, cadete:p.cadete||"", correo:p.correo||""};
-  dibujarEditEnvio();
-}
-function dibujarEditEnvio(){
-  const c=EDIT_ENVIO; if(!c) return;
-  let ov=document.getElementById("editEnvOv");
-  if(!ov){ ov=document.createElement("div"); ov.id="editEnvOv"; document.body.appendChild(ov); }
-  ov.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px";
-  const sel="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:10px;font:inherit;background:var(--bg);margin-top:4px";
-  const estados=[["pendiente","Pendiente"],["preparado","Preparado"],["asignado","Asignado"],["en_reparto","En reparto"],["despachado","Despachado"],["entregado","Entregado"],["confirmado","Confirmado"]];
-  ov.innerHTML=`<div style="background:var(--bg-2);border-radius:16px;max-width:440px;width:100%;padding:20px;box-shadow:0 20px 60px rgba(0,0,0,.5)">
-    <div style="font-size:18px;font-weight:800;margin-bottom:14px">Editar envío</div>
-    <div style="margin-bottom:12px"><span class="label">Empresa / marca</span>
-      <select id="ee_emp" style="${sel}">${EMPRESAS.map(e=>`<option value="${e.id}" ${c.empresa===e.id?'selected':''}>${esc(e.nombre)}</option>`).join("")}</select></div>
-    <div style="margin-bottom:12px"><span class="label">¿Quién lo envía?</span>
-      <select id="ee_quien" style="${sel}" onchange="EDIT_ENVIO._quien=this.value">
-        ${CADETES.map(cd=>`<option value="cadete:${cd}" ${c.metodo!=='correo'&&c.cadete===cd?'selected':''}>${cd} (cadete)</option>`).join("")}
-        <option value="correo:Correo Argentino" ${c.metodo==='correo'?'selected':''}>Correo</option>
-      </select></div>
-    <div style="margin-bottom:16px"><span class="label">Estado</span>
-      <select id="ee_estado" style="${sel}">${estados.map(([v,l])=>`<option value="${v}" ${c.estado===v?'selected':''}>${l}</option>`).join("")}</select></div>
-    <div class="row" style="gap:8px">
-      <button class="btn block green" onclick="guardarEditEnvio()">Guardar</button>
-      <button class="btn block ghost" onclick="cerrarEditEnvio()">Cancelar</button>
-    </div>
-  </div>`;
-}
-function cerrarEditEnvio(){ const ov=document.getElementById("editEnvOv"); if(ov) ov.remove(); EDIT_ENVIO=null; }
-async function guardarEditEnvio(){
-  const c=EDIT_ENVIO; if(!c) return;
-  const emp=document.getElementById("ee_emp").value;
-  const quien=document.getElementById("ee_quien").value;
-  const estado=document.getElementById("ee_estado").value;
-  const patch={empresa:emp, estado:estado};
-  if(quien.startsWith("correo:")){ patch.metodo="correo"; patch.correo="Correo Argentino"; patch.cadete=""; }
-  else { patch.metodo="cadete"; patch.cadete=quien.replace("cadete:",""); patch.correo=""; }
-  await DB.update(c.id, patch);
-  cerrarEditEnvio();
-  toast("Envío actualizado ✓");
-  render();
 }
 function vistaListados(){
   const {ini,fin}=lstRango();
@@ -2897,27 +2901,22 @@ function chipEstado(p){
   return `<span style="display:inline-block;font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:20px;background:${c[0]}22;color:${c[0]}">${c[1]}</span>`;
 }
 function lstEnvios(ini,fin){
-  let todos=soloPedidos().filter(p=>despachadoEnRango(p,ini,fin)).sort((a,b)=>(b.creado||0)-(a.creado||0));
-  if(LST_EMP) todos=todos.filter(p=>p.empresa===LST_EMP);
-  const chips=`<div class="seg" style="margin:0 0 12px;flex-wrap:wrap">
-    <button class="${!LST_EMP?'on':''}" onclick="LST_EMP='';vistaListados()">Todas</button>
-    ${EMPRESAS.map(e=>`<button class="${LST_EMP===e.id?'on':''}" onclick="LST_EMP='${e.id}';vistaListados()">${esc(e.nombre.split(" ")[0])}</button>`).join("")}
-  </div>`;
-  if(!todos.length) return chips+`<div class="card"><div class="muted" style="text-align:center;padding:28px">No hay envíos despachados ${lstFechaTit()}${LST_EMP?(' de '+esc(nombreEmp(LST_EMP))):''}.</div></div>`;
-  const arr=todos.filter(p=>!p.esReenvio);
-  const reenvios=todos.filter(p=>p.esReenvio);
+  const todos=soloPedidos().filter(p=>despachadoEnRango(p,ini,fin)).sort((a,b)=>(b.creado||0)-(a.creado||0));
+  if(!todos.length) return `<div class="card"><div class="muted" style="text-align:center;padding:28px">No hay envíos despachados ${lstFechaTit()}.</div></div>`;
+  const arr=todos.filter(p=>!p.esReenvio);           // ventas reales (se cobran)
+  const reenvios=todos.filter(p=>p.esReenvio);       // reenvíos (costo, no se cobran)
   const uds=arr.reduce((s,p)=>{ try{ return s+itemsPedido(p).reduce((x,i)=>x+i.cant,0); }catch(e){ return s; } },0);
   const tot=arr.reduce((s,p)=>s+costoEnvio(p),0);
   const costoReenvios=reenvios.reduce((s,p)=>s+costoEnvio(p),0);
   const th=(t,r)=>`<th style="text-align:${r?'right':'left'};font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-3);font-weight:600;padding:0 4px 8px">${t}</th>`;
   const filaPed=p=>{ const quien=p.metodo==="correo"?"Correo":(p.cadete||"—");
-    return `<tr style="border-top:.5px solid var(--border)">
-      <td style="padding:11px 4px;cursor:pointer" onclick="toggleExp('${p.id}')"><b style="font-size:13.5px">${esc(p.cliente||'—')}</b><div class="muted" style="font-size:11px">N° ${esc(numOrden(p))}</div></td>
+    return `<tr onclick="toggleExp('${p.id}')" style="cursor:pointer;border-top:.5px solid var(--border)">
+      <td style="padding:11px 4px"><b style="font-size:13.5px">${esc(p.cliente||'—')}</b><div class="muted" style="font-size:11px">N° ${esc(numOrden(p))}</div></td>
       <td style="padding:11px 4px;font-size:12.5px;color:var(--text-2)">${esc(nombreEmp(p.empresa).split(" ")[0])}</td>
       <td style="padding:11px 4px;font-size:12.5px">${esc(anilloDe(p).label)}<div class="muted" style="font-size:11px">${esc(quien)}</div></td>
       <td style="padding:11px 4px">${chipEstado(p)}</td>
-      <td style="padding:11px 4px;text-align:right"><button class="btn sm ghost" style="padding:4px 9px" onclick="editarEnvio('${p.id}')">✏️</button></td></tr>`; };
-  return chips+`<div class="card" style="padding:0;overflow:hidden">
+      <td style="padding:11px 4px;text-align:right;font-weight:700;font-size:13.5px">${fmtAr(costoEnvio(p))}</td></tr>`; };
+  return `<div class="card" style="padding:0;overflow:hidden">
     <div style="display:grid;grid-template-columns:repeat(${reenvios.length?4:3},1fr);gap:1px;background:var(--border)">
       <div style="background:var(--bg-2);padding:14px 16px"><div style="font-size:22px;font-weight:800">${arr.length}</div><div class="muted" style="font-size:11px">Envíos</div></div>
       <div style="background:var(--bg-2);padding:14px 16px"><div style="font-size:22px;font-weight:800">${uds}</div><div class="muted" style="font-size:11px">Unidades</div></div>
@@ -2926,7 +2925,7 @@ function lstEnvios(ini,fin){
     </div>
     <div style="padding:14px 16px 4px;display:flex;justify-content:flex-end"><button class="btn sm ghost" onclick="imprimirListado('envios')">${icon('printer')} Imprimir listado</button></div>
     <div style="overflow-x:auto;padding:0 6px 6px"><table style="width:100%;border-collapse:collapse;min-width:560px">
-      <thead><tr>${th('Cliente')}${th('Marca')}${th('Zona / Reparto')}${th('Estado')}${th('',1)}</tr></thead>
+      <thead><tr>${th('Cliente')}${th('Marca')}${th('Zona / Reparto')}${th('Estado')}${th('Envío',1)}</tr></thead>
       <tbody>${arr.map(filaPed).join("")}</tbody>
       <tfoot><tr style="border-top:1.5px solid var(--text-3)"><td colspan="4" style="padding:12px 4px;font-weight:700">Total a cobrar ${lstFechaTit()}</td><td style="padding:12px 4px;text-align:right;font-weight:800;font-size:15px;color:var(--green)">${fmtAr(tot)}</td></tr></tfoot>
     </table></div>
@@ -3713,8 +3712,6 @@ function formImportar(){
         <div style="text-align:center;color:var(--text-3);font-size:13px;margin-bottom:14px">— o subí el archivo —</div>`:''}
       <label class="btn ${IMP_CANAL==='ml_flex'?'':'ghost'} block" style="cursor:pointer;margin-bottom:8px">🏷️ Subir etiqueta de Mercado Libre
         <input type="file" accept="application/pdf" style="display:none" onchange="leerEtiquetaML(this.files[0])"></label>
-      <label class="btn ghost block" style="cursor:pointer;margin-bottom:8px">📦 Subir ZIP de Mercado Libre (varias etiquetas)
-        <input type="file" accept=".zip,application/zip" style="display:none" onchange="leerZipML(this.files[0])"></label>
       <div class="hint" style="margin:0 0 14px;text-align:center">Crea el pedido y carga los productos por código de barras. Subilas de a una para que quede la etiqueta guardada.</div>
       ${IMP_CANAL==='ml_flex'?`<div style="text-align:center;color:var(--text-3);font-size:13px;margin-bottom:14px">— o subí un CSV —</div>`:''}
       <label id="dropZone" class="dropzone" for="impFile">
@@ -3909,6 +3906,15 @@ function enseniarPack(fi,pi){
     comps: yaComps ? yaComps.map(c=>({nombre:c.nombre,cant:c.cant})) : [{nombre:"", cant:1}] };
   dibujarEnseniar();
 }
+/* Igual que enseniarPack pero llamado desde PREPARAR un pedido (no desde el import de ML) */
+function enseniarKitPrep(encNombre, encSku){
+  const nombre=decodeURIComponent(encNombre||"");
+  const sku=decodeURIComponent(encSku||"");
+  const yaComps=packComponentes(nombre, sku);
+  ENS_CTX={ prep:true, sku:sku||"", nombre:nombre,
+    comps: yaComps ? yaComps.map(c=>({nombre:c.nombre,cant:c.cant})) : [{nombre:"", cant:1}] };
+  dibujarEnseniar();
+}
 function dibujarEnseniar(){
   const c=ENS_CTX; if(!c) return;
   let ov=document.getElementById("ensOverlay");
@@ -3954,10 +3960,12 @@ async function guardarEnseniado(){
       if(r) await DB.update(r.id,{lista}); else await DB.create({tipo:"prodsExtra",lista});
     } else return;
   } }
+  const wasPrep=c.prep;
   await aprenderPack(c.sku, c.nombre, comps);
   cerrarEnseniar();
   toast("Aprendido ✓ No te vuelvo a preguntar por esto");
-  mostrarPreviewImport();
+  if(wasPrep){ if(typeof PREP_ID!=="undefined" && PREP_ID) pantallaPreparar(PREP_ID); else render(); }
+  else mostrarPreviewImport();
 }
 function stockChipImport(nombreProd){
   try{
@@ -4409,21 +4417,6 @@ function movsProdHTML(prod,st){
   </div>`;
 }
 /* Fusiona los productos dados de alta manualmente al catálogo en memoria */
-let SEMBRADO_HECHO=false;
-async function sembrarPacksConocidos(){
-  if(SEMBRADO_HECHO) return; SEMBRADO_HECHO=true;
-  // vínculos que ya conocemos de las etiquetas reales de ML
-  const conocidos=[
-    {sku:"07140604143222", nombre:"Pack X 3 Glicinato De Magnesio", comps:[{prod:"Glicinato de Magnesio 500 mg (60 caps)", cant:3}]},
-    {sku:"MULTIMG", nombre:"Multi Magnesio 500 Mg - 5 En 1", comps:[{prod:"Multi Magnesio 500 mg - 5 Magnesio en 1 (60 capsulas)", cant:1}]},
-    {sku:"TESTO", nombre:"Testo Up", comps:[{prod:"Testo Up (60 capsulas)", cant:1}]},
-  ];
-  for(const k of conocidos){
-    if(!packDef(k.sku, k.nombre)){   // solo si no está ya aprendido
-      try{ await aprenderPack(k.sku, k.nombre, k.comps); }catch(e){}
-    }
-  }
-}
 function cargarProdsExtra(){
   try{ prodsExtra().forEach(x=>{ if(x&&x.nombre && !PRODUCTOS.some(p=>p.nombre===x.nombre)) PRODUCTOS.push({nombre:x.nombre, barcode:x.barcode||""}); }); }catch(e){}
 }
@@ -4668,7 +4661,7 @@ function vistaStock(){
     <div class="subtitle">${rows.length} ${(STOCK_TODOS||q)?'productos':'productos cargados'} · ${reponer.length} por reponer</div>
     <div class="seg" style="margin-bottom:12px">
       <button class="${!DEPOSITO_ACTIVO?'on':''}" onclick="DEPOSITO_ACTIVO='';vistaStock()">Todos</button>
-      ${EMPRESAS.filter(e=>!e.depositoDe).map(e=>`<button class="${DEPOSITO_ACTIVO===e.id?'on':''}" onclick="DEPOSITO_ACTIVO='${e.id}';vistaStock()">${esc(e.nombre.split(" ")[0])}</button>`).join("")}
+      ${EMPRESAS.map(e=>`<button class="${DEPOSITO_ACTIVO===e.id?'on':''}" onclick="DEPOSITO_ACTIVO='${e.id}';vistaStock()">${esc(e.nombre.split(" ")[0])}</button>`).join("")}
     </div>
     <input id="stockQtop" autocomplete="off" placeholder="🔍 Buscá un producto (ej: multimagnesio)…" value="${esc(STOCK_Q||'')}" oninput="STOCK_Q=this.value;clearTimeout(window.__sq);window.__sq=setTimeout(vistaStock,250)" style="width:100%;padding:12px 14px;border:1px solid var(--border);border-radius:12px;font:inherit;font-size:16px;background:var(--bg);margin-bottom:12px;box-shadow:var(--sh-sm)">
     ${q?`<div class="card" style="margin-bottom:16px;border:1px solid var(--accent)">
@@ -4955,53 +4948,6 @@ function parseEtiquetaML(texto){
   return { ref: venta?("#"+venta):(envio?("#"+envio):""), cliente:cli.trim(), tel:"", dir:dir.trim(),
     ciudad:loc, provincia:prov, cp, items:items.join(" · "), prods, nota:nota.trim(), etiquetaML:true };
 }
-async function leerZipML(file){
-  if(!file) return;
-  if(typeof JSZip==="undefined"){ toast("El lector de ZIP no cargó, probá de nuevo"); return; }
-  toast("Abriendo el ZIP…");
-  try{
-    const zip=await JSZip.loadAsync(file);
-    const pdfs=[];
-    zip.forEach((path,entry)=>{ if(!entry.dir && /\.pdf$/i.test(path)) pdfs.push(entry); });
-    if(!pdfs.length){ toast("El ZIP no tiene PDFs adentro"); return; }
-    toast("Leyendo "+pdfs.length+" etiquetas del ZIP…");
-    // proceso cada PDF y acumulo las filas
-    let todas=[];
-    for(const entry of pdfs){
-      try{
-        const blob=await entry.async("blob");
-        const pdfFile=new File([blob], entry.name, {type:"application/pdf"});
-        const filas=await filasDeEtiqueta(pdfFile);   // devuelve las filas leídas de ese PDF
-        if(filas && filas.length) todas=todas.concat(filas);
-      }catch(e){ console.warn("PDF del zip falló:", entry.name, e); }
-    }
-    if(!todas.length){ toast("No pude leer etiquetas del ZIP"); return; }
-    // dedup por ref
-    const seen=new Set();
-    todas=todas.filter(f=>{ const k=f.ref||JSON.stringify(f.prods); if(seen.has(k)) return false; seen.add(k); return true; });
-    IMP_FILAS=todas.map(f=>{ f.empresa=IMP_EMPRESA; f.canal=f.canal||"ml_flex";
-      const rr=sugerirRuta(f.provincia,f.ciudad); f.origen=(rr&&rr.origen)||"bsas";
-      if(llegaCadete(f)){ f.metodo="cadete"; f.correo=""; } else { f.metodo="correo"; f.correo="Correo Argentino"; }
-      return f; });
-    mostrarPreviewImport();
-    toast("✓ "+IMP_FILAS.length+" pedidos leídos del ZIP");
-  }catch(e){ console.error(e); toast("No pude abrir el ZIP"); }
-}
-/* Lee un PDF de etiqueta y devuelve las filas (reutiliza la lógica de leerEtiquetaML) */
-async function filasDeEtiqueta(file){
-  pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
-  const texto=await pdfTextoRemito(file);
-  const ventasRaw=(texto.match(/Venta:\s*(\d[\d\s]{0,20})/g)||[]).map(v=>v.replace(/Venta:\s*/,"").replace(/\s/g,"").slice(0,16));
-  const ventas=[...new Set(ventasRaw.filter(v=>v.length>=11))];
-  let filas=[];
-  if(ventas.length<=1){ const f=parseEtiquetaML(texto); if(f) filas=[f]; }
-  else { ventas.forEach(v=>{ const idx=texto.indexOf("Venta:"+v)>=0?texto.indexOf("Venta:"+v):texto.indexOf("Venta: "+v);
-    const tramo=texto.slice(Math.max(0,idx-600), idx+800);
-    const f=parseEtiquetaML(tramo); if(f&&(f.cliente||f.prods.length)) filas.push(f); }); }
-  // guardo el PDF de esta etiqueta si es chico (para reimprimir)
-  try{ if(file.size<=700*1024 && filas.length===1){ const b64=await leerArchivoBase64(file); filas[0].etiquetaPdf=b64; filas[0].etiquetaPdfNombre=file.name; } }catch(e){}
-  return filas;
-}
 async function leerEtiquetaML(file){
   if(!file) return;
   if(typeof pdfjsLib==="undefined"){ toast("El lector de PDF no cargó, probá de nuevo"); return; }
@@ -5155,7 +5101,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v27-editar-envio";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v27-consolidado";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
@@ -5347,6 +5293,8 @@ function itemsPedido(p){
     return out;
   }
   parseItems(p.items||"").forEach(it=>{
+    const aprendido=packComponentes(it.nombre);   // si ya aprendiste este kit, mandan sus componentes
+    if(aprendido){ aprendido.forEach(c=>out.push({nombre:c.nombre+"  (pack)", cant:(it.cant||1)*c.cant, prodNombre:c.nombre, kit:true})); return; }
     const ke=kitEspecial(it.nombre);
     if(ke){ ke.comps.forEach(cmp=>{ const prod=mejorProducto(cmp.n);
         out.push({nombre:cmp.n+"  (kit)", cant:(it.cant||1)*cmp.c, prodNombre:prod?prod.nombre:cmp.n, kit:true}); }); return; }
@@ -5403,15 +5351,24 @@ function pantallaPreparar(id){
   if(!p){ PREP_ID=null; OPVIEW='prepararhoy'; return vistaOperador(); }
   PREP_ID=id;
   const items=itemsPedido(p);
+  const kitsND=kitsSinAprender(p);           // kits de este pedido que todavía no sé qué descuentan
   const sinProds=!items.length;
   const total=items.reduce((s,i)=>s+i.cant,0);
   const hechas=items.reduce((s,i)=>s+Math.min(PREP_SCAN[i.prodNombre]||0,i.cant),0);
-  const completo=items.length>0 && items.every(i=>(PREP_SCAN[i.prodNombre]||0)>=i.cant);
+  const completo=items.length>0 && !kitsND.length && items.every(i=>(PREP_SCAN[i.prodNombre]||0)>=i.cant);
   const cam=`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:6px"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>`;
   app().innerHTML=`
     <button class="btn sm ghost" onclick="PREP_ID=null;PREP_SCAN={};PREP_REAL={};PREP_MANUAL={};PREP_ALERTAS=[];OPVIEW='prepararhoy';vistaOperador()">← Volver a la lista</button>
     <div class="title" style="margin-top:14px">Preparar pedido</div>
     <div class="subtitle">${esc(p.cliente||'—')} · N° ${esc(numOrden(p))} · ${esc(empresaObj(p.empresa).nombre)}</div>
+    ${kitsND.length?`<div class="card" style="border:1.5px solid #e0b000;background:#fff8e6;margin-top:14px;padding:16px 18px">
+      <b style="color:#7a5a00;font-size:15.5px">📦 Hay ${kitsND.length===1?'un kit que todavía no sé':'kits que todavía no sé'} qué descuenta${kitsND.length===1?'':'n'}</b>
+      <div style="font-size:13.5px;color:#5a4400;margin:6px 0 12px">Enseñame los frascos que lleva cada uno (una sola vez) y a partir de ahí se abren solos y descuentan bien el stock. No se puede confirmar el pedido hasta enseñarlos.</div>
+      ${kitsND.map(k=>`<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;margin-top:8px;background:#fff;border:1px solid #e6c65a;border-radius:10px">
+        <span style="font-size:14px;font-weight:600;min-width:0;color:#5a4400">${esc(k.nombre)}</span>
+        <button class="btn sm" style="flex:0 0 auto;padding:7px 12px" onclick="enseniarKitPrep('${encodeURIComponent(k.nombre)}','${encodeURIComponent(k.sku||'')}')">Enseñar qué descuenta</button>
+      </div>`).join("")}
+    </div>`:''}
     ${sinProds?`<div class="card" style="border:1.5px solid #e5484d;background:#fff5f5;text-align:center;padding:24px">
       <b style="color:#c62828;font-size:16px">⚠ Este pedido no tiene productos cargados</b>
       <div style="font-size:13.5px;color:#7a1f1f;margin-top:8px">No se puede preparar así. Avisale al encargado para que cargue los productos de este pedido antes de despacharlo.</div>
@@ -5427,6 +5384,11 @@ function pantallaPreparar(id){
     <div class="card">
       <div class="row" style="justify-content:space-between;margin-bottom:4px"><span class="label" style="margin:0">Tocá cada producto a medida que lo ponés en la caja</span><b style="color:${completo?'var(--green)':'inherit'}">${hechas}/${total}</b></div>
       ${items.map(it=>{ const done=Math.min(PREP_SCAN[it.prodNombre]||0,it.cant), ok=done>=it.cant;
+        if(kitPorAprender(it.prodNombre)){
+          return `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:16px 14px;margin-top:8px;border-radius:12px;background:#fff8e6;border:1.5px solid #e0b000">
+            <span style="min-width:0;font-size:15px;font-weight:600;color:#7a5a00">📦 ${esc(it.nombre.replace(/\s*\((kit|pack)\)$/,''))}<div style="font-size:12px;font-weight:500;color:#5a4400;margin-top:2px">kit sin enseñar — no sé qué frascos lleva</div></span>
+            <button class="btn sm" style="flex:0 0 auto;padding:7px 12px" onclick="enseniarKitPrep('${encodeURIComponent(it.prodNombre)}','')">Enseñar</button></div>`;
+        }
         return `<div onclick="tocarItem('${encodeURIComponent(it.prodNombre)}',1)" style="display:flex;justify-content:space-between;align-items:center;padding:16px 14px;margin-top:8px;border-radius:12px;cursor:pointer;background:${ok?'#d9f2e5':'var(--bg-3)'};border:1.5px solid ${ok?'var(--green)':'var(--border)'};transition:.15s">
           <span style="display:flex;gap:12px;align-items:center;min-width:0">
             <span style="font-size:22px;flex:0 0 auto">${ok?'✅':'⬜'}</span>
@@ -5448,7 +5410,9 @@ function pantallaPreparar(id){
     ${!p.stockBajado ? `
       ${(()=>{ if(completo) return `<div style="margin-top:14px;padding:12px;border-radius:12px;background:#d9f2e5;color:#0f6b40;font-weight:800;text-align:center;font-size:15px">✅ Todo marcado — confirmá para imprimir</div>`;
         return ''; })()}
-      <button class="btn block ${completo?'green':''}" style="margin-top:10px;${completo?'':'opacity:.55'}" onclick="${completo?`intentarCerrar('${id}')`:`avisarFaltantes('${id}')`}">${completo?'✓ Confirmar preparado':'Faltan productos'}</button>
+      ${kitsND.length
+        ? `<button class="btn block" style="margin-top:10px;opacity:.55" onclick="toast('Enseñá primero los kits de arriba 📦')">📦 Enseñá los kits primero</button>`
+        : `<button class="btn block ${completo?'green':''}" style="margin-top:10px;${completo?'':'opacity:.55'}" onclick="${completo?`intentarCerrar('${id}')`:`avisarFaltantes('${id}')`}">${completo?'✓ Confirmar preparado':'Faltan productos'}</button>`}
     ` : `
       <div style="margin-top:14px;padding:14px;border-radius:12px;background:#d9f2e5;color:#0f6b40;font-weight:800;text-align:center;font-size:16px">🎉 ¡Preparado! Ahora imprimí la etiqueta</div>
       <button class="btn block green big" style="margin-top:10px" onclick="${p.etiquetaPdf?`bajarEtiqueta1015('${id}')`:`imprimirEtiqueta('${id}')`}">🏷️ Imprimir etiqueta</button>
@@ -6192,12 +6156,12 @@ function vistaSimulacion(){
   const qInit=new URLSearchParams(location.search);
   const rolInit=qInit.get("rol");
   if(esCliente){
-    if(DB.modo!=="firebase") DB.subscribe(d=>{ PEDIDOS=d; cargarProdsExtra(); sembrarPacksConocidos(); render(); });
+    if(DB.modo!=="firebase") DB.subscribe(d=>{ PEDIDOS=d; cargarProdsExtra(); render(); });
     render();                                  // vistaCliente lee su pedido con DB.get
   } else if((rolInit==="operador"||rolInit==="empleado") && DB.modo==="firebase"){
     // empleada por link: sin login, cargo los pedidos directo para que pueda preparar
     AUTH_READY=true;
-    if(!SUBSCRITO){ SUBSCRITO=true; DB.subscribe(d=>{ PEDIDOS=d; cargarProdsExtra(); sembrarPacksConocidos(); render(); }); }
+    if(!SUBSCRITO){ SUBSCRITO=true; DB.subscribe(d=>{ PEDIDOS=d; cargarProdsExtra(); render(); }); }
     render();
   } else if(DB.modo==="firebase"){
     firebase.auth().onAuthStateChanged(async (user)=>{
@@ -6207,12 +6171,12 @@ function vistaSimulacion(){
           if(d.exists){ USERROL=d.data().rol||null;
             if(USERROL==="cadete") CADETE_ACTIVO=d.data().cadete||d.data().nombre||null; }
         }catch(e){ USERROL=null; }
-        if(USERROL && !SUBSCRITO){ SUBSCRITO=true; DB.subscribe(d=>{ PEDIDOS=d; cargarProdsExtra(); sembrarPacksConocidos(); render(); }); }
+        if(USERROL && !SUBSCRITO){ SUBSCRITO=true; DB.subscribe(d=>{ PEDIDOS=d; cargarProdsExtra(); render(); }); }
       }
       AUTH_READY=true; render();
     });
   } else {
-    DB.subscribe(d=>{ PEDIDOS=d; cargarProdsExtra(); sembrarPacksConocidos(); render(); });
+    DB.subscribe(d=>{ PEDIDOS=d; cargarProdsExtra(); render(); });
     render();
   }
 })();
