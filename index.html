@@ -4805,10 +4805,10 @@ function vistaStock(){
           <span style="font-size:13.5px;font-weight:600;min-width:0;flex:1">${esc(r.p.nombre)}</span>
           <span class="row" style="align-items:center;gap:5px;flex:0 0 auto">
             <button class="btn sm ghost" style="width:29px;font-size:16px;font-weight:700;padding:2px 0" onclick="ajustarUno('${encodeURIComponent(r.p.nombre)}',-1)">−</button>
-            <b style="min-width:36px;text-align:center;font-size:15px;font-variant-numeric:tabular-nums;color:${r.stk<0?'var(--red)':(r.stk<=r.mn?'var(--amber)':'var(--text)')}">${r.stk}</b>
+            <input type="number" inputmode="numeric" value="${r.stk}" title="Escribí la cantidad real y Enter" onclick="this.select()" onchange="fijarStockDirecto('${encodeURIComponent(r.p.nombre)}',this.value)" style="width:56px;text-align:center;font-size:16px;font-weight:700;font-variant-numeric:tabular-nums;border:1px solid var(--border);border-radius:8px;padding:4px;background:var(--bg);color:${r.stk<0?'var(--red)':(r.stk<=r.mn?'var(--amber)':'var(--text)')}">
             <button class="btn sm ghost" style="width:29px;font-size:16px;font-weight:700;padding:2px 0" onclick="ajustarUno('${encodeURIComponent(r.p.nombre)}',1)">+</button>
             <input id="mn_${r.i}" type="number" inputmode="numeric" value="${r.mn}" title="Mínimo" style="${inp};width:44px;text-align:center;padding:4px;font-size:12px">
-            <button class="btn sm ghost" style="padding:5px 8px;font-size:11.5px" onclick="ajustarStock('${encodeURIComponent(r.p.nombre)}')">Fijar</button>
+            <button class="btn sm ghost" style="padding:5px 8px;font-size:11.5px" onclick="guardarMinimos()">Mín</button>
           </span>
         </div>
         <div class="muted" style="font-size:11.5px;margin-top:2px;cursor:pointer" onclick="verMovsProd('${encodeURIComponent(r.p.nombre)}')">Entraron ${f.ent} · Salieron ${f.sal}${split?` <span style="opacity:.85">(${split})</span>`:""}${r.rep>0?` · <span style="color:var(--amber);font-weight:600">pedir ${r.rep}</span>`:""} <span style="color:var(--accent)">${STOCK_DET===r.p.nombre?'▲ ocultar':'▼ ver movimientos'}</span></div>
@@ -4863,6 +4863,17 @@ async function ajustarUno(nombreEnc,delta){
   const actual=nivel(nombre,stockState());
   if(delta<0 && actual<=0){ toast("Ya está en 0"); return; }
   await pushMov(nombre, delta>0?"entrada":"salida", 1, "Ajuste manual");
+  vistaStock();
+}
+async function fijarStockDirecto(nombreEnc, valor){
+  const nombre=decodeURIComponent(nombreEnc);
+  const actual=nivel(nombre,stockState());
+  const target=parseInt((String(valor).match(/-?\d+/)||[])[0],10);
+  if(isNaN(target)){ toast("Poné un número"); vistaStock(); return; }
+  const delta=target-actual;
+  if(delta===0){ return; }   // no cambió
+  await pushMov(nombre, delta>0?"entrada":"salida", Math.abs(delta), "Ajuste manual");
+  toast(nombre.split(" ").slice(0,2).join(" ")+" → "+target);
   vistaStock();
 }
 async function ajustarStock(nombreEnc){
@@ -5232,7 +5243,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v27-pickit";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v27-stock-editable";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
