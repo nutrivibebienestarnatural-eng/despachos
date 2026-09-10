@@ -272,6 +272,12 @@ hr{border:none;border-top:.5px solid var(--border);margin:20px 0}
   font-weight:540;opacity:0;transition:.3s cubic-bezier(.2,.8,.2,1);z-index:200;pointer-events:none;
   max-width:90vw;text-align:center;box-shadow:var(--sh-md)}
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+ .emp-h{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:10px 2px 4px;
+  font-size:12.5px;font-weight:680;letter-spacing:.01em;color:var(--text-2)}
+.emp-h::before{content:"";height:.5px;flex:1;order:2;background:var(--border);margin-left:4px}
+.emp-h span:first-child{order:1;text-transform:uppercase;letter-spacing:.04em}
+.emp-h .emp-n{order:3;flex:0 0 auto;background:var(--bg-3);color:var(--text-2);
+  border-radius:var(--r-pill);padding:1px 9px;font-variant-numeric:tabular-nums;font-weight:600}
 </style>
 </head>
 <body>
@@ -3635,14 +3641,31 @@ function tablaPedidos(lista){
 function listaPorFecha(lista){
   if(!lista.length) return empty('box','Sin pedidos en este filtro.');
   const prio={pendiente:1, preparado:2, asignado:3, en_reparto:3, despachado:3, en_camino:3, entregado:4, confirmado:5, anulado:9};
+  const ordEmp0={}; EMPRESAS.forEach((e,i)=>ordEmp0[e.id]=i);
   const arr=lista.slice().sort((a,b)=>{
     const pa=prio[a.estado]||6, pb=prio[b.estado]||6;
     if(pa!==pb) return pa-pb;
+    const ea=ordEmp0[a.empresa]!=null?ordEmp0[a.empresa]:99, eb=ordEmp0[b.empresa]!=null?ordEmp0[b.empresa]:99;
+    if(ea!==eb) return ea-eb;
     return (b.creado||0)-(a.creado||0);
   });
   const grupos={1:"📦 Para preparar",2:"✅ Preparados · listos para despachar",3:"🚚 En reparto",4:"📬 Entregados",5:"🔒 Confirmados",6:"Otros",9:"Anulados"};
-  let html="", ult=null;
-  arr.forEach(p=>{ const g=prio[p.estado]||6; if(g!==ult){ html+=`<div class="dia-h">${grupos[g]||""}</div>`; ult=g; } html+=cardOperador(p); });
+  // orden de marcas: el de EMPRESAS; lo desconocido va al final
+  const ordEmp={}; EMPRESAS.forEach((e,i)=>ordEmp[e.id]=i);
+  let html="", ult=null, ultEmp=null;
+  arr.forEach(p=>{
+    const g=prio[p.estado]||6;
+    if(g!==ult){ html+=`<div class="dia-h">${grupos[g]||""}</div>`; ult=g; ultEmp=null; }
+    const empId=p.empresa||"";
+    if(empId!==ultEmp){
+      const em=empId?empresaObj(empId):null;
+      const nom=em?em.nombre:"Sin marca";
+      const n=arr.filter(x=>(x.empresa||"")===empId && (prio[x.estado]||6)===g).length;
+      html+=`<div class="emp-h"><span>${esc(nom)}</span><span class="emp-n">${n}</span></div>`;
+      ultEmp=empId;
+    }
+    html+=cardOperador(p);
+  });
   return html;
 }
 function accionPrincipal(p){   // el botón del paso siguiente, a la derecha de la fila
