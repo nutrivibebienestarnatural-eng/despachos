@@ -3361,6 +3361,14 @@ function vistaPanel(){
     </div>
     <div class="hint" style="margin-top:10px">Modo demo (sin login). Al activar Firebase, cada uno entra con su usuario.</div>`}`}`;
 }
+/* ¿el pedido es de HOY? (por fecha de creación) */
+function esEnvioDeHoy(p){ const d=new Date(); d.setHours(0,0,0,0); const ini=d.getTime(); return (p.creado||0)>=ini && (p.creado||0)<ini+86400000; }
+/* cartelito de estado de descuento de stock, para cada fila */
+function badgeDescuento(p){
+  if(p.stockBajado && p.noDescuenta) return '<span style="font-size:10.5px;font-weight:700;color:#0a84ff">🟡 Río Tercero (no toca stock)</span>';
+  if(p.stockBajado) return '<span style="font-size:10.5px;font-weight:700;color:var(--green)">✓ descontó</span>';
+  return '<span style="font-size:10.5px;font-weight:700;color:var(--amber)">⚠ sin descontar</span>';
+}
 function vistaOperador(){
   try{ pintarSidebar(); }catch(e){}
   if(OPVIEW==="hoy") return vistaHoy();
@@ -3403,6 +3411,7 @@ function vistaOperador(){
     }
     if(FILTRO==="archivados") return !!p.cerradoEn;                  // solo las cerradas
     if(p.cerradoEn) return false;                                     // archivadas: fuera de las demás vistas
+    if(FILTRO==="hoy") return esEnvioDeHoy(p) && p.estado!=="anulado";  // los envíos del día
     if(FILTRO.startsWith("emp:")){                                    // filtro por marca: solo lo que falta despachar
       if((p.empresa||"")!==FILTRO.slice(4)) return false;
       return !["entregado","confirmado","anulado"].includes(p.estado);
@@ -3472,8 +3481,8 @@ function vistaOperador(){
     <div class="filters">
       ${EMPRESAS.map(e=>`<button class="${FILTRO==='emp:'+e.id?'on':''}" style="font-weight:700" onclick="setFiltro('emp:${e.id}')">${esc(e.nombre.split(" ")[0])}</button>`).join("")}
       <span style="width:1px;background:var(--border);margin:0 2px"></span>
-      ${["todos","cadete","correo","pendiente","preparado","entregado","confirmado","anulado","archivados"]
-        .map(f=>`<button class="${FILTRO===f?'on':''}" onclick="setFiltro('${f}')">${({todos:'Por despachar',cadete:'Cadete',correo:'Correo',anulado:'Anulados',archivados:'📁 Archivados'})[f]||estObj(f).label}</button>`).join("")}
+      ${["hoy","todos","cadete","correo","pendiente","preparado","entregado","confirmado","anulado","archivados"]
+        .map(f=>`<button class="${FILTRO===f?'on':''}" onclick="setFiltro('${f}')">${({hoy:'📅 Hoy',todos:'Por despachar',cadete:'Cadete',correo:'Correo',anulado:'Anulados',archivados:'📁 Archivados'})[f]||estObj(f).label}</button>`).join("")}
     </div>
     ${(()=>{ const abiertas=ped.filter(p=>!p.cerradoEn && p.estado!=="anulado");
       const cierreTs=ultimoCierreTs();
@@ -3606,7 +3615,10 @@ function tablaPedidos(lista){
             })()}</td>
             <td><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${anilloColor(an.n)};margin-right:4px"></span>${esc(an.label)}</td>
             <td>${esc(quien)}</td>
-            <td><span class="badge"><span class="dot" style="background:${e.color}"></span>${e.label}</span></td>
+            <td><span class="badge"><span class="dot" style="background:${e.color}"></span>${e.label}</span>
+              <div style="margin-top:4px">${badgeDescuento(p)}</div>
+              ${!p.stockBajado&&p.estado!=='anulado'?`<button class="btn sm" style="margin-top:5px;padding:3px 9px;font-size:11px" onclick="event.stopPropagation();descontarAhora('${p.id}')">↻ Descontar</button>`:''}
+            </td>
             <td style="text-align:right;font-variant-numeric:tabular-nums">${fmtAr(costoEnvio(p))}</td>
             <td style="text-align:right">${accionPrincipal(p)}</td>
           </tr>
@@ -3672,7 +3684,7 @@ function cardOperador(p){
   const head=`<div class="ord-head" onclick="toggleExp('${p.id}')">
       <div style="min-width:0;flex:1">
         <div class="ord-name"><span class="ord-cli">${esc(p.cliente||'—')}</span>${p.esReenvio?' <span style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:20px;background:#e0b00022;color:#b58600;vertical-align:1px">🔁 REENVÍO</span>':''}</div>
-        <div class="ord-sub"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${anilloColor(an.n)};margin-right:5px;vertical-align:-1px"></span>N° ${esc(numOrden(p))}${emp?(' · '+esc(emp)):''}${p.creado?(' · '+fmtFechaCorta(p.creado)):''} · ${esc(quien)}</div>
+        <div class="ord-sub"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${anilloColor(an.n)};margin-right:5px;vertical-align:-1px"></span>N° ${esc(numOrden(p))}${emp?(' · '+esc(emp)):''}${p.creado?(' · '+fmtFechaCorta(p.creado)):''} · ${esc(quien)} · ${badgeDescuento(p)}</div>
       </div>
       <div style="display:flex;align-items:center;gap:7px;flex:0 0 auto">
         ${accionPrincipal(p)}
