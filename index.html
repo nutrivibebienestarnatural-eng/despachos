@@ -3192,7 +3192,6 @@ function vistaHoy(){
       <button class="btn ghost" onclick="bajarEtiquetasDelDia()">🏷️ Bajar etiquetas 10×15</button>
       <button class="btn ghost" onclick="imprimirChecklistDia()">🖨️ Checklist preparación</button>
       <button class="btn ghost" onclick="OPVIEW='pedidos';vistaOperador()">▤ Ver todos los pedidos</button>
-      <button class="btn ghost" onclick="chequeoDescuentosHoy()">🔎 Chequeo de descuentos</button>
     </div>
     <button class="btn block" style="margin-top:8px;background:var(--accent);color:#fff" onclick="copiarAcceso('operador')">🔗 Copiar link para mi empleada (solo preparar)</button>
     ${(()=>{
@@ -3404,9 +3403,9 @@ function vistaOperador(){
     }
     if(FILTRO==="archivados") return !!p.cerradoEn;                  // solo las cerradas
     if(p.cerradoEn) return false;                                     // archivadas: fuera de las demás vistas
-    if(FILTRO.startsWith("emp:")){                                    // filtro por marca: TODOS los envíos de esa marca (incluye entregados)
+    if(FILTRO.startsWith("emp:")){                                    // filtro por marca: solo lo que falta despachar
       if((p.empresa||"")!==FILTRO.slice(4)) return false;
-      return p.estado!=="anulado";
+      return !["entregado","confirmado","anulado"].includes(p.estado);
     }
     if(FILTRO==="todos") return !["entregado","confirmado","anulado"].includes(p.estado);   // por defecto: sin entregados
     if(FILTRO==="activos") return !["confirmado","anulado"].includes(p.estado);
