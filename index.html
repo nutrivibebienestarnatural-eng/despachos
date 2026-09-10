@@ -3592,21 +3592,25 @@ async function kanSoltar(destino){
 let PED_VISTA=(typeof localStorage!=="undefined"&&localStorage.getItem("ped_vista"))||"lista";
 function setPedVista(v){ PED_VISTA=v; try{localStorage.setItem("ped_vista",v);}catch(e){} vistaOperador(); }
 function tablaPedidos(lista){
-  const arr=lista.slice().sort((a,b)=>(b.creado||0)-(a.creado||0));
+  const ordEmp={}; EMPRESAS.forEach((e,i)=>ordEmp[e.id]=i);
+  const rk=x=>(ordEmp[x]!=null?ordEmp[x]:99);
+  const arr=lista.slice().sort((a,b)=>{ const oa=rk(a.empresa), ob=rk(b.empresa); return oa!==ob ? oa-ob : (b.creado||0)-(a.creado||0); });
   if(!arr.length) return empty('box','Sin pedidos en este filtro.');
   return `<div style="overflow-x:auto;-webkit-overflow-scrolling:touch">
     <table class="tbl">
       <thead><tr>
-        <th>Fecha</th><th>N°</th><th>Cliente</th><th>Marca</th><th>Productos enviados</th><th>Zona</th><th>Reparto</th><th>Estado</th><th style="text-align:right">Envío</th><th></th>
+        <th>Fecha</th><th>N°</th><th>Cliente</th><th>Productos enviados</th><th>Zona</th><th>Reparto</th><th>Estado</th><th style="text-align:right">Envío</th><th>Editar</th>
       </tr></thead>
       <tbody>
-        ${arr.map(p=>{ const e=estObj(p.estado), an=anilloDe(p);
+        ${(()=>{ let ult=null; return arr.map(p=>{ const e=estObj(p.estado), an=anilloDe(p);
           const quien=p.metodo==="correo"?"Correo":(p.cadete||"—");
-          return `<tr onclick="toggleExp('${p.id}')" style="cursor:pointer">
+          let hdr="";
+          if(p.empresa!==ult){ ult=p.empresa; const cnt=arr.filter(x=>x.empresa===p.empresa).length;
+            hdr=`<tr><td colspan="9" style="background:var(--bg-3);font-weight:800;text-transform:uppercase;letter-spacing:.03em;font-size:12.5px;padding:9px 12px">${esc(p.empresa?empresaObj(p.empresa).nombre:'Sin marca')} · ${cnt} env${cnt===1?'ío':'íos'}</td></tr>`; }
+          return hdr+`<tr onclick="toggleExp('${p.id}')" style="cursor:pointer">
             <td class="muted">${p.creado?fmtFechaCorta(p.creado):'—'}</td>
             <td><b title="${esc(numOrden(p))}">${(()=>{const n=numOrden(p);return esc(n.length>11?("…"+n.slice(-8)):n);})()}</b></td>
             <td>${esc(p.cliente||'—')}</td>
-            <td class="muted">${esc(p.empresa?empresaObj(p.empresa).nombre.split(" ")[0]:'—')}</td>
             <td style="max-width:210px;overflow:hidden;text-overflow:ellipsis;font-size:11.5px;color:var(--text-2)">${(()=>{ let it=[]; try{ it=itemsPedido(p); }catch(e){}
               if(!it.length) return esc((p.items||"—").slice(0,42));
               const u=it.reduce((s,x)=>s+(x.cant||0),0);
@@ -3620,9 +3624,9 @@ function tablaPedidos(lista){
               ${!p.stockBajado&&p.estado!=='anulado'?`<button class="btn sm" style="margin-top:5px;padding:3px 9px;font-size:11px" onclick="event.stopPropagation();descontarAhora('${p.id}')">↻ Descontar</button>`:''}
             </td>
             <td style="text-align:right;font-variant-numeric:tabular-nums">${fmtAr(costoEnvio(p))}</td>
-            <td style="text-align:right">${accionPrincipal(p)}</td>
+            <td style="text-align:right"><button class="btn sm ghost" style="padding:5px 10px;font-size:15px" onclick="event.stopPropagation();cambiarRuta('${p.id}')" title="Editar">✏️</button></td>
           </tr>
-          ${EXP_PED[p.id]?`<tr><td colspan="10" style="background:var(--bg-2);padding:12px 14px">
+          ${EXP_PED[p.id]?`<tr><td colspan="9" style="background:var(--bg-2);padding:12px 14px">
             <div class="muted" style="font-size:12.5px">${esc(p.tel||'')} · ${esc(p.dir||'')} — ${esc(p.ciudad||'')}, ${esc(p.provincia||'')}</div>
             <div style="margin:6px 0;font-size:13px">${esc(p.items||'—')}</div>
             <div class="acts">
@@ -3633,7 +3637,7 @@ function tablaPedidos(lista){
               <button class="btn sm ghost" onclick="event.stopPropagation();imprimirPickeo('${p.id}')">Pickeo</button>
               <button class="btn sm green" onclick="event.stopPropagation();waCliente('${p.id}')">WhatsApp</button>
             </div>
-          </td></tr>`:''}`; }).join("")}
+          </td></tr>`:''}`; }).join(""); })()}
       </tbody>
     </table></div>`;
 }
