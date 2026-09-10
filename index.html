@@ -272,12 +272,17 @@ hr{border:none;border-top:.5px solid var(--border);margin:20px 0}
   font-weight:540;opacity:0;transition:.3s cubic-bezier(.2,.8,.2,1);z-index:200;pointer-events:none;
   max-width:90vw;text-align:center;box-shadow:var(--sh-md)}
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
- .emp-h{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:10px 2px 4px;
-  font-size:12.5px;font-weight:680;letter-spacing:.01em;color:var(--text-2)}
-.emp-h::before{content:"";height:.5px;flex:1;order:2;background:var(--border);margin-left:4px}
-.emp-h span:first-child{order:1;text-transform:uppercase;letter-spacing:.04em}
-.emp-h .emp-n{order:3;flex:0 0 auto;background:var(--bg-3);color:var(--text-2);
-  border-radius:var(--r-pill);padding:1px 9px;font-variant-numeric:tabular-nums;font-weight:600}
+ .emp-cols{display:grid;grid-template-columns:1fr;gap:12px;margin:0 0 16px;align-items:start}
+@media(min-width:760px){.emp-cols{grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}}
+.emp-col{min-width:0;display:flex;flex-direction:column;gap:8px}
+.emp-col .order{margin-bottom:0}
+.emp-col-h{position:sticky;top:56px;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:8px;
+  padding:8px 13px;background:color-mix(in srgb,var(--bg-2) 92%,transparent);
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+  border:.5px solid var(--border);border-radius:12px;
+  font-size:12px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--text)}
+.emp-col-h .n{background:var(--bg-3);color:var(--text-2);border-radius:var(--r-pill);
+  padding:1px 9px;font-weight:600;letter-spacing:0;font-variant-numeric:tabular-nums}
 </style>
 </head>
 <body>
@@ -3523,7 +3528,9 @@ function vistaOperador(){
     </div>
     ${PED_VISTA==='kanban'
       ? kanbanPedidos(lista)
-      : `<div class="cardgrid">${PED_VISTA==='tabla'?tablaPedidos(lista):listaPorFecha(lista)}</div>`}
+      : PED_VISTA==='tabla'
+        ? `<div class="cardgrid">${tablaPedidos(lista)}</div>`
+        : listaPorFecha(lista)}
     ${DB.modo==="demo"?`<div class="center" style="margin-top:24px">
       <span class="muted" style="font-size:13px">Modo demo · </span>
       <button class="btn sm ghost" onclick="resetDatos(false)">Recargar ejemplo (35)</button>
@@ -3641,30 +3648,26 @@ function tablaPedidos(lista){
 function listaPorFecha(lista){
   if(!lista.length) return empty('box','Sin pedidos en este filtro.');
   const prio={pendiente:1, preparado:2, asignado:3, en_reparto:3, despachado:3, en_camino:3, entregado:4, confirmado:5, anulado:9};
-  const ordEmp0={}; EMPRESAS.forEach((e,i)=>ordEmp0[e.id]=i);
-  const arr=lista.slice().sort((a,b)=>{
-    const pa=prio[a.estado]||6, pb=prio[b.estado]||6;
-    if(pa!==pb) return pa-pb;
-    const ea=ordEmp0[a.empresa]!=null?ordEmp0[a.empresa]:99, eb=ordEmp0[b.empresa]!=null?ordEmp0[b.empresa]:99;
-    if(ea!==eb) return ea-eb;
-    return (b.creado||0)-(a.creado||0);
-  });
   const grupos={1:"📦 Para preparar",2:"✅ Preparados · listos para despachar",3:"🚚 En reparto",4:"📬 Entregados",5:"🔒 Confirmados",6:"Otros",9:"Anulados"};
-  // orden de marcas: el de EMPRESAS; lo desconocido va al final
   const ordEmp={}; EMPRESAS.forEach((e,i)=>ordEmp[e.id]=i);
-  let html="", ult=null, ultEmp=null;
-  arr.forEach(p=>{
-    const g=prio[p.estado]||6;
-    if(g!==ult){ html+=`<div class="dia-h">${grupos[g]||""}</div>`; ult=g; ultEmp=null; }
-    const empId=p.empresa||"";
-    if(empId!==ultEmp){
-      const em=empId?empresaObj(empId):null;
-      const nom=em?em.nombre:"Sin marca";
-      const n=arr.filter(x=>(x.empresa||"")===empId && (prio[x.estado]||6)===g).length;
-      html+=`<div class="emp-h"><span>${esc(nom)}</span><span class="emp-n">${n}</span></div>`;
-      ultEmp=empId;
-    }
-    html+=cardOperador(p);
+  let html="";
+  [1,2,3,4,5,6,9].forEach(g=>{
+    const enG=lista.filter(p=>(prio[p.estado]||6)===g);
+    if(!enG.length) return;
+    html+=`<div class="dia-h">${grupos[g]||""}</div>`;
+    // una columna por empresa (nombre arriba, pedidos abajo), ordenadas segun EMPRESAS
+    const empIds=[...new Set(enG.map(p=>p.empresa||""))].sort((a,b)=>{
+      const ea=ordEmp[a]!=null?ordEmp[a]:99, eb=ordEmp[b]!=null?ordEmp[b]:99; return ea-eb;
+    });
+    const cols=empIds.map(empId=>{
+      const arr=enG.filter(p=>(p.empresa||"")===empId).sort((a,b)=>(b.creado||0)-(a.creado||0));
+      const nom=empId?empresaObj(empId).nombre:"Sin marca";
+      return `<div class="emp-col">
+        <div class="emp-col-h"><span>${esc(nom)}</span><span class="n">${arr.length}</span></div>
+        ${arr.map(cardOperador).join("")}
+      </div>`;
+    }).join("");
+    html+=`<div class="emp-cols">${cols}</div>`;
   });
   return html;
 }
