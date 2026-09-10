@@ -2124,19 +2124,28 @@ function imprimirChecklistDia(){
     .sort((a,b)=>(a.creado||0)-(b.creado||0));
   if(!peds.length){ toast("No hay pedidos para preparar"); return; }
   let udsTot=0; peds.forEach(p=>{ try{ itemsPedido(p).forEach(it=>udsTot+=it.cant||0); }catch(e){} });
-  const filasOrd=peds.map((p,i)=>{
-    let it=[]; try{ it=itemsPedido(p); }catch(e){}
-    const prods=it.map(x=>'<div class="pl">☐ '+x.cant+'× '+esc(x.prodNombre)+'</div>').join("");
-    const esCorreo=p.metodo==="correo";
-    const via=esCorreo?"CORREO":"CADETE";
-    const detalle=esCorreo?"Correo":(p.cadete||"—");
-    const marca=nombreEmp(p.empresa);
-    return '<div class="ord">'+
-      '<div class="oh"><span class="chk">☐</span><b>'+(i+1)+'. '+esc(p.cliente||"—")+'</b>'+
-        '<span class="via '+(esCorreo?'vc':'vd')+'">'+via+'</span></div>'+
-      '<div class="marca">'+esc(marca)+'</div>'+
-      '<div class="om">N° '+esc(numOrden(p))+' · '+esc(detalle)+' · '+esc(anilloDe(p).label)+'</div>'+
-      prods+'</div>';
+  // agrupo los pedidos por empresa/marca
+  const porEmp={};
+  peds.forEach(p=>{ const m=p.empresa||"labs"; if(!porEmp[m]) porEmp[m]=[]; porEmp[m].push(p); });
+  // orden: Labs, Nutrivibe, SupleMundo, resto
+  const ordenEmp=["labs","nutrivibe","suplemundo","sc"];
+  const marcasOrdenadas=Object.keys(porEmp).sort((a,b)=>{ const ia=ordenEmp.indexOf(a), ib=ordenEmp.indexOf(b); return (ia<0?99:ia)-(ib<0?99:ib); });
+  let n=0;
+  const filasOrd=marcasOrdenadas.map(mId=>{
+    const grupo=porEmp[mId];
+    const cab='<div class="emp-h">'+esc(nombreEmp(mId))+' · '+grupo.length+' pedido'+(grupo.length>1?'s':'')+'</div>';
+    const ords=grupo.map(p=>{ n++;
+      let it=[]; try{ it=itemsPedido(p); }catch(e){}
+      const prods=it.map(x=>'<div class="pl">☐ '+x.cant+'× '+esc(x.prodNombre)+'</div>').join("");
+      const via=quienReparte(p).toUpperCase();
+      const esCorreo=p.metodo==="correo"||p.metodo==="pickit";
+      return '<div class="ord">'+
+        '<div class="oh"><span class="chk">☐</span><b>'+n+'. '+esc(p.cliente||"—")+'</b>'+
+          '<span class="via '+(esCorreo?'vc':'vd')+'">'+esc(via)+'</span></div>'+
+        '<div class="om">N° '+esc(numOrden(p))+' · '+esc(anilloDe(p).label)+'</div>'+
+        prods+'</div>';
+    }).join("");
+    return cab+ords;
   }).join("");
   const estilos='<style>@media screen{body{background:#f5f5f7}#bar{position:sticky;top:0;display:flex;gap:8px;justify-content:center;padding:10px;background:#fff;border-bottom:1px solid #ddd}#bar button{font:inherit;font-size:14px;padding:8px 16px;border-radius:8px;border:1px solid #0a84ff;background:#0a84ff;color:#fff;cursor:pointer}#hoja{width:100mm;margin:12px auto;background:#fff;box-shadow:0 2px 12px rgba(0,0,0,.15)}}'+
   '@media print{#bar{display:none}#hoja{margin:0;box-shadow:none}}'+
@@ -2149,6 +2158,7 @@ function imprimirChecklistDia(){
   '.vc{background:#000;color:#fff}.vd{background:#fff;color:#000}'+
   '.om{font-size:8px;color:#333;margin:.4mm 0 .8mm}.pl{font-size:9.5px;padding:.3mm 0 .3mm 2.5mm}'+
   '.marca{font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.03em;background:#000;color:#fff;display:inline-block;padding:.6mm 2mm;border-radius:1mm;margin:.8mm 0 .4mm}'+
+  '.emp-h{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;background:#000;color:#fff;text-align:center;padding:1.5mm;border-radius:1mm;margin:2.5mm 0 1.5mm}'+
   '.foot{margin-top:2mm;font-size:8.5px;border-top:1.2px solid #000;padding-top:1.5mm}</style>';
   const cuerpo='<div id="hoja"><h1>Preparación · '+dia+'</h1><div class="sub">'+peds.length+' órdenes · '+udsTot+' unidades</div>'+
     filasOrd+'<div class="foot">Preparó: ______________  Fecha: ______</div></div>';
@@ -5243,7 +5253,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v27-stock-editable";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v27-checklist-emp";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
