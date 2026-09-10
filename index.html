@@ -943,10 +943,14 @@ async function persistStock(st){ const r=stockRecord();
 async function pushMov(prod,tipo,cant,motivo,extra={}){ const st=stockState();
   st.movs.push({ts:Date.now(),prod,tipo,cant:Math.abs(+cant||0),motivo:motivo||"",...extra}); await persistStock(st); }
 /* Descuenta del pool compartido los items de un pedido, etiquetando empresa+canal (imputación) */
+/* Marcas que SIEMPRE salen de Bs As (nunca desde Río Tercero): siempre descuentan su stock. */
+function saleSiempreDeBsAs(emp){ return emp==="nutrivibe" || emp==="suplemundo"; }
+/* ¿Esta marca puede elegir salir desde Río Tercero? (las always-BsAs no) */
+function puedeElegirDeposito(emp){ return !saleSiempreDeBsAs(emp); }
 async function descontarStockPedido(id, scanMap, forzar){
   const p=await DB.get(id); if(!p || (p.stockBajado && !forzar)) return;
   // Nutrivibe siempre descuenta de Bs As. Labs que sale de Río Tercero NO descuenta del stock de Bs As.
-  if(p.origen==="riotercero" && p.empresa!=="nutrivibe"){
+  if(p.origen==="riotercero" && !saleSiempreDeBsAs(p.empresa)){
     await DB.update(id,{stockBajado:true, noDescuenta:true});   // marcado como despachado sin tocar stock Bs As
     return;
   }
@@ -2749,7 +2753,7 @@ async function cambiarOrigen(id){
 }
 /* Consolidado: productos sumados de los pedidos que salen de Río Tercero, para el laboratorio */
 function vistaConsolidado(){
-  const arr=soloPedidos().filter(p=>p.origen==="riotercero" && p.empresa!=="nutrivibe" && !["entregado","confirmado","anulado"].includes(p.estado) && !p.cerradoEn);
+  const arr=soloPedidos().filter(p=>p.origen==="riotercero" && !saleSiempreDeBsAs(p.empresa) && !["entregado","confirmado","anulado"].includes(p.estado) && !p.cerradoEn);
   const acc={};
   arr.forEach(p=>{ try{ itemsPedido(p).forEach(i=>{ acc[i.prodNombre]=(acc[i.prodNombre]||0)+i.cant; }); }catch(e){} });
   const prods=Object.entries(acc).sort((a,b)=>b[1]-a[1]);
@@ -2780,7 +2784,7 @@ function vistaConsolidado(){
     <button class="btn block ghost" style="margin-top:8px" onclick="exportarConsolidadoExcel()">📊 Descargar en Excel</button>`}`;
 }
 function consolidadoRT(){
-  const arr=soloPedidos().filter(p=>p.origen==="riotercero" && p.empresa!=="nutrivibe" && !["entregado","confirmado","anulado"].includes(p.estado) && !p.cerradoEn);
+  const arr=soloPedidos().filter(p=>p.origen==="riotercero" && !saleSiempreDeBsAs(p.empresa) && !["entregado","confirmado","anulado"].includes(p.estado) && !p.cerradoEn);
   const acc={}; arr.forEach(p=>{ try{ itemsPedido(p).forEach(i=>{ acc[i.prodNombre]=(acc[i.prodNombre]||0)+i.cant; }); }catch(e){} });
   return {arr, prods:Object.entries(acc).sort((a,b)=>b[1]-a[1])};
 }
@@ -3957,10 +3961,11 @@ function toggleImp(i){ IMP_SEL[i]=!IMP_SEL[i]; mostrarPreviewImport(); }
 function selImp(v){ IMP_SEL={}; IMP_FILAS.forEach((f,i)=>IMP_SEL[i]=v); mostrarPreviewImport(); }
 function setImpMetodo(i,val){ const f=IMP_FILAS[i]; if(!f) return;
   if(val==="cadete"){ f.metodo="cadete"; f.correo=""; f.etiquetaPdf=""; f.etiquetaPdfNombre=""; }
+  else if(val==="pickit"){ f.metodo="pickit"; f.correo="Pickit"; f.etiquetaPdf=""; f.etiquetaPdfNombre=""; }
   else if(val==="sucursal"){ f.metodo="correo"; f.correo="Punto de retiro"; }
   else { f.metodo="correo"; f.correo="Correo Argentino"; }
   mostrarPreviewImport(); }
-function impVal(f){ return f.metodo==="cadete"?"cadete":((f.correo||"")==="Punto de retiro"?"sucursal":"correo"); }
+function impVal(f){ return f.metodo==="cadete"?"cadete":(f.metodo==="pickit"?"pickit":((f.correo||"")==="Punto de retiro"?"sucursal":"correo")); }
 async function adjuntarEtiquetaImport(i,file){
   const dat=await archivoEtiqueta(file); if(!dat) return;
   Object.assign(IMP_FILAS[i],dat); toast("Etiqueta del correo adjuntada 📎"); mostrarPreviewImport();
@@ -4023,7 +4028,7 @@ async function guardarEnseniado(){
   await aprenderPack(c.sku, c.nombre, comps);
   cerrarEnseniar();
   toast("Aprendido ✓ No te vuelvo a preguntar por esto");
-  mostrarPreviewImport();
+  if(IMP_REV) dibujarRevisionProductos(); else mostrarPreviewImport();
 }
 function stockChipImport(nombreProd){
   try{
@@ -4087,12 +4092,13 @@ function mostrarPreviewImport(){
                 <option value="cadete" ${impVal(f)==='cadete'?'selected':''}>🚴 Cadete (Cardinal)</option>
                 <option value="correo" ${impVal(f)==='correo'?'selected':''}>📮 Correo a domicilio</option>
                 <option value="sucursal" ${impVal(f)==='sucursal'?'selected':''}>🏤 Correo a sucursal</option>
+                <option value="pickit" ${impVal(f)==='pickit'?'selected':''}>📦 Pickit</option>
               </select>
               ${esCorreo?`<label class="btn sm ghost" style="cursor:pointer;flex:0 0 auto">${f.etiquetaPdf?'📎 Cambiar PDF':'📎 PDF correo'}<input type="file" accept="application/pdf" style="display:none" onchange="adjuntarEtiquetaImport(${i},this.files[0])"></label>`:''}
             </div>
           </div>
         </div>`; }).join("")}
-      <button class="btn block green" style="margin-top:14px" onclick="confirmarImport()">Guardar ${sel.length} pedido${sel.length===1?'':'s'}</button>
+      <button class="btn block green" style="margin-top:14px" onclick="revisarProductosImport()">Revisar productos y guardar ${sel.length} pedido${sel.length===1?'':'s'} →</button>
       <button class="btn block ghost" style="margin-top:8px" onclick="IMP_FILAS=[];IMP_SEL={};formImportar()">Cancelar</button>
     </div>`;
 }
@@ -4106,8 +4112,239 @@ async function confirmarImport(){
   }catch(e){ alert("⚠️ IMPORTÉ "+creados+" DE "+sel.length+" Y FALLÓ\n\nError: "+(e&&e.message||e)+"\nVersión: "+APP_VERSION+"\n\nSacale captura y pasásela a Claude."); }
   try{ await agregarIgnorados(descartados); }catch(e){}   // que no vuelvan a aparecer
   if(creados===sel.length) alert("✅ "+creados+" PEDIDOS IMPORTADOS Y GUARDADOS\nVersión: "+APP_VERSION);
-  IMP_FILAS=[]; IMP_SEL={}; OPVIEW="pedidos"; vistaOperador();
+  IMP_FILAS=[]; IMP_SEL={}; IMP_REV=null; OPVIEW="pedidos"; vistaOperador();
 }
+
+/* ============================================================
+   REVISIÓN PRODUCTO POR PRODUCTO ANTES DE CREAR EL PEDIDO
+   Objetivo: que NUNCA se descuente mal el stock. Antes de guardar,
+   mostramos qué leyó la app de cada producto y te dejamos confirmarlo
+   o cambiarlo por el correcto del catálogo.
+   ============================================================ */
+let IMP_REV=null;   // sesión de revisión: { sel:[filas seleccionadas] }
+
+/* Marcas cuyo stock vive en el catálogo compartido (depósito Labs). SC.CANDLE no toca stock de suplementos. */
+function usaStockCatalogo(emp){ return emp==="labs" || emp==="nutrivibe" || emp==="suplemundo"; }
+/* Solo Labs elige depósito por pedido (Bs As / Río Tercero). El resto sale siempre de Bs As. */
+function mostrarDepositoImport(emp){ return emp==="labs"; }
+
+/* ¿Este pedido va a descontar stock del catálogo? (si no, no hace falta confirmar producto por producto) */
+function ordenDescuentaImport(f){
+  if(!descuentoActivo()) return false;                 // descuento global apagado
+  if(!usaStockCatalogo(f.empresa)) return false;       // SC.CANDLE u otra marca sin stock de suplementos
+  if(f.origen==="riotercero" && puedeElegirDeposito(f.empresa)) return false; // Labs desde Río Tercero: no toca Bs As
+  return true;
+}
+
+/* Cuando la orden vino sin prods (ej. Tienda Nube por API), los armo desde el texto de items para poder revisarlos */
+function materializarProds(f){
+  if(f.prods && f.prods.length) return;
+  const arr=[];
+  parseItems(f.items||"").forEach(it=>{
+    const comps=packComponentes(it.nombre,"");                 // ¿ya lo enseñaste como pack/vínculo?
+    if(comps){ arr.push({nombre:it.nombre, nomML:it.nombre, sku:"", cant:it.cant||1, reconocido:true}); return; }
+    const prod=mejorProducto(it.nombre);
+    arr.push({nombre: prod?prod.nombre:it.nombre, nomML:it.nombre, sku:"", cant:it.cant||1, reconocido:!!prod});
+  });
+  f.prods=arr;
+}
+
+/* Estado de una línea: 'pack' (kit conocido), 'ok' (producto exacto del catálogo), 'falta' (no reconocido) */
+function estadoLineaImport(f,x){
+  if(packComponentes(x.nombre,x.sku)) return 'pack';
+  return PRODUCTOS.some(p=>p.nombre===x.nombre) ? 'ok' : 'falta';
+}
+
+/* Abre la revisión: normaliza los productos y el depósito de cada pedido seleccionado */
+function revisarProductosImport(){
+  const sel=IMP_FILAS.filter((f,i)=>IMP_SEL[i]);
+  if(!sel.length){ toast("Marcá al menos un pedido"); return; }
+  sel.forEach(f=>{
+    materializarProds(f);
+    if(!puedeElegirDeposito(f.empresa)) f.origen="bsas";       // Nutrivibe y SupleMundo: siempre Bs As
+    const desc=ordenDescuentaImport(f);
+    (f.prods||[]).forEach(x=>{
+      if(x.confirmado===undefined) x.confirmado = desc ? false : true;
+      if(!desc) x.confirmado=true;                             // pedidos que no descuentan: no bloquean
+    });
+  });
+  IMP_REV={sel};
+  dibujarRevisionProductos();
+}
+
+/* Cuántas líneas quedan por resolver (solo cuentan las de pedidos que SÍ descuentan) */
+function faltanConfirmarImport(){
+  let n=0;
+  (IMP_REV?IMP_REV.sel:[]).forEach(f=>{
+    if(!ordenDescuentaImport(f)) return;
+    (f.prods||[]).forEach(x=>{
+      const lista = x.confirmado && estadoLineaImport(f,x)!=='falta';
+      if(!lista) n++;
+    });
+  });
+  return n;
+}
+
+function revConfirmarReconocidos(){
+  (IMP_REV?IMP_REV.sel:[]).forEach(f=>{
+    if(!ordenDescuentaImport(f)) return;
+    (f.prods||[]).forEach(x=>{ if(estadoLineaImport(f,x)!=='falta') x.confirmado=true; });
+  });
+  dibujarRevisionProductos();
+}
+function revToggleConf(i,pi){
+  const f=IMP_FILAS[i], x=f&&f.prods&&f.prods[pi]; if(!x) return;
+  if(estadoLineaImport(f,x)==='falta'){ toast("Primero elegí el producto correcto del catálogo"); return; }
+  x.confirmado=!x.confirmado; dibujarRevisionProductos();
+}
+function revSetProd(i,pi,val){
+  const f=IMP_FILAS[i], x=f&&f.prods&&f.prods[pi]; if(!x) return;
+  val=(val||"").trim();
+  const exact=PRODUCTOS.find(p=>p.nombre===val);
+  x.nombre=val;
+  if(exact){ x.reconocido=true; x.confirmado=true;
+    x.recordar = !!((x.nomML && x.nomML!==val) || x.sku);      // si lo que leyó era distinto, ofrezco recordarlo
+  } else { x.reconocido=false; x.confirmado=false; x.recordar=false; }
+  dibujarRevisionProductos();
+}
+function revSetCant(i,pi,val){
+  const f=IMP_FILAS[i], x=f&&f.prods&&f.prods[pi]; if(!x) return;
+  x.cant=Math.max(1,parseInt(String(val).replace(/[^0-9]/g,""))||1); dibujarRevisionProductos();
+}
+function revDelProd(i,pi){
+  const f=IMP_FILAS[i]; if(!f||!f.prods) return;
+  f.prods.splice(pi,1); dibujarRevisionProductos();
+}
+function revDeposito(i,val){ const f=IMP_FILAS[i]; if(!f) return; f.origen=val; dibujarRevisionProductos(); }
+function revToggleRecordar(i,pi,on){ const f=IMP_FILAS[i], x=f&&f.prods&&f.prods[pi]; if(x) x.recordar=!!on; }
+function volverAlPreview(){ IMP_REV=null; mostrarPreviewImport(); }
+
+function dibujarRevisionProductos(){
+  if(!IMP_REV){ return; }
+  const faltan=faltanConfirmarImport();
+  const nPed=IMP_FILAS.filter((f,i)=>IMP_SEL[i]).length;
+  const dl=`<datalist id="revProds">${PRODUCTOS.map(p=>`<option value="${esc(p.nombre)}"></option>`).join("")}</datalist>`;
+  const inp="padding:9px 11px;border:1px solid var(--border-2);border-radius:10px;font:inherit;background:var(--bg);width:100%";
+
+  const cards = IMP_FILAS.map((f,i)=>{
+    if(!IMP_SEL[i]) return "";
+    const desc=ordenDescuentaImport(f);
+    const emp=empresaObj(f.empresa);
+    // motivo por el que un pedido no descuenta (para avisar, no bloquea)
+    let motivoNoDesc="";
+    if(!desc){
+      if(!descuentoActivo()) motivoNoDesc="descuento de stock apagado";
+      else if(!usaStockCatalogo(f.empresa)) motivoNoDesc="esta marca no descuenta stock de suplementos";
+      else if(f.origen==="riotercero") motivoNoDesc="sale de Río Tercero (no toca stock Bs As)";
+    }
+    // selector de depósito (solo Labs)
+    const depSel = mostrarDepositoImport(f.empresa) ? `
+      <div class="row" style="gap:6px;align-items:center;margin:8px 0 2px;flex-wrap:wrap">
+        <span class="muted" style="font-size:12.5px">Sale de:</span>
+        <div class="seg" style="flex:0 0 auto">
+          <button class="${f.origen!=='riotercero'?'on':''}" onclick="revDeposito(${i},'bsas')">Bs As</button>
+          <button class="${f.origen==='riotercero'?'on':''}" onclick="revDeposito(${i},'riotercero')">Río Tercero</button>
+        </div>
+        ${f.origen==='riotercero'?`<span class="muted" style="font-size:11.5px">no descuenta stock Bs As</span>`:''}
+      </div>` : `<div class="muted" style="font-size:12px;margin-top:4px">Sale de Bs As</div>`;
+
+    const lineas=(f.prods||[]).map((x,pi)=>{
+      const e=estadoLineaImport(f,x);
+      const leido=esc(x.nomML||x.nombre)+(x.sku?` <span class="muted" style="font-size:11px">· SKU ${esc(x.sku)}</span>`:'');
+      // pastilla de estado
+      let pill;
+      if(!desc)          pill=`<span class="chip" style="background:var(--bg-3);color:var(--text-2)">no descuenta</span>`;
+      else if(e==='falta') pill=`<span class="chip" style="background:#ffe1e1;color:#c62828;font-weight:700">⚠ revisar</span>`;
+      else if(x.confirmado) pill=`<span class="chip" style="background:#d9f2e5;color:#0f6b40;font-weight:700">✓ confirmado</span>`;
+      else               pill=`<span class="chip" style="background:#fff3cd;color:#7a5a00;font-weight:700">tocá para confirmar</span>`;
+
+      // detalle de pack conocido
+      let packInfo="";
+      const comps=packComponentes(x.nombre,x.sku);
+      if(comps){ packInfo=`<div class="muted" style="font-size:12px;margin-top:4px">📦 descuenta: ${comps.map(c=>c.cant*(x.cant||1)+"× "+esc(c.nombre)+stockChipImport(c.nombre)).join(", ")} <button class="btn sm ghost" style="padding:1px 8px;font-size:11px" onclick="enseniarPack(${i},${pi})">editar</button></div>`; }
+
+      const chipStock = (e==='ok') ? stockChipImport(x.nombre) : "";
+      const rememberBox = (desc && e!=='falta' && ((x.nomML&&x.nomML!==x.nombre)||x.sku)) ? `
+        <label class="row" style="gap:6px;align-items:center;margin-top:6px;font-size:12px;color:var(--text-2)">
+          <input type="checkbox" ${x.recordar?'checked':''} onchange="revToggleRecordar(${i},${pi},this.checked)" style="width:16px;height:16px;accent-color:var(--accent)">
+          Recordar este producto para la próxima importación
+        </label>` : "";
+
+      const bg = (desc && e==='falta') ? "background:#fff5f5;border:1px solid #ffd0d0" : "background:var(--bg-2);border:1px solid var(--border)";
+      const confBtn = desc ? `
+        <button class="btn sm ${x.confirmado?'green':'ghost'}" style="flex:0 0 auto;padding:6px 12px" onclick="revToggleConf(${i},${pi})">${x.confirmado?'✓ Confirmado':'Confirmar'}</button>` : "";
+
+      return `
+        <div style="${bg};border-radius:12px;padding:11px 12px;margin-top:9px">
+          <div class="row" style="justify-content:space-between;align-items:flex-start;gap:8px">
+            <div style="min-width:0"><span class="muted" style="font-size:11.5px">Leído</span><div style="font-size:13.5px;font-weight:600">${leido}</div></div>
+            ${pill}
+          </div>
+          <div class="muted" style="font-size:11.5px;margin-top:8px">Descuenta de mi catálogo</div>
+          <div class="row" style="gap:8px;align-items:center;margin-top:3px">
+            <input list="revProds" value="${esc(x.nombre)}" placeholder="Buscá el producto correcto…" style="${inp};flex:1" onchange="revSetProd(${i},${pi},this.value)">
+            <input type="number" inputmode="numeric" min="1" value="${x.cant||1}" style="${inp};width:64px;text-align:center;font-weight:700;flex:0 0 auto" onchange="revSetCant(${i},${pi},this.value)">
+            <button class="btn sm ghost" style="flex:0 0 auto;padding:6px 9px" title="Quitar" onclick="revDelProd(${i},${pi})">✕</button>
+          </div>
+          ${chipStock?`<div style="margin-top:4px">${chipStock}</div>`:''}
+          ${packInfo}
+          ${(desc && e==='falta')?`<div style="margin-top:7px"><button class="btn sm" style="padding:4px 11px;font-size:12px" onclick="enseniarPack(${i},${pi})">Es un pack / vincular a mi producto</button></div>`:''}
+          ${rememberBox}
+          <div class="row" style="justify-content:flex-end;margin-top:8px">${confBtn}</div>
+        </div>`;
+    }).join("");
+
+    return `
+      <div class="card" style="margin-bottom:12px">
+        <div class="row" style="justify-content:space-between;align-items:flex-start;gap:8px">
+          <div style="min-width:0">
+            <b style="font-size:15.5px">${esc(f.cliente||'—')}</b> ${f.ref?`<span class="muted">· ${esc(f.ref.startsWith('#')?f.ref:('#'+f.ref))}</span>`:''}
+            <div class="muted" style="font-size:12.5px">${esc(emp.nombre)} · ${esc((f.ciudad||'').toUpperCase())}</div>
+          </div>
+        </div>
+        ${depSel}
+        ${!desc?`<div class="hint" style="margin-top:6px">Este pedido no descuenta stock (${motivoNoDesc}). Igual podés revisar los productos.</div>`:''}
+        ${lineas || `<div class="muted" style="font-size:13px;margin-top:8px">Sin productos.</div>`}
+      </div>`;
+  }).join("");
+
+  const puedeGuardar = faltan===0;
+  app().innerHTML=`
+    ${dl}
+    <button class="btn sm ghost" onclick="volverAlPreview()">← Volver</button>
+    <div class="title" style="margin-top:14px">Revisar productos</div>
+    <div class="subtitle">Confirmá qué descuenta cada producto del stock. Cambiá el que esté mal por el correcto del catálogo.</div>
+    <div class="card" style="position:sticky;top:56px;z-index:5;margin-bottom:12px">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <div>
+          <div style="font-size:20px;font-weight:700">${faltan===0?'Todo confirmado ✓':('Faltan '+faltan+' por revisar')}</div>
+          <div class="muted" style="font-size:12.5px">${nPed} pedido${nPed===1?'':'s'} a guardar</div>
+        </div>
+        <button class="btn sm ghost" onclick="revConfirmarReconocidos()">Confirmar reconocidos</button>
+      </div>
+    </div>
+    ${cards}
+    <button class="btn block ${puedeGuardar?'green':''}" ${puedeGuardar?'':'style="opacity:.5"'} onclick="finalizarRevision()">${puedeGuardar?('Guardar '+nPed+' pedido'+(nPed===1?'':'s')):('Faltan '+faltan+' producto'+(faltan===1?'':'s'))}</button>
+    <button class="btn block ghost" style="margin-top:8px" onclick="volverAlPreview()">Volver a la lista</button>`;
+}
+
+async function finalizarRevision(){
+  const faltan=faltanConfirmarImport();
+  if(faltan>0){ toast("Faltan confirmar "+faltan+" producto"+(faltan===1?"":"s")); return; }
+  const sel=IMP_FILAS.filter((f,i)=>IMP_SEL[i]);
+  for(const f of sel){
+    for(const x of (f.prods||[])){
+      if(x.recordar && (x.sku||x.nomML) && PRODUCTOS.some(p=>p.nombre===x.nombre)){
+        try{ await aprenderPack(x.sku||"", x.nomML||x.nombre, [{prod:x.nombre, cant:1}]); }catch(e){}
+        x.recordar=false;
+      }
+    }
+    f.items=(f.prods||[]).map(x=>x.cant+"x "+x.nombre).join(" · ");   // dejo el texto en línea con lo confirmado
+  }
+  IMP_REV=null;
+  confirmarImport();
+}
+
 /* ---- Importar PDF de preparación de Tienda Nube (separa columnas por posición) ---- */
 async function leerPDF(file){
   if(!file) return;
@@ -5253,7 +5490,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v27-checklist-emp";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v28-checklist-import";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
