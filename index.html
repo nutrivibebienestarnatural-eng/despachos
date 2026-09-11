@@ -2167,11 +2167,13 @@ function imprimirCheckout(){
 /* Checklist de preparación del día en 10x15 para la impresora térmica */
 /* Checklist de preparación del día en 10x15 (térmica), AGRUPADO POR EMPRESA.
    Se muestra DENTRO de la app (sin abrir ventana nueva) para que aparezca siempre, también en el celular. */
-function imprimirChecklistDia(){
+function imprimirChecklistDia(empresaFiltro){
   const dia=chkDia();
-  const peds=soloPedidos().filter(p=>p.estado!=="anulado" && (p.cliente||"")!=="_PRUEBA_DIAGNOSTICO"
+  const pedsAll=soloPedidos().filter(p=>p.estado!=="anulado" && (p.cliente||"")!=="_PRUEBA_DIAGNOSTICO"
     && !p.cerradoEn && ["pendiente","preparado"].includes(p.estado));
-  if(!peds.length){ toast("No hay pedidos para preparar"); return; }
+  if(!pedsAll.length){ toast("No hay pedidos para preparar"); return; }
+  const peds = empresaFiltro ? pedsAll.filter(p=>p.empresa===empresaFiltro) : pedsAll;
+  if(empresaFiltro && !peds.length){ toast("No hay pedidos de "+empresaObj(empresaFiltro).nombre+" para preparar"); return; }
   let udsTot=0; peds.forEach(p=>{ try{ itemsPedido(p).forEach(it=>udsTot+=it.cant||0); }catch(e){} });
 
   // agrupar por empresa, respetando el orden de EMPRESAS
@@ -2196,9 +2198,20 @@ function imprimirChecklistDia(){
     });
   });
 
+  // selector de marca (para poder re-imprimir solo una, ej. cuando entran pedidos nuevos de una sola marca)
+  const gruposAll={}; pedsAll.forEach(p=>{ (gruposAll[p.empresa]=gruposAll[p.empresa]||[]).push(p); });
+  const opcionesMarca=EMPRESAS.filter(e=>gruposAll[e.id]&&gruposAll[e.id].length)
+    .map(e=>'<option value="'+esc(e.id)+'" '+(empresaFiltro===e.id?'selected':'')+'>'+esc(e.nombre)+' ('+gruposAll[e.id].length+')</option>').join("");
+  const selectorMarca=opcionesMarca?(
+    '<select onchange="imprimirChecklistDia(this.value||null)" style="font-family:Arial,Helvetica,sans-serif;font-size:14px;padding:8px 10px;border-radius:9px;border:1px solid #ccc;background:#fff">'+
+      '<option value="" '+(!empresaFiltro?'selected':'')+'>Todas las marcas</option>'+
+      opcionesMarca+
+    '</select>'
+  ):"";
+
   const estilos='<style id="chkCss">'+
     '#chkOverlay{position:fixed;inset:0;z-index:99999;background:#f5f5f7;overflow:auto;-webkit-overflow-scrolling:touch}'+
-    '#chkBar{position:sticky;top:0;display:flex;gap:8px;justify-content:center;padding:10px;background:#fff;border-bottom:1px solid #ddd}'+
+    '#chkBar{position:sticky;top:0;display:flex;gap:8px;justify-content:center;align-items:center;flex-wrap:wrap;padding:10px;background:#fff;border-bottom:1px solid #ddd}'+
     '#chkBar button{font-family:Arial,Helvetica,sans-serif;font-size:15px;padding:9px 18px;border-radius:9px;border:1px solid #0a84ff;background:#0a84ff;color:#fff;cursor:pointer}'+
     '#chkBar button.sec{background:#fff;color:#0a84ff}'+
     '#hoja{width:100mm;margin:12px auto;background:#fff;box-shadow:0 2px 12px rgba(0,0,0,.15);color:#000;padding:3mm;font-family:Arial,Helvetica,sans-serif;font-size:11.5px;line-height:1.3}'+
@@ -2217,8 +2230,9 @@ function imprimirChecklistDia(){
       '#chkBar{display:none}#hoja{margin:0;box-shadow:none;width:100mm}}'+
     '</style>';
 
+  const subTxt=(empresaFiltro?('<b>'+esc(empresaObj(empresaFiltro).nombre)+'</b> &middot; '):"")+peds.length+' &oacute;rdenes &middot; '+udsTot+' unidades';
   const hoja='<div id="hoja"><h1>Preparaci&oacute;n &middot; '+dia+'</h1>'+
-    '<div class="sub">'+peds.length+' &oacute;rdenes &middot; '+udsTot+' unidades</div>'+
+    '<div class="sub">'+subTxt+'</div>'+
     cuerpo+'<div class="foot">Prepar&oacute;: ______________  Fecha: ______</div></div>';
 
   const prev=document.getElementById("chkOverlay"); if(prev) prev.remove();
@@ -2226,6 +2240,7 @@ function imprimirChecklistDia(){
   document.head.insertAdjacentHTML("beforeend", estilos);
   const ov=document.createElement("div"); ov.id="chkOverlay";
   ov.innerHTML='<div id="chkBar">'+
+    selectorMarca+
     '<button onclick="window.print()">&#128424;&#65039; Imprimir / Guardar PDF</button>'+
     '<button class="sec" onclick="cerrarChecklistDia()">&times; Cerrar</button></div>'+hoja;
   document.body.appendChild(ov);
@@ -5295,7 +5310,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v31-tabla-compacta-sin-corte";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v32-checklist-por-marca";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
