@@ -495,6 +495,8 @@ const empresaObj = id => EMPRESAS.find(e=>e.id===id) || EMPRESAS[0];
 const nombreEmp = id => { const e=EMPRESAS.find(x=>x.id===id); return e?e.nombre:"Sin marca"; };
 const canalObj   = id => CANALES.find(c=>c.id===id) || CANALES[0];
 const canalDe    = p => (p&&p.canal) || empresaObj(p&&p.empresa).canalDefault;
+/* Formato de la etiqueta/pedido, para mostrar en el checklist además de Cadete/Correo */
+const formatoEnvio = p => (p&&p.pickit) ? "Pickit" : (canalDe(p)==="ml_flex" ? "Flex" : "Nube");
 /* Marcas que SIEMPRE salen de Bs As y por lo tanto SIEMPRE descuentan stock
    (no se eligen pedido por pedido, como sí pasa con Labs del interior). */
 function saleSiempreBsAs(empresa){ return empresa==="nutrivibe" || empresa==="suplemundo"; }
@@ -2191,10 +2193,12 @@ function imprimirChecklistDia(empresaFiltro){
       const esCorreo=p.metodo==="correo";
       const via=esCorreo?"CORREO":"CADETE";
       const detalle=esCorreo?"Correo":(p.cadete||"\u2014");
+      const formato=formatoEnvio(p);
       cuerpo+='<div class="ord">'+
         '<div class="oh"><span class="chk">&#9744;</span><b>'+n+'. '+esc(p.cliente||"\u2014")+'</b>'+
           '<span class="via '+(esCorreo?'vc':'vd')+'">'+via+'</span></div>'+
-        '<div class="om">N&deg; '+esc(numOrden(p))+' &middot; '+esc(detalle)+' &middot; '+esc(anilloDe(p).label)+'</div>'+
+        '<div class="om">N&deg; '+esc(numOrden(p))+' &middot; '+esc(detalle)+' &middot; '+esc(anilloDe(p).label)+
+          ' &middot; <span class="fmt fmt-'+esc(formato.toLowerCase())+'">'+esc(formato.toUpperCase())+'</span></div>'+
         prods+'</div>';
     });
   });
@@ -2223,6 +2227,10 @@ function imprimirChecklistDia(empresaFiltro){
     '#hoja .oh{font-size:12.5px;display:flex;gap:1.5mm;align-items:center}#hoja .chk{font-size:16px;line-height:1}#hoja .oh b{flex:1;min-width:0}'+
     '#hoja .via{font-size:9.5px;font-weight:800;letter-spacing:.05em;padding:1px 6px;border-radius:2px;border:1.2px solid #000;white-space:nowrap}'+
     '#hoja .vc{background:#000;color:#fff}#hoja .vd{background:#fff;color:#000}'+
+    '#hoja .fmt{font-size:9px;font-weight:800;letter-spacing:.03em;padding:0px 5px;border-radius:2px;border:1px solid #999;white-space:nowrap}'+
+    '#hoja .fmt-nube{background:#eef4ff;color:#1d4ed8;border-color:#1d4ed8}'+
+    '#hoja .fmt-flex{background:#fff3cd;color:#7a5a00;border-color:#7a5a00}'+
+    '#hoja .fmt-pickit{background:#e8e6ff;color:#4b3fa8;border-color:#4b3fa8}'+
     '#hoja .om{font-size:9.5px;color:#333;margin:.5mm 0 1mm}#hoja .pl{font-size:11.5px;padding:.4mm 0 .4mm 3mm}'+
     '#hoja .foot{margin-top:2mm;font-size:10px;border-top:1.4px solid #000;padding-top:1.5mm}'+
     '@media print{@page{size:100mm 150mm;margin:0}'+
@@ -2526,7 +2534,7 @@ async function crearPedido(d){
   const id=await DB.create({tipo:"pedido",empresa:emp.id,canal:d.canal||emp.canalDefault,ref:d.ref||"",
     cliente:d.cliente,tel:d.tel||"",dir:d.dir||"",ciudad:d.ciudad||"",provincia:d.provincia||"",cp:d.cp||"",
     etiquetaPdf:d.etiquetaPdf||"",etiquetaPdfNombre:d.etiquetaPdfNombre||"",nota:d.nota||"",zonaFija:(d.zonaFija!=null?d.zonaFija:""),
-    items:d.items||"",prods:d.prods||[],origen:d.origen||r.origen,metodo:d.metodo||r.metodo,
+    items:d.items||"",prods:d.prods||[],origen:d.origen||r.origen,metodo:d.metodo||r.metodo,pickit:!!d.pickit,
     correo:d.correo||"",tracking:d.tracking||"",tnId:d.tnId||"",cadete:"",estado:"pendiente",creado:Date.now(),
     eventos:[{estado:"pendiente",ts:Date.now(),nota:"Pedido creado"}]});
   return id;
@@ -5157,9 +5165,11 @@ function parseEtiquetaML(texto){
     items.push(cant+"x "+(prodCat?prodCat.nombre:(nomML||("SKU "+sku))));
   }
   if(!cli && !venta && !prods.length) return null;
+  // etiqueta a un punto Pickit (locker): se nota porque el propio PDF de ML imprime "PICKIT" bien grande
+  const esPickit=/\bPICKIT\b/i.test(texto);
   return { ref: venta?("#"+venta):(envio?("#"+envio):""), cliente:cli.trim(), tel:"", dir:dir.trim(),
     ciudad:loc, provincia:prov, cp, items:items.join(" · "), prods, nota:nota.trim(), etiquetaML:true,
-    empresaML: empresaPorVendedorML(texto) };
+    pickit:esPickit, empresaML: empresaPorVendedorML(texto) };
 }
 /* Procesa UN archivo de etiqueta ML y devuelve sus filas listas para IMP_FILAS (sin tocar el estado global).
    Se usa tanto para una sola etiqueta como para varias juntas (leerEtiquetaML hace el loop). */
@@ -5355,7 +5365,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v35-multi-etiqueta-y-revision";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v36-checklist-nube-flex-pickit";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
