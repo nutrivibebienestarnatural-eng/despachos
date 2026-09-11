@@ -4170,6 +4170,61 @@ async function guardarEnseniado(){
   if(wasPrep){ if(typeof PREP_ID!=="undefined" && PREP_ID) pantallaPreparar(PREP_ID); else render(); }
   else mostrarPreviewImport();
 }
+/* Corregir a mano UN producto de UNA etiqueta importada (o agregar uno que faltó): la etiqueta
+   se leyó mal, es otro SKU, o el producto quedó pegado al pedido de otro cliente. pi=-1 = agregar nuevo. */
+let EDITPROD_CTX=null;
+function editarProdImport(fi,pi){
+  const f=IMP_FILAS[fi]; if(!f) return;
+  const x=(pi>=0 && f.prods && f.prods[pi]) ? f.prods[pi] : null;
+  EDITPROD_CTX={fi, pi, nombre:x?(x.nombre||x.nomML||""):"", cant:x?(x.cant||1):1, sku:x?(x.sku||""):"", nomML:x?(x.nomML||""):""};
+  dibujarEditProd();
+}
+function dibujarEditProd(){
+  const c=EDITPROD_CTX; if(!c) return;
+  let ov=document.getElementById("editProdOverlay");
+  if(!ov){ ov=document.createElement("div"); ov.id="editProdOverlay"; document.body.appendChild(ov); }
+  ov.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px";
+  const opciones=PRODUCTOS.map(p=>`<option value="${esc(p.nombre)}"></option>`).join("");
+  const inp="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:9px;font:inherit;background:var(--bg);box-sizing:border-box";
+  ov.innerHTML=`<div style="background:var(--bg-2);border-radius:16px;max-width:460px;width:100%;max-height:88vh;overflow:auto;padding:20px;box-shadow:0 20px 60px rgba(0,0,0,.5)">
+    <div style="font-size:18px;font-weight:800;margin-bottom:4px">${c.pi>=0?'Corregir producto':'Agregar producto'}</div>
+    <div class="hint" style="margin-bottom:14px">Si la etiqueta se leyó mal o mezcló productos de otro pedido, elegí acá el producto correcto y la cantidad real de este cliente.</div>
+    <datalist id="editProdList">${opciones}</datalist>
+    <div class="muted" style="font-size:12px;margin-bottom:4px">Producto</div>
+    <input list="editProdList" value="${esc(c.nombre||'')}" placeholder="Buscá el producto…" style="${inp};margin-bottom:12px" oninput="EDITPROD_CTX.nombre=this.value">
+    <div class="muted" style="font-size:12px;margin-bottom:4px">Cantidad</div>
+    <input type="number" inputmode="numeric" min="1" step="1" value="${c.cant}" style="${inp};width:100px;font-weight:700;text-align:center;margin-bottom:16px" oninput="EDITPROD_CTX.cant=Math.max(1,parseInt(this.value.replace(/[^0-9]/g,''))||1);this.value=EDITPROD_CTX.cant">
+    <div class="row" style="gap:8px">
+      <button class="btn block green" onclick="guardarEditProd()">Guardar</button>
+      <button class="btn block ghost" onclick="cerrarEditProd()">Cancelar</button>
+    </div>
+    ${c.pi>=0?`<button class="btn block ghost" style="margin-top:8px;color:#c62828" onclick="borrarProdImport()">🗑 Quitar este producto del pedido</button>`:''}
+  </div>`;
+}
+function cerrarEditProd(){ const ov=document.getElementById("editProdOverlay"); if(ov) ov.remove(); EDITPROD_CTX=null; }
+function guardarEditProd(){
+  const c=EDITPROD_CTX; if(!c) return;
+  const nombre=(c.nombre||"").trim();
+  if(!nombre){ toast("Elegí un producto"); return; }
+  const cant=Math.max(1,parseInt(c.cant)||1);
+  const f=IMP_FILAS[c.fi]; if(!f) return;
+  if(!f.prods) f.prods=[];
+  const match=PRODUCTOS.find(p=>p.nombre===nombre) || mejorProducto(nombre);
+  const nuevo={ nombre: match?match.nombre:nombre, cant, sku:c.sku||"", nomML:c.nomML||nombre, reconocido: !!match };
+  if(c.pi>=0 && f.prods[c.pi]) f.prods[c.pi]=nuevo; else f.prods.push(nuevo);
+  IMP_REV[c.fi]=true;   // ya lo corregiste a mano, cuenta como revisado
+  cerrarEditProd();
+  toast("Producto corregido ✓");
+  mostrarPreviewImport();
+}
+function borrarProdImport(){
+  const c=EDITPROD_CTX; if(!c||c.pi<0) return;
+  const f=IMP_FILAS[c.fi]; if(!f||!f.prods) return;
+  f.prods.splice(c.pi,1);
+  cerrarEditProd();
+  toast("Producto quitado del pedido");
+  mostrarPreviewImport();
+}
 function stockChipImport(nombreProd){
   try{
     const st=stockState();
@@ -4221,16 +4276,18 @@ function mostrarPreviewImport(){
             ${(f.marcaDetectada&&marcasEnLote.length>1)?`<span class="chip" style="margin-left:6px;background:#e8e6ff;color:#4b3fa8;font-weight:700">${esc(empresaObj(f.empresa).nombre)} ✓ detectada</span>`:''}
             ${f.etiquetaPdf?`<span class="chip" style="margin-left:6px;background:#d9f2e5;color:#0f6b40;font-weight:700">📎 ETIQUETA CORREO</span>`:''}
             <div class="muted" style="font-size:14px">${esc(f.dir)} — ${esc(f.ciudad)}, ${esc(f.provincia)}</div>
-            ${(()=>{ if(!f.prods||!f.prods.length) return `<div class="muted" style="font-size:14px">${esc(f.items||'—')}</div>`;
+            ${(()=>{ const agregar=`<div style="margin-top:4px"><button class="btn sm ghost" style="padding:2px 8px;font-size:11px" onclick="editarProdImport(${i},-1)">+ Agregar producto</button></div>`;
+              if(!f.prods||!f.prods.length) return `<div class="muted" style="font-size:14px">${esc(f.items||'—')}</div>${agregar}`;
               return f.prods.map((x,pi)=>{
                 const comps=packComponentes(x.nombre,x.sku);
                 const esPackND=(!comps && pareceePack(x.nomML||x.nombre));   // parece pack pero no lo conozco
+                const corregir=`<button class="btn sm ghost" style="padding:2px 8px;font-size:11px" onclick="editarProdImport(${i},${pi})">✎ corregir</button>`;
                 if(comps){ return `<div style="font-size:13.5px;margin-top:3px">📦 <b>${esc(x.nomML||x.nombre)}</b> <span class="muted">→ descuenta:</span> ${comps.map(c=>c.cant*(x.cant||1)+"× "+esc(c.nombre)+stockChipImport(c.nombre)).join(", ")}
-                  <button class="btn sm ghost" style="padding:2px 8px;font-size:11px" onclick="enseniarPack(${i},${pi})">editar</button></div>`; }
-                if(esPackND){ return `<div style="font-size:13.5px;margin-top:3px;padding:6px 8px;background:#fff3cd;border-radius:7px">⚠ <b>${esc(x.nomML||x.nombre)}</b> parece un pack. <button class="btn sm" style="padding:3px 10px;font-size:12px" onclick="enseniarPack(${i},${pi})">Enseñar qué descuenta</button></div>`; }
-                if(!x.reconocido){ return `<div style="font-size:13.5px;margin-top:3px;padding:8px 10px;background:#ffe8e8;border-radius:7px">⚠ <b>${esc(x.nomML||("SKU "+x.sku))}</b>${x.sku?` <span class="muted">(SKU ${esc(x.sku)})</span>`:''} — no lo reconozco. <button class="btn sm" style="padding:3px 10px;font-size:12px" onclick="enseniarPack(${i},${pi})">Vincular a mi producto</button><div class="muted" style="font-size:11px;margin-top:3px">Lo vinculás una vez y no te vuelve a preguntar por este SKU.</div></div>`; }
-                return `<div class="muted" style="font-size:13.5px;margin-top:2px">${x.cant}× ${esc(x.nombre)}${stockChipImport(x.nombre)}</div>`;
-              }).join(""); })()}
+                  <button class="btn sm ghost" style="padding:2px 8px;font-size:11px" onclick="enseniarPack(${i},${pi})">editar pack</button> ${corregir}</div>`; }
+                if(esPackND){ return `<div style="font-size:13.5px;margin-top:3px;padding:6px 8px;background:#fff3cd;border-radius:7px">⚠ <b>${esc(x.nomML||x.nombre)}</b> parece un pack. <button class="btn sm" style="padding:3px 10px;font-size:12px" onclick="enseniarPack(${i},${pi})">Enseñar qué descuenta</button> ${corregir}</div>`; }
+                if(!x.reconocido){ return `<div style="font-size:13.5px;margin-top:3px;padding:8px 10px;background:#ffe8e8;border-radius:7px">⚠ <b>${esc(x.nomML||("SKU "+x.sku))}</b>${x.sku?` <span class="muted">(SKU ${esc(x.sku)})</span>`:''} — no lo reconozco. <button class="btn sm" style="padding:3px 10px;font-size:12px" onclick="enseniarPack(${i},${pi})">Vincular a mi producto</button> ${corregir}<div class="muted" style="font-size:11px;margin-top:3px">"Vincular" lo enseña para siempre por este SKU. "✎ corregir" cambia solo este pedido (si la etiqueta mezcló el producto de otro cliente).</div></div>`; }
+                return `<div class="muted" style="font-size:13.5px;margin-top:2px">${x.cant}× ${esc(x.nombre)}${stockChipImport(x.nombre)} ${corregir}</div>`;
+              }).join("")+agregar; })()}
             ${(f.prods&&f.prods.length>=1)?`<label style="display:flex;gap:8px;align-items:center;margin-top:8px;padding:8px 10px;border-radius:8px;cursor:pointer;background:${IMP_REV[i]?'#d9f2e5':'#ffe8e8'}">
               <input type="checkbox" ${IMP_REV[i]?'checked':''} onchange="toggleRev(${i})" style="width:19px;height:19px;flex:0 0 auto">
               <span style="font-size:13px;font-weight:700;color:${IMP_REV[i]?'#0f6b40':'#c62828'}">${IMP_REV[i]?('✓ Revisé '+(f.prods.length===1?'este producto':'estos '+f.prods.length+' productos')):('Revisá '+(f.prods.length===1?'este producto':'estos '+f.prods.length+' productos')+' antes de guardar')}</span>
@@ -5365,7 +5422,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v36-checklist-nube-flex-pickit";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v37-corregir-producto-import";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
