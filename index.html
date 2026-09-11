@@ -85,7 +85,7 @@ a{color:var(--accent);text-decoration:none}
 /* Pantalla completa: oculta el menú lateral y la barra superior para trabajar solo con la tabla */
 body.zen #sidebar{display:none!important}
 body.zen>.nav{display:none!important}
-body.zen .wrap{margin-left:0!important;padding:16px!important}
+body.zen .wrap{margin-left:0!important;max-width:none!important;width:100%!important;padding:16px!important}
 .title{font-size:26px;font-weight:750;letter-spacing:-.025em;line-height:1.1;margin-bottom:4px}
 .subtitle{color:var(--text-2);font-size:14px;margin-bottom:18px;line-height:1.45}
 .label{font-size:10.5px;font-weight:650;letter-spacing:.07em;text-transform:uppercase;
@@ -3148,6 +3148,7 @@ function vistaHoy(){
   const nPrep=act.filter(p=>p.estado==="pendiente").length;   // pendientes de preparar (con o sin método)
   const nListos=act.filter(p=>p.estado==="preparado").length;             // preparados, falta despachar
   const nReparto=act.filter(p=>["asignado","en_reparto","despachado","en_camino"].includes(p.estado)).length;
+  LISTA_OP=act;   // para poder imprimir esta misma lista
 
   // determino el paso actual
   let paso, titulo, sub, accion, colorPaso;
@@ -3223,9 +3224,12 @@ function vistaHoy(){
     </div>
     <button class="btn block" style="margin-top:8px;background:var(--accent);color:#fff" onclick="copiarAcceso('operador')">🔗 Copiar link para mi empleada (solo preparar)</button>
     ${act.length?`<div class="card" style="margin-top:16px">
-        <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:8px">
+        <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:8px">
           <span class="label" style="margin:0">Pedidos activos por marca · ${act.length}</span>
-          ${zenBtn()}
+          <div class="row" style="gap:8px">
+            <button class="btn sm ghost" onclick="imprimirTablaPedidos(LISTA_OP,'Pedidos activos por marca')">${icon('printer')} Imprimir</button>
+            ${zenBtn()}
+          </div>
         </div>
         <div class="hint" style="margin-bottom:8px">Tocá la zona o el reparto de cualquier fila para corregirlos al toque, sin entrar al pedido.</div>
         ${tablaPedidos(act)}
@@ -3287,6 +3291,41 @@ function imprimirDespachadosHoy(){
   <table><thead><tr><th>#</th><th>Cliente</th><th>Orden</th><th>Marca</th><th>Reparto</th><th>Productos</th><th style="text-align:right">Envío</th></tr></thead>
   <tbody>${filas}</tbody>
   <tfoot><tr><td colspan="6">Total a cobrar</td><td style="text-align:right">${fmtAr(arr.reduce((s,p)=>s+costoEnvio(p),0))}</td></tr></tfoot></table>
+  <scr`+`ipt>window.onload=function(){setTimeout(function(){window.print()},400)}<\/scr`+`ipt></body></html>`);
+  w.document.close();
+}
+/* Imprime cualquier lista de pedidos, agrupada por marca (para "Pedidos activos por marca" en Hoy, y la tabla de Pedidos) */
+function imprimirTablaPedidos(lista, titulo){
+  if(!lista||!lista.length){ toast("No hay pedidos para imprimir"); return; }
+  const ordEmp={}; EMPRESAS.forEach((e,i)=>ordEmp[e.id]=i);
+  const rk=x=>(ordEmp[x]!=null?ordEmp[x]:99);
+  const arr=lista.slice().sort((a,b)=>{ const oa=rk(a.empresa), ob=rk(b.empresa); return oa!==ob?oa-ob:(b.creado||0)-(a.creado||0); });
+  const w=window.open("","_blank"); if(!w){ toast("Permití las ventanas emergentes"); return; }
+  let ult=null, filas="";
+  arr.forEach(p=>{ const e=estObj(p.estado), an=anilloDe(p);
+    const quien=p.metodo==="correo"?"Correo":(p.cadete||"—");
+    if(p.empresa!==ult){ ult=p.empresa; const cnt=arr.filter(x=>x.empresa===p.empresa).length;
+      filas+=`<tr><td colspan="8" style="background:#eee;font-weight:700;text-transform:uppercase;font-size:11px;padding:7px 6px">${esc(p.empresa?empresaObj(p.empresa).nombre:'Sin marca')} · ${cnt} env${cnt===1?'ío':'íos'}</td></tr>`; }
+    let it=[]; try{ it=itemsPedido(p); }catch(err){}
+    filas+=`<tr>
+      <td>${p.creado?fmtFechaCorta(p.creado):'—'}</td>
+      <td>${esc(numOrden(p))}</td>
+      <td>${esc(p.cliente||'—')}</td>
+      <td>${it.map(x=>x.cant+"× "+esc(x.prodNombre)).join("<br>")||esc(p.items||'—')}</td>
+      <td>${esc(an.label)}</td>
+      <td>${esc(quien)}</td>
+      <td>${esc(e.label||p.estado)}</td>
+      <td style="text-align:right">${fmtAr(costoEnvio(p))}</td></tr>`; });
+  const dia=new Date().toLocaleDateString("es-AR");
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(titulo||'Pedidos')} ${dia}</title>
+  <style>@page{size:A4;margin:14mm}body{font-family:-apple-system,system-ui,Segoe UI,sans-serif;color:#111;font-size:12px}
+  h1{font-size:20px;margin:0 0 2px}.sub{color:#666;margin-bottom:12px}
+  table{width:100%;border-collapse:collapse}th{text-align:left;font-size:10px;text-transform:uppercase;color:#666;border-bottom:1.5px solid #111;padding:6px}
+  td{padding:6px;border-bottom:.5px solid #ddd;vertical-align:top}
+  </style></head><body>
+  <h1>${esc(titulo||'Pedidos')}</h1><div class="sub">${dia} · ${arr.length} pedido${arr.length===1?'':'s'}</div>
+  <table><thead><tr><th>Fecha</th><th>N°</th><th>Cliente</th><th>Productos</th><th>Zona</th><th>Reparto</th><th>Estado</th><th style="text-align:right">Envío</th></tr></thead>
+  <tbody>${filas}</tbody></table>
   <scr`+`ipt>window.onload=function(){setTimeout(function(){window.print()},400)}<\/scr`+`ipt></body></html>`);
   w.document.close();
 }
@@ -3551,8 +3590,9 @@ function vistaOperador(){
         <button class="${PED_VISTA==='tabla'?'on':''}" ${PED_VISTA==='tabla'?'':'onclick="setPedVista(\'tabla\')"'}>Tabla</button>
         <button class="${PED_VISTA==='kanban'?'on':''}" ${PED_VISTA==='kanban'?'':'onclick="setPedVista(\'kanban\')"'}>Kanban</button>
       </div>
-      <div class="row" style="gap:8px;align-items:center">
+      <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">
         <span class="muted" style="font-size:13px">${lista.length} pedido${lista.length===1?'':'s'}</span>
+        <button class="btn sm ghost" onclick="imprimirTablaPedidos(LISTA_OP,'Pedidos')">${icon('printer')} Imprimir</button>
         ${zenBtn()}
       </div>
     </div>
@@ -5258,7 +5298,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v29-pantalla-completa";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v30-imprimir-y-ancho-full";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
