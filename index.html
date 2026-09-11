@@ -64,6 +64,7 @@ a{color:var(--accent);text-decoration:none}
 /* ---- Modo sistema: barra lateral fija en pantallas grandes ---- */
 #sidebar{display:none}
 @media(min-width:1000px){
+  .wrap{max-width:none}   /* en pantallas de PC, usar todo el ancho también fuera del modo admin (ej. link de operador) */
   body.sys #sidebar{display:flex;flex-direction:column;position:fixed;left:0;top:0;bottom:0;width:210px;
     background:var(--bg-2);border-right:.5px solid var(--border);padding:16px 12px;z-index:50;overflow-y:auto}
   body.sys #sidebar .logo{font-weight:800;font-size:16px;padding:6px 10px 14px;letter-spacing:-.01em}
@@ -5310,7 +5311,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v32-checklist-por-marca";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v33-ancho-completo-pc";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
