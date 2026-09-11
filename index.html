@@ -3614,7 +3614,9 @@ function vistaOperador(){
     </div>
     ${PED_VISTA==='kanban'
       ? kanbanPedidos(lista)
-      : `<div class="cardgrid">${PED_VISTA==='tabla'?tablaPedidos(lista):listaPorFecha(lista)}</div>`}
+      : PED_VISTA==='tabla'
+        ? tablaPedidos(lista)
+        : `<div class="cardgrid">${listaPorFecha(lista)}</div>`}
     ${DB.modo==="demo"?`<div class="center" style="margin-top:24px">
       <span class="muted" style="font-size:13px">Modo demo · </span>
       <button class="btn sm ghost" onclick="resetDatos(false)">Recargar ejemplo (35)</button>
@@ -5311,7 +5313,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v33-ancho-completo-pc";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v34-fix-grilla-tabla";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
