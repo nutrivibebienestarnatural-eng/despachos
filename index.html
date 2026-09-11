@@ -4310,13 +4310,30 @@ async function confirmarImport(){
   const sel=IMP_FILAS.filter((f,i)=>IMP_SEL[i]);
   if(!sel.length){ toast("Marcá al menos un pedido"); return; }
   if(faltaRevisarImport()){ toast("Revisá los productos de cada pedido antes de guardar (tildá 'Revisé')"); return; }
+  // Última barrera anti-duplicados, justo antes de crear: por más que ya se filtró al leer la etiqueta,
+  // puede pasar que 1) la misma venta haya quedado dos veces en la selección, o 2) el pedido ya se haya
+  // guardado por otro lado (otro dispositivo, u otra importación) mientras tenías esto en pantalla.
+  const todos=PEDIDOS.filter(p=>p.tipo===undefined || p.cliente!==undefined);
+  const vistos=new Set(); const aCrear=[], duplicados=[];
+  for(const f of sel){
+    const dup = f.ref && (todos.some(p=>p.ref===f.ref) || vistos.has(f.ref));
+    if(dup){ duplicados.push(f); continue; }
+    if(f.ref) vistos.add(f.ref);
+    aCrear.push(f);
+  }
+  if(duplicados.length){
+    const pl=duplicados.length===1;
+    const detalle=duplicados.map(f=>"• "+(f.cliente||"—")+(f.ref?(" · "+f.ref):"")).join("\n");
+    if(!aCrear.length){ alert("⚠ Ya "+(pl?"está":"están")+" cargado"+(pl?"":"s")+" (mismo N° de venta), no lo"+(pl?"":"s")+" vuelvo a crear:\n\n"+detalle); return; }
+    if(!confirm("⚠ "+duplicados.length+" pedido"+(pl?"":"s")+" de estos ya "+(pl?"está":"están")+" cargado"+(pl?"":"s")+" (mismo N° de venta) — no lo"+(pl?"":"s")+" voy a duplicar:\n\n"+detalle+"\n\n¿Guardo los otros "+aCrear.length+" igual?")) return;
+  }
   const descartados=IMP_FILAS.filter((f,i)=>!IMP_SEL[i]).map(f=>f.ref).filter(Boolean);   // los que destildaste
   let creados=0;
   try{
-    for(const f of sel){ f.canal=f.canal||IMP_CANAL; await crearPedido(f); creados++; }
-  }catch(e){ alert("⚠️ IMPORTÉ "+creados+" DE "+sel.length+" Y FALLÓ\n\nError: "+(e&&e.message||e)+"\nVersión: "+APP_VERSION+"\n\nSacale captura y pasásela a Claude."); }
+    for(const f of aCrear){ f.canal=f.canal||IMP_CANAL; await crearPedido(f); creados++; }
+  }catch(e){ alert("⚠️ IMPORTÉ "+creados+" DE "+aCrear.length+" Y FALLÓ\n\nError: "+(e&&e.message||e)+"\nVersión: "+APP_VERSION+"\n\nSacale captura y pasásela a Claude."); }
   try{ await agregarIgnorados(descartados); }catch(e){}   // que no vuelvan a aparecer
-  if(creados===sel.length) alert("✅ "+creados+" PEDIDOS IMPORTADOS Y GUARDADOS\nVersión: "+APP_VERSION);
+  if(creados===aCrear.length) alert("✅ "+creados+" PEDIDOS IMPORTADOS Y GUARDADOS"+(duplicados.length?(" (se salteó "+duplicados.length+" duplicado"+(duplicados.length===1?"":"s")+")"):"")+"\nVersión: "+APP_VERSION);
   IMP_FILAS=[]; IMP_SEL={}; IMP_REV={}; OPVIEW="pedidos"; vistaOperador();
 }
 /* ---- Importar PDF de preparación de Tienda Nube (separa columnas por posición) ---- */
@@ -4492,8 +4509,13 @@ async function guardarNuevo(){
   if(!cliente){ toast("Falta el nombre del cliente"); return; }
   const metodo=$("#f_metodo").value;
   const refN=($("#f_ref")?$("#f_ref").value:"").trim().replace(/\D/g,"");
+  const refFinal=refN?("#"+refN):"";
+  if(refFinal){   // anti-duplicados: si ya existe un pedido con ese mismo N°, aviso antes de crear otro
+    const existente=PEDIDOS.filter(p=>p.tipo===undefined || p.cliente!==undefined).find(p=>p.ref===refFinal);
+    if(existente && !confirm("⚠ Ya existe un pedido con el N° "+refFinal+":\n\n"+(existente.cliente||"—")+"\n\n¿Creás este de todos modos?")) return;
+  }
   try{
-    await crearPedido({ empresa:$("#f_emp").value, canal:$("#f_canal").value, cliente, ref:refN?("#"+refN):"", nota:($("#f_nota")?$("#f_nota").value:"").trim(), zonaFija:($("#f_zona")?$("#f_zona").value:""), tel:$("#f_tel").value.trim(),
+    await crearPedido({ empresa:$("#f_emp").value, canal:$("#f_canal").value, cliente, ref:refFinal, nota:($("#f_nota")?$("#f_nota").value:"").trim(), zonaFija:($("#f_zona")?$("#f_zona").value:""), tel:$("#f_tel").value.trim(),
       dir:$("#f_dir").value.trim(), ciudad:$("#f_ciu").value.trim(), provincia:$("#f_prov").value,
       items:$("#f_items").value.trim(), prods:EDIT_PRODS.slice(), origen:$("#f_origen").value, metodo,
       correo: metodo==="correo"?$("#f_correo").value:"", tracking: metodo==="correo"?$("#f_track").value.trim():"" });
@@ -5198,16 +5220,33 @@ function parseEtiquetaML(texto){
       const resto=T.slice(start);
       const corte=resto.search(/\n\s*(Destinatario:|Domicilio:|Central:|Ciudad de destino:)/i);
       nota=(corte>=0?resto.slice(0,corte):resto.split(/\n\s*\n/)[0]).replace(/\s*\n\s*/g," ").trim(); } }
-  // Productos: capturo SKU (código de barras largo O código corto tipo LADY/Q10/CITPOT), nombre de ML y cantidad
+  // Productos: capturo SKU (código de barras largo O código corto tipo LADY/Q10/CITPOT), nombre de ML y cantidad.
+  // OJO: no todas las etiquetas imprimen "SKU:" para cada producto (algunos ítems solo traen el código como
+  // barra gráfica, sin texto) — por eso ancoro en "Cantidad:" (que sí aparece siempre, una vez por producto)
+  // y le busco el "SKU:" más cercano hacia atrás si lo hay; si no hay, igual reconstruyo el nombre.
   const prods=[], items=[], vistos=new Set();
-  const rx=/SKU:\s*([A-Za-z0-9]{2,})/g; let m;
-  while((m=rx.exec(texto))!==null){
-    const sku=m[1].trim(); if(vistos.has(sku)) continue; vistos.add(sku);
-    const cant=parseInt((texto.slice(m.index).match(/Cantidad:\s*(\d+)/)||[])[1],10)||1;
-    // nombre que muestra ML (la línea de producto, arriba del SKU)
-    let nomML=""; const antes=texto.slice(0,m.index).split(/\n/).reverse();
-    for(const c of antes){ const t=c.trim();
-      if(t.length>10 && !/^(Pack ID|Venta|Cantidad|Sabor|Tipo de envase|SKU|Identifi|Despacha)/i.test(t)){ nomML=t.replace(/^[A-Z0-9]{2,}\s+/,"").replace(/^\d{6,}\s*/,""); break; } }
+  const cantMatches=[...texto.matchAll(/Cantidad:\s*(\d+)/g)];
+  const skuMatches=[...texto.matchAll(/SKU:\s*([A-Za-z0-9]{2,})/g)];
+  let siguienteSku=0;
+  for(const mc of cantMatches){
+    const cant=parseInt(mc[1],10)||1;
+    // el SKU de este producto (si lo hay) es el último "SKU:" que aparece ANTES de esta "Cantidad:"
+    let sku="", idxAncla=mc.index;
+    while(siguienteSku<skuMatches.length && skuMatches[siguienteSku].index < mc.index){ sku=skuMatches[siguienteSku][1].trim(); idxAncla=skuMatches[siguienteSku].index; siguienteSku++; }
+    const clave = sku ? ("sku:"+sku) : ("pos:"+mc.index);
+    if(vistos.has(clave)) continue; vistos.add(clave);
+    // nombre que muestra ML: la(s) línea(s) de producto arriba del SKU (o de la Cantidad, si no hay SKU en esta etiqueta).
+    // A veces el nombre ocupa 2 líneas (nombres largos) — junto hasta 2 líneas seguidas que no sean otro campo.
+    const antesArr=texto.slice(0,idxAncla).split(/\n/); const nombreLineas=[];
+    for(let k=antesArr.length-1;k>=0 && nombreLineas.length<2;k--){
+      const t=antesArr[k].trim();
+      if(!t) continue;
+      if(/^(Pack ID|Venta|Cantidad|Sabor|Tipo de envase|SKU|Identifi|Despacha|Productos?)\b/i.test(t) || /^\d+$/.test(t)){
+        if(nombreLineas.length) break; else continue;
+      }
+      nombreLineas.unshift(t);
+    }
+    const nomML=nombreLineas.join(" ").replace(/^[A-Z0-9]{2,}\s+/,"").replace(/^\d{6,}\s*/,"");
     // ¿lo conozco? 1) diccionario de packs  2) código de barras exacto  3) nombre
     // 1º lo que ya aprendiste por SKU (packs/vínculos), 2º código de barras exacto, 3º por nombre
     const packDefinido = packDef(sku, nomML);
@@ -5216,10 +5255,11 @@ function parseEtiquetaML(texto){
       esAprendido=true;   // es un SKU ya enseñado (simple o pack)
       prodCat = PRODUCTOS.find(pp=>pp.nombre===packDefinido.comps[0].prod) || null;
     } else {
-      prodCat = PRODUCTOS.find(pp=>pp.barcode===sku) || (nomML?mejorProducto(nomML):null);
+      prodCat = (sku && PRODUCTOS.find(pp=>pp.barcode===sku)) || (nomML?mejorProducto(nomML):null);
     }
-    prods.push({ nombre: prodCat?prodCat.nombre:(nomML||("SKU "+sku)), cant, sku, nomML, reconocido: !!prodCat || esAprendido });
-    items.push(cant+"x "+(prodCat?prodCat.nombre:(nomML||("SKU "+sku))));
+    const etiq = nomML || (sku?("SKU "+sku):"Producto sin código detectado");
+    prods.push({ nombre: prodCat?prodCat.nombre:etiq, cant, sku, nomML, reconocido: !!prodCat || esAprendido });
+    items.push(cant+"x "+(prodCat?prodCat.nombre:etiq));
   }
   if(!cli && !venta && !prods.length) return null;
   // etiqueta a un punto Pickit (locker): se nota porque el propio PDF de ML imprime "PICKIT" bien grande
@@ -5322,8 +5362,11 @@ async function leerEtiquetaML(archivos){
   if(typeof pdfjsLib==="undefined"){ toast("El lector de PDF no cargó, probá de nuevo"); return; }
   pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
   toast(lista.length>1?("Leyendo "+lista.length+" etiquetas…"):"Leyendo la etiqueta…");
-  let leidas=0, sinReconocer=0, yaCargadas=0;
-  const refsDeEsteLote=new Map();   // ref → índice en IMP_FILAS, para poder mejorar la fila si otra etiqueta del mismo lote trae más datos
+  let leidas=0, sinReconocer=0, yaCargadas=0, repetidasEnPantalla=0;
+  // ref → índice en IMP_FILAS. Arranca con lo que YA está en pantalla (de una tanda anterior de este
+  // mismo import), así subir la misma etiqueta en dos tandas separadas (antes de guardar) no duplica la fila.
+  const refsDeEsteLote=new Map();
+  IMP_FILAS.forEach((f,idx)=>{ if(f.ref) refsDeEsteLote.set(f.ref, idx); });
   for(const file of lista){
     try{
       const r=await procesarEtiquetaMLArchivo(file);
@@ -5331,10 +5374,10 @@ async function leerEtiquetaML(archivos){
       if(r.yaCargada){ yaCargadas++; continue; }
       r.filas.forEach(f=>{
         if(f.ref && refsDeEsteLote.has(f.ref)){
-          // la misma venta ya vino de otra etiqueta de este lote (ej. un PDF de 3 órdenes + esa
-          // misma orden subida suelta): me quedo con la que trae más datos (dirección completa)
+          // la misma venta ya vino de otra etiqueta (de este lote o de una tanda anterior en pantalla,
+          // ej. un PDF de 3 órdenes + esa misma orden subida suelta): me quedo con la que trae más datos
           const idxPrevio=refsDeEsteLote.get(f.ref);
-          if(!IMP_FILAS[idxPrevio].dir && f.dir) IMP_FILAS[idxPrevio]=f;
+          if(IMP_FILAS[idxPrevio]){ if(!IMP_FILAS[idxPrevio].dir && f.dir) IMP_FILAS[idxPrevio]=f; repetidasEnPantalla++; }
           return;
         }
         if(f.ref) refsDeEsteLote.set(f.ref, IMP_FILAS.length);
@@ -5343,7 +5386,8 @@ async function leerEtiquetaML(archivos){
     }catch(e){ console.error(e); sinReconocer++; }
   }
   if(!leidas){
-    if(yaCargadas && !sinReconocer) toast(lista.length>1?"Esas ventas ya estaban cargadas":"Esa venta ya está cargada");
+    if(repetidasEnPantalla && !sinReconocer) toast("Esa"+(repetidasEnPantalla===1?"":"s")+" venta"+(repetidasEnPantalla===1?"":"s")+" ya la"+(repetidasEnPantalla===1?"":"s")+" tenías en pantalla, no se duplicó");
+    else if(yaCargadas && !sinReconocer) toast(lista.length>1?"Esas ventas ya estaban cargadas":"Esa venta ya está cargada");
     else toast("No reconocí "+(lista.length>1?"ninguna etiqueta":"la etiqueta")+". ¿Es el PDF de Mercado Libre?");
     return;
   }
@@ -5351,6 +5395,7 @@ async function leerEtiquetaML(archivos){
   let msg=leidas+" etiqueta"+(leidas===1?"":"s")+" leída"+(leidas===1?"":"s");
   if(sinReconocer) msg+=" · "+sinReconocer+" no reconocida"+(sinReconocer===1?"":"s");
   if(yaCargadas) msg+=" · "+yaCargadas+" ya cargada"+(yaCargadas===1?"":"s");
+  if(repetidasEnPantalla) msg+=" · "+repetidasEnPantalla+" repetida"+(repetidasEnPantalla===1?"":"s")+" (no duplicada)";
   toast(msg);
 }
 async function leerRemitoPDF(file){
@@ -5422,7 +5467,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v37-corregir-producto-import";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v38-fix-items-sin-sku-y-anti-duplicados";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
