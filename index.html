@@ -367,6 +367,7 @@ const PRODUCTOS = [
   {barcode:"0714604213444", nombre:"Creatina Pura 100% Labs Nutrition (300 gr)"},
   {barcode:"0714604143161", nombre:"Cúrcuma Activada con Jengibre (60 capsulas)"},
   {barcode:"0714604143178", nombre:"Curcuma organica"},
+  {barcode:"0714604213871", nombre:"Cynara Plus, Digestión Y Metabolización De Grasas (60 Caps)"},
   {barcode:"0714604143192", nombre:"Elixir Bio-Regenerador (60 capsulas)"},
   {barcode:"0714604213628", nombre:"Fucus Plus (60 capsulas)"},
   {barcode:"0714604213819", nombre:"Full Men - Estimulante Natural (60 capsulas)"},
@@ -5227,6 +5228,12 @@ function parseEtiquetaML(texto){
   const prods=[], items=[], vistos=new Set();
   const cantMatches=[...texto.matchAll(/Cantidad:\s*(\d+)/g)];
   const skuMatches=[...texto.matchAll(/SKU:\s*([A-Za-z0-9]{2,})/g)];
+  // para nunca confundir el nombre del cliente con un producto (pasa cuando el nombre queda
+  // pegado justo arriba del primer producto en el texto de la etiqueta)
+  const cliNorm=(cli||"").toLowerCase().trim();
+  // algunas etiquetas imprimen el código de barras sin el 0 inicial (12 dígitos en vez de 13);
+  // comparo ignorando ceros a la izquierda para que igual matchee con el catálogo
+  const normBarcode=s=>(s||"").replace(/^0+(?=\d)/,"");
   let siguienteSku=0;
   for(const mc of cantMatches){
     const cant=parseInt(mc[1],10)||1;
@@ -5244,10 +5251,13 @@ function parseEtiquetaML(texto){
       if(/^(Pack ID|Venta|Cantidad|Sabor|Tipo de envase|SKU|Identifi|Despacha|Productos?)\b/i.test(t) || /^\d+$/.test(t)){
         if(nombreLineas.length) break; else continue;
       }
+      // nunca uso el nombre del cliente (con o sin su alias entre paréntesis) como si fuera un producto
+      const tSinAlias=t.replace(/\s*\([^)]*\)\s*$/,"").trim().toLowerCase();
+      if(cliNorm && tSinAlias===cliNorm) continue;
       nombreLineas.unshift(t);
     }
     const nomML=nombreLineas.join(" ").replace(/^[A-Z0-9]{2,}\s+/,"").replace(/^\d{6,}\s*/,"");
-    // ¿lo conozco? 1) diccionario de packs  2) código de barras exacto  3) nombre
+    // ¿lo conozco? 1) diccionario de packs  2) código de barras exacto (tolerante a 0 inicial)  3) nombre
     // 1º lo que ya aprendiste por SKU (packs/vínculos), 2º código de barras exacto, 3º por nombre
     const packDefinido = packDef(sku, nomML);
     let prodCat=null, esAprendido=false;
@@ -5255,7 +5265,7 @@ function parseEtiquetaML(texto){
       esAprendido=true;   // es un SKU ya enseñado (simple o pack)
       prodCat = PRODUCTOS.find(pp=>pp.nombre===packDefinido.comps[0].prod) || null;
     } else {
-      prodCat = (sku && PRODUCTOS.find(pp=>pp.barcode===sku)) || (nomML?mejorProducto(nomML):null);
+      prodCat = (sku && PRODUCTOS.find(pp=>normBarcode(pp.barcode)===normBarcode(sku))) || (nomML?mejorProducto(nomML):null);
     }
     const etiq = nomML || (sku?("SKU "+sku):"Producto sin código detectado");
     prods.push({ nombre: prodCat?prodCat.nombre:etiq, cant, sku, nomML, reconocido: !!prodCat || esAprendido });
@@ -5467,7 +5477,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v38-fix-items-sin-sku-y-anti-duplicados";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v39-fix-nombre-cliente-como-producto";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
