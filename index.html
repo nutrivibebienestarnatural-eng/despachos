@@ -838,6 +838,23 @@ let LISTA_OP=[];   // último listado mostrado al operador (para imprimir en lot
 let RUTA_ACTUAL=[];// hoja de ruta calculada (para Maps/impresión)
 const $=s=>document.querySelector(s);
 const app=()=>$("#app");
+/* Mantener el foco al redibujar: si estabas escribiendo en un buscador y la pantalla se vuelve a pintar,
+   el cursor vuelve al mismo campo y posición (así no hay que tocar el campo letra por letra) */
+(function(){
+  let foco=null;
+  document.addEventListener("input",e=>{ const t=e.target;
+    if(t&&t.id&&(t.tagName==="INPUT"||t.tagName==="TEXTAREA")&&t.type!=="file"&&t.type!=="checkbox") foco={id:t.id,s:t.selectionStart,e:t.selectionEnd,ts:Date.now()}; },true);
+  const iniciar=()=>{
+    const root=document.getElementById("app"); if(!root) return;
+    new MutationObserver(()=>{
+      if(!foco||Date.now()-foco.ts>3000) return;
+      const el=document.getElementById(foco.id);
+      if(el&&document.activeElement!==el){ el.focus();
+        try{ el.setSelectionRange(foco.s,foco.e); }catch(_){} }
+    }).observe(root,{childList:true,subtree:true});
+  };
+  if(document.readyState==="loading") document.addEventListener("DOMContentLoaded",iniciar); else iniciar();
+})();
 /* Pantalla completa: oculta menú lateral + barra superior y, si el navegador lo permite, pide fullscreen real */
 function toggleZen(){
   const on=document.body.classList.toggle("zen");
