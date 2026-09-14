@@ -884,12 +884,17 @@ async function adjuntarFotoPedido(id,file){
     toast("Subiendo foto…");
     const foto=await comprimirFoto(file);
     await DB.update(id,{fotoPrep:foto, fotoPrepTs:Date.now()});
-    toast("Foto del pedido guardada 📷"); render();
+    toast("Foto del pedido guardada 📷"); refrescarFoto(id,{fotoPrep:foto, fotoPrepTs:Date.now()});
   }catch(e){ console.error(e); alert("No se pudo guardar la foto: "+(e.message||e)); }
 }
 async function borrarFotoPedido(id){
   if(!confirm("¿Borrar la foto de este pedido?")) return;
-  await DB.update(id,{fotoPrep:"", fotoPrepTs:null}); toast("Foto borrada"); render();
+  await DB.update(id,{fotoPrep:"", fotoPrepTs:null}); toast("Foto borrada"); refrescarFoto(id,{fotoPrep:"", fotoPrepTs:null});
+}
+// actualiza solo el bloque de la foto (sin redibujar la pantalla, así no se pierde lo que se está editando)
+function refrescarFoto(id,patch){
+  const p=PEDIDOS.find(x=>x.id===id); if(p) Object.assign(p,patch);
+  document.querySelectorAll(`[data-foto="${id}"]`).forEach(el=>{ el.outerHTML=fotoPedidoHTML(p||{id,...patch}); });
 }
 function verFotoPedido(id){
   const p=PEDIDOS.find(x=>x.id===id); if(!p||!p.fotoPrep) return;
@@ -900,13 +905,13 @@ function verFotoPedido(id){
 }
 function fotoPedidoHTML(p){
   const input=`<input type="file" accept="image/*" capture="environment" style="display:none" onchange="adjuntarFotoPedido('${p.id}',this.files[0])">`;
-  if(p.fotoPrep) return `<div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+  if(p.fotoPrep) return `<div data-foto="${p.id}" style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <img src="${p.fotoPrep}" onclick="verFotoPedido('${p.id}')" style="width:90px;height:90px;object-fit:cover;border-radius:10px;cursor:pointer;border:1px solid var(--border)">
       <div><div style="font-size:13px;font-weight:700">📷 Foto del pedido</div><div class="muted" style="font-size:12px">${fmt(p.fotoPrepTs)}</div>
         <div class="row" style="gap:6px;margin-top:6px"><label class="btn sm ghost" style="cursor:pointer">Cambiar${input}</label>
         <button class="btn sm ghost" style="color:var(--red)" onclick="borrarFotoPedido('${p.id}')">Borrar</button></div></div>
     </div>`;
-  return `<label class="btn sm ghost" style="cursor:pointer;margin-top:10px">📷 Sacar foto del pedido${input}</label>`;
+  return `<label data-foto="${p.id}" class="btn sm ghost" style="cursor:pointer;margin-top:10px">📷 Subir / sacar foto del pedido${input}</label>`;
 }
 function abrirEtiquetaPDF(p){
   try{
@@ -4547,6 +4552,7 @@ function formNuevo(edit){
           <select id="f_correo">${CORREOS.map(c=>`<option ${p.correo===c?'selected':''}>${c}</option>`).join("")}</select></div>
         <div class="field"><span class="label">Nº seguimiento</span><input id="f_track" value="${esc(p.tracking||'')}" placeholder="opcional"></div>
       </div>
+      ${edit&&p.id?`<div class="field" style="margin-bottom:14px"><span class="label">Foto del pedido preparado</span>${fotoPedidoHTML(p)}</div>`:''}
       <button class="btn block" onclick='${edit?`guardarEdicion(${JSON.stringify(p.id)})`:"guardarNuevo()"}'>${edit?'Guardar cambios':'Crear pedido'}</button>
     </div>`;
   EDIT_PRODS=(p.prods&&p.prods.length)?p.prods.map(x=>({nombre:x.nombre,cant:+x.cant||1})):[];
@@ -5686,6 +5692,7 @@ function vistaPreparacion(){
         <span class="chip ${canalDe(p)==='ml_flex'?'flex':'tn'}">${esc(empresaObj(p.empresa).nombre)}</span></div>
       <div class="who">${esc(p.cliente)}</div>
       <div><span class="tag">Items</span> ${esc(p.items||'—')}</div>
+      ${fotoPedidoHTML(p)}
       <div class="acts">
         <button class="btn sm green" onclick="prepararDirecto('${p.id}')">${icon('check')} Marcar preparado</button>
         <button class="btn sm ghost" onclick="imprimirPickeo('${p.id}')">${icon('printer')} Pickeo</button>
