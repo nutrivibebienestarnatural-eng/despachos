@@ -1008,11 +1008,12 @@ async function fotoDetectarPedido(file){
   const foto=await comprimirFoto(file);
   if(p.estado!=="pendiente"){
     if(!confirm("Pedido de "+(p.cliente||"—")+" · N° "+numOrden(p)+"\nYa está en estado: "+estObj(p.estado).label+"\n\n¿Guardar igual la foto en este pedido?")) return;
-    await DB.update(p.id,{fotoPrep:foto,fotoPrepTs:Date.now()}); toast("Foto guardada en el pedido de "+(p.cliente||"")); render(); return;
+    await DB.update(p.id,{fotoPrep:foto,fotoPrepTs:Date.now()}); telegramPedido(p,foto,"📷 PEDIDO CON FOTO",["Ya estaba en estado "+estObj(p.estado).label]); toast("Foto guardada en el pedido de "+(p.cliente||"")); render(); return;
   }
   if(!confirm("✅ Es el pedido de "+(p.cliente||"—")+"\nN° "+numOrden(p)+" · "+nombreEmp(p.empresa)+"\n\nTiene que llevar:\n"+lista+"\n\nRevisá que la foto coincida.\n¿Marcarlo como PREPARADO y guardar la foto?")) return;
   await DB.update(p.id,{fotoPrep:foto,fotoPrepTs:Date.now()});
   await avanzar(p.id,"preparado","Preparado por foto de etiqueta");
+  telegramPedido(p,foto,"✅ PEDIDO PREPARADO CON FOTO",[]);
   toast("✓ "+(p.cliente||"Pedido")+" preparado con foto 📷");
   render();
 }
@@ -1139,6 +1140,7 @@ function vistaDespachar(){
         <input type="file" accept="image/*" capture="environment" style="display:none" onchange="despFoto(this.files[0]);this.value=''"></label>
       <div class="hint" style="text-align:center">Quedan <b>${pend}</b> pedidos pendientes · ${hechos.length} con foto hoy</div>
       ${despListaHTML()}`}
+    ${ROL==="admin"?`<button class="btn ghost block" style="margin-top:12px" onclick="telegramResumenDia()">✈️ Mandar resumen del día a Telegram</button>`:''}
     ${ROL==="admin"&&avisos.length?`<div class="label" style="margin-top:20px;color:#c62828">⚠ Avisos de despacho (${avisos.length})</div>
       ${avisos.map(a=>`<div class="card" style="margin-bottom:8px;border:1px solid #e5484d">
         <div class="row" style="justify-content:space-between;gap:8px;align-items:flex-start">
@@ -1155,6 +1157,46 @@ function vistaDespachar(){
         <img src="${h.fotoPrep}" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:10px;${h.despachoAviso&&!h.despachoAvisoVisto?'outline:3px solid #e5484d':''}">
         <div style="font-size:11px;line-height:1.2;margin-top:2px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${h.despachoAviso&&!h.despachoAvisoVisto?'⚠ ':'✓ '}${esc(h.cliente||'')}</div></div>`).join("")}
       </div>`:''}`;
+}
+/* ===== Telegram: foto + resumen de cada pedido (el bot se configura en Vercel) ===== */
+function resumenPedidoTG(p, titulo, avisos){
+  const its=(()=>{ try{ return itemsPedido(p); }catch(_){ return []; } })();
+  const env=(ENVIOS_PREP.find(t=>t.id===tipoEnvioPrep(p))||{}).nombre||"";
+  return [
+    titulo,
+    "👤 "+(p.cliente||"—")+"  ·  N° "+numOrden(p),
+    "🏷️ "+nombreEmp(p.empresa)+"  ·  "+env,
+    (p.dir||p.ciudad)?("📍 "+[p.dir,p.ciudad].filter(Boolean).join(", ")):"",
+    "",
+    "📦 Lleva:",
+    ...(its.length?its.map(x=>"• "+x.cant+"× "+x.prodNombre):["(sin productos cargados)"]),
+    ...(avisos&&avisos.length?["","⚠ AVISOS:",...avisos.map(a=>"• "+a)]:[]),
+    "",
+    "🕒 "+new Date().toLocaleString("es-AR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})
+  ].filter((l,i,a)=>!(l===""&&a[i-1]==="")).join("\n");
+}
+async function enviarTelegram(texto, foto){
+  try{
+    const r=await fetch("/api/telegram",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({texto,foto:foto||undefined})});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok||!d.ok){ console.warn("Telegram:",d.error||r.status); if(!window.__tgAvisado){ window.__tgAvisado=true; toast("Telegram no enviado: "+(d.error||r.status)); } return false; }
+    return true;
+  }catch(e){ console.warn("Telegram:",e); return false; }
+}
+function telegramPedido(p, foto, titulo, avisos){ if(p) enviarTelegram(resumenPedidoTG(p,titulo,avisos), foto); }   // no espero: que no frene el despacho
+async function telegramResumenDia(){
+  const hoy=new Date(); hoy.setHours(0,0,0,0);
+  const peds=soloPedidos().filter(p=>p.estado!=="anulado" && ((p.fotoPrepTs||0)>=hoy.getTime() || ["pendiente","preparado"].includes(p.estado)));
+  const conFoto=peds.filter(p=>(p.fotoPrepTs||0)>=hoy.getTime());
+  const sinFoto=peds.filter(p=>!((p.fotoPrepTs||0)>=hoy.getTime()) && ["pendiente","preparado"].includes(p.estado));
+  const avisos=peds.filter(p=>p.despachoAviso&&!p.despachoAvisoVisto);
+  const lin=p=>"• "+(p.cliente||"—")+" · "+numOrden(p)+" · "+nombreEmp(p.empresa);
+  const txt=["📋 RESUMEN DE DESPACHO · "+hoy.toLocaleDateString("es-AR"),"",
+    "📷 Con foto hoy: "+conFoto.length, ...conFoto.map(lin), "",
+    "⏳ Sin foto todavía: "+sinFoto.length, ...sinFoto.map(lin),
+    ...(avisos.length?["","⚠ Con aviso: "+avisos.length, ...avisos.map(p=>lin(p)+" — "+(p.despachoAvisoTxt||[]).join("; "))]:[])].join("\n");
+  toast("Enviando resumen a Telegram…");
+  if(await enviarTelegram(txt)) toast("Resumen enviado a Telegram ✓");
 }
 /* Lista de pedidos para despachar (pendientes + preparados), por empresa y tipo de envío */
 function despListaHTML(){
@@ -1194,6 +1236,7 @@ async function despFotoPara(id,file){
     const foto=await comprimirFoto(file);
     await DB.update(id,{fotoPrep:foto, fotoPrepTs:Date.now()});
     DESP.foto=foto; DESP.guardada=true; toast("📷 Foto guardada en el pedido de "+(p.cliente||""));
+    telegramPedido(p, foto, "📷 PEDIDO CON FOTO", p.fotoPrep?["Reemplazó una foto anterior"]:[]);
     vistaDespachar();
   }catch(e){ alert("No pude guardar la foto: "+(e.message||e)); }
 }
@@ -1254,7 +1297,8 @@ async function despFoto(file){
   if((p.prods||[]).some(x=>x&&x.reconocido===false)) DESP.avisos.push("Tiene productos sin reconocer en el catálogo");
   if(DESP.avisos.length) try{ navigator.vibrate&&navigator.vibrate([300,100,300]); }catch(e){}
   // la foto queda guardada en ESE pedido apenas se encuentra (aunque después no toquen nada)
-  try{ await DB.update(p.id,{fotoPrep:foto, fotoPrepTs:Date.now()}); DESP.guardada=true; toast("📷 Foto guardada en el pedido de "+(p.cliente||"")); }
+  try{ await DB.update(p.id,{fotoPrep:foto, fotoPrepTs:Date.now()}); DESP.guardada=true; toast("📷 Foto guardada en el pedido de "+(p.cliente||""));
+    telegramPedido(p, foto, DESP.avisos.length?"⚠ PEDIDO CON FOTO — REVISAR":"📷 PEDIDO CON FOTO", DESP.avisos); }
   catch(e){ alert("No pude guardar la foto: "+(e.message||e)); }
   OPVIEW="despachar"; vistaDespachar();
 }
@@ -1280,6 +1324,7 @@ async function despNoCoincide(){
   const txt=DESP.avisos.concat(noVistos, nota.trim()?["Nota: "+nota.trim()]:[]);
   if(!txt.length) txt.push("Marcado como que no coincide");
   await DB.update(p.id,{...(DESP.foto&&!DESP.guardada?{fotoPrep:DESP.foto, fotoPrepTs:Date.now()}:{}), despachoAviso:true, despachoAvisoVisto:false, despachoAvisoTs:Date.now(), despachoAvisoTxt:txt});
+  telegramPedido(p, DESP.foto||p.fotoPrep, "🚨 ALGO NO COINCIDE — NO SE MARCÓ PREPARADO", txt);
   toast("⚠ Aviso enviado · el pedido NO se marcó como preparado");
   DESP=null; vistaDespachar();
 }
