@@ -930,6 +930,83 @@ function fotoPedidoHTML(p){
     </div>`;
   return `<label data-foto="${p.id}" class="btn sm ghost" style="cursor:pointer;margin-top:10px">📷 Subir / sacar foto del pedido${input}</label>`;
 }
+/* ===== Foto del pedido armado → detectar de quién es por el QR/código de la etiqueta ===== */
+// Lee todos los códigos (QR / barras) que encuentre en la foto. Prueba la foto entera y recortes
+// (la etiqueta suele ocupar solo una parte), primero con el lector nativo y después con ZXing.
+async function leerCodigosDeFoto(file){
+  const img=await new Promise((res,rej)=>{ const u=URL.createObjectURL(file); const i=new Image();
+    i.onload=()=>res(i); i.onerror=()=>rej(new Error("No se pudo leer la imagen")); i.src=u; });
+  const W=img.naturalWidth, H=img.naturalHeight;
+  const recortes=[[0,0,1,1],[0,.4,1,.6],[0,.5,1,.5],[0,0,1,.5],[.1,.55,.8,.3],[0,.25,1,.5]];
+  const out=new Set();
+  const canvasDe=(r,max)=>{ const sw=W*r[2], sh=H*r[3], k=Math.min(1,max/Math.max(sw,sh));
+    const c=document.createElement("canvas"); c.width=Math.round(sw*k); c.height=Math.round(sh*k);
+    c.getContext("2d").drawImage(img,W*r[0],H*r[1],sw,sh,0,0,c.width,c.height); return c; };
+  for(const r of recortes){
+    const c=canvasDe(r,1600);
+    if("BarcodeDetector" in window){
+      try{ const det=new BarcodeDetector(); (await det.detect(c)).forEach(x=>x.rawValue&&out.add(x.rawValue)); }catch(e){}
+    }
+    if(!out.size && typeof ZXing!=="undefined"){
+      try{ const hints=new Map(); hints.set(ZXing.DecodeHintType.TRY_HARDER,true);
+        const rd=new ZXing.BrowserMultiFormatReader(hints);
+        const res=await rd.decodeFromImageUrl(c.toDataURL("image/png")); if(res) out.add(res.getText()); }catch(e){}
+    }
+    if(out.size) break;
+  }
+  return [...out];
+}
+// N° de envío de ML de un pedido: el guardado, o sacado del PDF de la etiqueta (para pedidos viejos)
+const ENVIO_CACHE={};
+async function envioDePedido(p){
+  if(p.envio) return String(p.envio);
+  if(ENVIO_CACHE[p.id]!=null) return ENVIO_CACHE[p.id];
+  let env="";
+  if(p.etiquetaPdf && typeof pdfjsLib!=="undefined"){
+    try{ const bin=atob(p.etiquetaPdf); const arr=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
+      const pdf=await pdfjsLib.getDocument({data:arr}).promise; let t="";
+      for(let n=1;n<=Math.min(pdf.numPages,2);n++){ const tc=await (await pdf.getPage(n)).getTextContent(); t+=tc.items.map(x=>x.str).join(" ")+"\n"; }
+      const m=t.match(/Envio:\s*(\d[\d ]{4,20}\d)/i); if(m) env=m[1].replace(/\D/g,"");
+    }catch(e){}
+  }
+  ENVIO_CACHE[p.id]=env; return env;
+}
+async function buscarPedidoPorCodigos(codigos){
+  // del texto del QR saco todos los números largos (ML trae JSON tipo {"id":"48028812120",...})
+  const nums=new Set(); codigos.forEach(c=>{ (String(c).match(/\d{6,}/g)||[]).forEach(n=>nums.add(n.replace(/^0+/,""))); });
+  if(!nums.size) return null;
+  const cand=soloPedidos().filter(p=>p.estado!=="anulado").sort((a,b)=>(b.creado||0)-(a.creado||0));
+  const d=s=>String(s||"").replace(/\D/g,"").replace(/^0+/,"");
+  // 1) por N° de venta / orden
+  let hit=cand.find(p=>{ const r=d(p.ref); return r.length>=6 && nums.has(r); });
+  if(hit) return hit;
+  // 2) por N° de envío (primero los pendientes, que son los que se están preparando)
+  const orden=cand.filter(p=>p.estado==="pendiente").concat(cand.filter(p=>p.estado!=="pendiente"));
+  for(const p of orden){ if(!p.envio && !p.etiquetaPdf) continue;
+    const e=d(await envioDePedido(p)); if(e && nums.has(e)) return p; }
+  return null;
+}
+async function fotoDetectarPedido(file){
+  if(!file) return;
+  toast("Buscando la etiqueta en la foto…");
+  let codigos=[];
+  try{ codigos=await leerCodigosDeFoto(file); }catch(e){ alert(e.message||e); return; }
+  if(!codigos.length){ alert("No encontré ningún código QR ni de barras en la foto.\n\nProbá de nuevo con la etiqueta más cerca, derecha y con buena luz."); return; }
+  const p=await buscarPedidoPorCodigos(codigos);
+  if(!p){ alert("Leí la etiqueta pero no encontré ese pedido cargado en la app.\n\nCódigo leído: "+codigos.join(" | ").slice(0,160)+"\n\nImportá primero la etiqueta y volvé a intentar."); return; }
+  const its=(()=>{ try{ return itemsPedido(p); }catch(e){ return []; } })();
+  const lista=its.map(x=>"  • "+x.cant+"× "+x.prodNombre).join("\n")||"  (sin productos cargados)";
+  const foto=await comprimirFoto(file);
+  if(p.estado!=="pendiente"){
+    if(!confirm("Pedido de "+(p.cliente||"—")+" · N° "+numOrden(p)+"\nYa está en estado: "+estObj(p.estado).label+"\n\n¿Guardar igual la foto en este pedido?")) return;
+    await DB.update(p.id,{fotoPrep:foto,fotoPrepTs:Date.now()}); toast("Foto guardada en el pedido de "+(p.cliente||"")); render(); return;
+  }
+  if(!confirm("✅ Es el pedido de "+(p.cliente||"—")+"\nN° "+numOrden(p)+" · "+nombreEmp(p.empresa)+"\n\nTiene que llevar:\n"+lista+"\n\nRevisá que la foto coincida.\n¿Marcarlo como PREPARADO y guardar la foto?")) return;
+  await DB.update(p.id,{fotoPrep:foto,fotoPrepTs:Date.now()});
+  await avanzar(p.id,"preparado","Preparado por foto de etiqueta");
+  toast("✓ "+(p.cliente||"Pedido")+" preparado con foto 📷");
+  render();
+}
 function abrirEtiquetaPDF(p){
   try{
     const bin=atob(p.etiquetaPdf); const arr=new Uint8Array(bin.length);
@@ -2599,7 +2676,7 @@ async function crearPedido(d){
   const id=await DB.create({tipo:"pedido",empresa:emp.id,canal:d.canal||emp.canalDefault,ref:d.ref||"",
     cliente:d.cliente,tel:d.tel||"",dir:d.dir||"",ciudad:d.ciudad||"",provincia:d.provincia||"",cp:d.cp||"",
     etiquetaPdf:d.etiquetaPdf||"",etiquetaPdfNombre:d.etiquetaPdfNombre||"",nota:d.nota||"",zonaFija:(d.zonaFija!=null?d.zonaFija:""),
-    items:d.items||"",prods:d.prods||[],origen:d.origen||r.origen,metodo:d.metodo||r.metodo,pickit:!!d.pickit,
+    items:d.items||"",prods:d.prods||[],origen:d.origen||r.origen,metodo:d.metodo||r.metodo,pickit:!!d.pickit,envio:d.envio||"",
     correo:d.correo||"",tracking:d.tracking||"",tnId:d.tnId||"",cadete:"",estado:"pendiente",creado:Date.now(),
     eventos:[{estado:"pendiente",ts:Date.now(),nota:"Pedido creado"}]});
   return id;
@@ -5284,7 +5361,7 @@ function parseEtiquetaML(texto){
     if(iv>=0){ const junto=(lv[iv].replace(/.*Venta:\s*/i,"")+ (lv[iv+1]||"")).replace(/\D/g,"").slice(0,16); if(junto.length>=11) vm=[null,junto]; }
   }
   if(vm){ const limpio=vm[1].replace(/\s/g,""); if(limpio.length>=11) venta=limpio.slice(0,16); }
-  const envio=(T.match(/Envio:\s*(\d+)/i)||[])[1]||"";
+  const envio=((T.match(/Envio:\s*(\d[\d ]{4,20}\d)/i)||T.match(/Envio:\s*(\d+)/i)||[])[1]||"").replace(/\D/g,"");   // viene partido: "4802881 2120"
   // CP: formato Flex ("CP: 1642" o número arriba) o Correo ("CP:2000")
   let cp=(T.match(/CP:\s*(\d{4})\b/)||[])[1]||"";
   if(!cp){ const i=L.findIndex(x=>/^CP:?$/.test(x)); if(i>0){ const m=L[i-1].match(/^(\d{4})$/); if(m) cp=m[1]; } }
@@ -5382,7 +5459,7 @@ function parseEtiquetaML(texto){
   const esPickit=/\bPICKIT\b/i.test(texto);
   return { ref: venta?("#"+venta):(envio?("#"+envio):""), cliente:cli.trim(), tel:"", dir:dir.trim(),
     ciudad:loc, provincia:prov, cp, items:items.join(" · "), prods, nota:nota.trim(), etiquetaML:true,
-    pickit:esPickit, empresaML: empresaPorVendedorML(texto) };
+    pickit:esPickit, envio:envio.replace(/\D/g,""), empresaML: empresaPorVendedorML(texto) };
 }
 /* Procesa UN archivo de etiqueta ML y devuelve sus filas listas para IMP_FILAS (sin tocar el estado global).
    Se usa tanto para una sola etiqueta como para varias juntas (leerEtiquetaML hace el loop). */
@@ -5833,6 +5910,9 @@ function vistaPrepararHoy(){
     <button class="btn sm ghost" onclick="OPVIEW='hoy';vistaOperador()">← Volver a Hoy</button>
     <div class="title" style="margin-top:14px">Preparar pedidos</div>
     <div class="subtitle">Elegí empresa y tipo de envío. Entrá a uno, escaneá sus productos, y cerralo.</div>
+    <label class="btn block green" style="cursor:pointer;margin-top:10px">📷 Foto del pedido armado (detecta el cliente por la etiqueta)
+      <input type="file" accept="image/*" capture="environment" style="display:none" onchange="fotoDetectarPedido(this.files[0]);this.value=''"></label>
+    <div class="hint" style="margin:6px 0 4px;text-align:center">Que se vea el QR de la etiqueta. Te muestro de quién es y lo marcás como preparado.</div>
     <div class="seg" style="flex-wrap:wrap;margin:10px 0 8px">
       ${chip(PREP_EMP==="todas","Todas",todos.length,"PREP_EMP='todas';vistaPrepararHoy()")}
       ${empsConPed.map(e=>chip(PREP_EMP===e,esc(e?nombreEmp(e):"Sin empresa"),cuenta(p=>(p.empresa||"")===e),`PREP_EMP='${e}';vistaPrepararHoy()`)).join("")}
