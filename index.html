@@ -1137,7 +1137,8 @@ function vistaDespachar(){
     ${DESP&&DESP.id&&p ? despCardHTML(p) : `
       <label class="btn block green big" style="cursor:pointer;margin:14px 0 6px;padding:22px;font-size:18px">📷 Sacar / subir foto del pedido
         <input type="file" accept="image/*" capture="environment" style="display:none" onchange="despFoto(this.files[0]);this.value=''"></label>
-      <div class="hint" style="text-align:center">Quedan <b>${pend}</b> pedidos pendientes · ${hechos.length} con foto hoy</div>`}
+      <div class="hint" style="text-align:center">Quedan <b>${pend}</b> pedidos pendientes · ${hechos.length} con foto hoy</div>
+      ${despListaHTML()}`}
     ${ROL==="admin"&&avisos.length?`<div class="label" style="margin-top:20px;color:#c62828">⚠ Avisos de despacho (${avisos.length})</div>
       ${avisos.map(a=>`<div class="card" style="margin-bottom:8px;border:1px solid #e5484d">
         <div class="row" style="justify-content:space-between;gap:8px;align-items:flex-start">
@@ -1155,12 +1156,55 @@ function vistaDespachar(){
         <div style="font-size:11px;line-height:1.2;margin-top:2px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${h.despachoAviso&&!h.despachoAvisoVisto?'⚠ ':'✓ '}${esc(h.cliente||'')}</div></div>`).join("")}
       </div>`:''}`;
 }
+/* Lista de pedidos para despachar (pendientes + preparados), por empresa y tipo de envío */
+function despListaHTML(){
+  const arr=soloPedidos().filter(p=>["pendiente","preparado"].includes(p.estado) && !p.cerradoEn)
+    .sort((a,b)=>(a.creado||0)-(b.creado||0));
+  if(!arr.length) return `<div class="card" style="margin-top:14px"><div class="muted" style="text-align:center;padding:18px">No hay pedidos para despachar 👍</div></div>`;
+  const emps=[...new Set(arr.map(p=>p.empresa||""))];
+  let html="";
+  emps.forEach(e=>ENVIOS_PREP.forEach(t=>{
+    const g=arr.filter(p=>(p.empresa||"")===e && tipoEnvioPrep(p)===t.id); if(!g.length) return;
+    const conFoto=g.filter(p=>p.fotoPrep).length;
+    html+=`<div class="label" style="margin:16px 0 6px">${esc(e?nombreEmp(e):"Sin empresa")} · ${t.nombre} · ${conFoto}/${g.length} con foto</div>`;
+    html+=g.map(p=>{ const its=(()=>{ try{ return itemsPedido(p); }catch(_){ return []; } })();
+      const aviso=p.despachoAviso&&!p.despachoAvisoVisto;
+      return `<div class="card" style="margin-bottom:8px;padding:10px 12px;cursor:pointer;${aviso?'border:1px solid #e5484d':''}" onclick="despElegir('${p.id}')">
+        <div class="row" style="gap:10px;align-items:center;flex-wrap:nowrap">
+          ${p.fotoPrep?`<img src="${p.fotoPrep}" style="width:48px;height:48px;object-fit:cover;border-radius:8px;flex:0 0 auto">`
+            :`<div style="width:48px;height:48px;border-radius:8px;border:1px dashed var(--border);display:flex;align-items:center;justify-content:center;flex:0 0 auto;font-size:20px">📷</div>`}
+          <div style="min-width:0;flex:1">
+            <div style="font-weight:700">${esc(p.cliente||'—')} <span class="muted" style="font-weight:400;font-size:12px">· N° ${esc(numOrden(p))}</span></div>
+            <div style="font-size:12.5px;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${its.map(x=>x.cant+"× "+esc(x.prodNombre)).join(" · ")||'sin productos'}</div>
+          </div>
+          <span style="flex:0 0 auto;font-size:12px;font-weight:700;color:${aviso?'#e5484d':(p.estado==='preparado'?'var(--green)':'var(--text-3)')}">${aviso?'⚠ Aviso':(p.estado==='preparado'?'✓ Preparado':(p.fotoPrep?'📷 Con foto':'Pendiente'))}</span>
+        </div></div>`; }).join("");
+  }));
+  return html;
+}
+function despElegir(id){
+  const p=PEDIDOS.find(x=>x.id===id); if(!p) return;
+  DESP={id, foto:p.fotoPrep||"", check:{}, avisos:[], guardada:!!p.fotoPrep, manual:true};
+  vistaDespachar(); window.scrollTo(0,0);
+}
+async function despFotoPara(id,file){
+  if(!file) return;
+  const p=PEDIDOS.find(x=>x.id===id); if(!p) return;
+  try{
+    const foto=await comprimirFoto(file);
+    await DB.update(id,{fotoPrep:foto, fotoPrepTs:Date.now()});
+    DESP.foto=foto; DESP.guardada=true; toast("📷 Foto guardada en el pedido de "+(p.cliente||""));
+    vistaDespachar();
+  }catch(e){ alert("No pude guardar la foto: "+(e.message||e)); }
+}
 function despCardHTML(p){
   const its=(()=>{ try{ return itemsPedido(p); }catch(e){ return []; } })();
   const av=DESP.avisos||[];
   return `<div class="card" style="margin:14px 0">
     <div class="row" style="gap:12px;align-items:flex-start;flex-wrap:nowrap">
-      <img src="${DESP.foto}" style="width:110px;height:110px;object-fit:cover;border-radius:12px;flex:0 0 auto">
+      ${DESP.foto?`<img src="${DESP.foto}" onclick="verFotoPedido('${p.id}')" style="width:110px;height:110px;object-fit:cover;border-radius:12px;flex:0 0 auto;cursor:pointer">`
+        :`<label style="width:110px;height:110px;border-radius:12px;border:2px dashed var(--border);display:flex;flex-direction:column;align-items:center;justify-content:center;flex:0 0 auto;cursor:pointer;font-size:12px;text-align:center">📷<span>Subir foto</span>
+          <input type="file" accept="image/*" capture="environment" style="display:none" onchange="despFotoPara('${p.id}',this.files[0]);this.value=''"></label>`}
       <div style="min-width:0">
         <div style="font-size:18px;font-weight:800">${esc(p.cliente||'—')}</div>
         <div class="muted" style="font-size:13px">N° ${esc(numOrden(p))} · ${esc(nombreEmp(p.empresa))} · ${esc(ENVIOS_PREP.find(t=>t.id===tipoEnvioPrep(p)).nombre)}</div>
@@ -1219,9 +1263,10 @@ async function despConfirmar(){
   const its=(()=>{ try{ return itemsPedido(p); }catch(e){ return []; } })();
   const faltan=its.filter((x,i)=>!DESP.check[i]);
   if(faltan.length && !confirm("¿Está todo lo del pedido en la foto?\n\n"+its.map(x=>"• "+x.cant+"× "+x.prodNombre).join("\n")+"\n\nSi falta algo, tocá Cancelar y después \"Algo no coincide\".")) return;
-  const patch={fotoPrep:DESP.foto, fotoPrepTs:Date.now()};
+  if(!DESP.foto && !confirm("Este pedido no tiene foto. ¿Marcarlo igual?")) return;
+  const patch=DESP.foto&&!DESP.guardada?{fotoPrep:DESP.foto, fotoPrepTs:Date.now()}:{};
   if(DESP.avisos.length){ Object.assign(patch,{despachoAviso:true, despachoAvisoVisto:false, despachoAvisoTs:Date.now(), despachoAvisoTxt:DESP.avisos.slice()}); }
-  await DB.update(p.id,patch);
+  if(Object.keys(patch).length) await DB.update(p.id,patch);
   if(p.estado==="pendiente" && !DESP.avisos.some(a=>/ANULADO/.test(a))) await avanzar(p.id,"preparado","Preparado · verificado con foto en Despacho");
   toast("✓ "+(p.cliente||"Pedido")+(DESP.avisos.length?" guardado con aviso ⚠":" listo 📷"));
   DESP=null; vistaDespachar();
@@ -1234,7 +1279,7 @@ async function despNoCoincide(){
   if(nota===null) return;
   const txt=DESP.avisos.concat(noVistos, nota.trim()?["Nota: "+nota.trim()]:[]);
   if(!txt.length) txt.push("Marcado como que no coincide");
-  await DB.update(p.id,{fotoPrep:DESP.foto, fotoPrepTs:Date.now(), despachoAviso:true, despachoAvisoVisto:false, despachoAvisoTs:Date.now(), despachoAvisoTxt:txt});
+  await DB.update(p.id,{...(DESP.foto&&!DESP.guardada?{fotoPrep:DESP.foto, fotoPrepTs:Date.now()}:{}), despachoAviso:true, despachoAvisoVisto:false, despachoAvisoTs:Date.now(), despachoAvisoTxt:txt});
   toast("⚠ Aviso enviado · el pedido NO se marcó como preparado");
   DESP=null; vistaDespachar();
 }
