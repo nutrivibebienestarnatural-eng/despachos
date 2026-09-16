@@ -1118,6 +1118,121 @@ async function procesarFotosCarpeta(){
     await moverAProcesadas(it);
   }
 }
+/* ===== Solapa DESPACHO: quien despacha saca la foto del pedido armado, la app lo encuentra por la
+   etiqueta, muestra qué tiene que llevar y avisa si algo no coincide ===== */
+let DESP=null;   // {id, foto, avisos:[], check:{}}
+function vistaDespachar(){
+  try{ pintarSidebar(); }catch(e){}
+  const hoy=new Date(); hoy.setHours(0,0,0,0);
+  const hechos=soloPedidos().filter(p=>p.fotoPrepTs && p.fotoPrepTs>=hoy.getTime()).sort((a,b)=>b.fotoPrepTs-a.fotoPrepTs);
+  const avisos=soloPedidos().filter(p=>p.despachoAviso && !p.despachoAvisoVisto).sort((a,b)=>(b.despachoAvisoTs||0)-(a.despachoAvisoTs||0));
+  const pend=soloPedidos().filter(p=>p.estado==="pendiente" && !p.cerradoEn).length;
+  const operador=ROL!=="admin";
+  const p=DESP&&PEDIDOS.find(x=>x.id===DESP.id);
+  app().innerHTML=`
+    ${segOp('despachar')}
+    ${operador?`<div class="seg" style="margin-bottom:12px"><button onclick="OPVIEW='prepararhoy';render()">Preparar</button><button class="on">📷 Despacho</button></div>`:''}
+    <div class="title">Despacho con foto</div>
+    <div class="subtitle">Sacale foto al pedido armado con la etiqueta a la vista. Te digo de quién es y qué tiene que llevar.</div>
+    ${DESP&&DESP.id&&p ? despCardHTML(p) : `
+      <label class="btn block green big" style="cursor:pointer;margin:14px 0 6px;padding:22px;font-size:18px">📷 Sacar / subir foto del pedido
+        <input type="file" accept="image/*" capture="environment" style="display:none" onchange="despFoto(this.files[0]);this.value=''"></label>
+      <div class="hint" style="text-align:center">Quedan <b>${pend}</b> pedidos pendientes · ${hechos.length} con foto hoy</div>`}
+    ${ROL==="admin"&&avisos.length?`<div class="label" style="margin-top:20px;color:#c62828">⚠ Avisos de despacho (${avisos.length})</div>
+      ${avisos.map(a=>`<div class="card" style="margin-bottom:8px;border:1px solid #e5484d">
+        <div class="row" style="justify-content:space-between;gap:8px;align-items:flex-start">
+          <div style="min-width:0"><b>${esc(a.cliente||'—')}</b> <span class="muted">· N° ${esc(numOrden(a))} · ${esc(nombreEmp(a.empresa))}</span>
+            ${(a.despachoAvisoTxt||[]).map(t=>`<div style="font-size:13px;color:#7a1f1f;margin-top:3px">• ${esc(t)}</div>`).join("")}
+            <div class="muted" style="font-size:12px;margin-top:3px">${fmt(a.despachoAvisoTs)}</div></div>
+          ${a.fotoPrep?`<img src="${a.fotoPrep}" onclick="verFotoPedido('${a.id}')" style="width:64px;height:64px;object-fit:cover;border-radius:8px;cursor:pointer;flex:0 0 auto">`:''}
+        </div>
+        <button class="btn sm ghost" style="margin-top:8px" onclick="despAvisoVisto('${a.id}')">✓ Visto / resuelto</button>
+      </div>`).join("")}`:''}
+    ${hechos.length?`<div class="label" style="margin-top:20px">Fotos de hoy</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px">
+      ${hechos.slice(0,40).map(h=>`<div style="position:relative;cursor:pointer" onclick="verFotoPedido('${h.id}')">
+        <img src="${h.fotoPrep}" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:10px;${h.despachoAviso&&!h.despachoAvisoVisto?'outline:3px solid #e5484d':''}">
+        <div style="font-size:11px;line-height:1.2;margin-top:2px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${h.despachoAviso&&!h.despachoAvisoVisto?'⚠ ':'✓ '}${esc(h.cliente||'')}</div></div>`).join("")}
+      </div>`:''}`;
+}
+function despCardHTML(p){
+  const its=(()=>{ try{ return itemsPedido(p); }catch(e){ return []; } })();
+  const av=DESP.avisos||[];
+  return `<div class="card" style="margin:14px 0">
+    <div class="row" style="gap:12px;align-items:flex-start">
+      <img src="${DESP.foto}" style="width:130px;height:130px;object-fit:cover;border-radius:12px;flex:0 0 auto">
+      <div style="min-width:0">
+        <div style="font-size:18px;font-weight:800">${esc(p.cliente||'—')}</div>
+        <div class="muted" style="font-size:13px">N° ${esc(numOrden(p))} · ${esc(nombreEmp(p.empresa))} · ${esc(ENVIOS_PREP.find(t=>t.id===tipoEnvioPrep(p)).nombre)}</div>
+        <div class="muted" style="font-size:13px">Estado: ${esc(estObj(p.estado).label)}</div>
+      </div>
+    </div>
+    ${av.length?`<div style="margin-top:12px;padding:10px 12px;border-radius:10px;background:#ffe8e8;color:#7a1f1f;font-size:14px">
+      ${av.map(t=>`<div>⚠ ${esc(t)}</div>`).join("")}</div>`:''}
+    <div class="label" style="margin-top:14px">Tiene que llevar — tildá lo que ves en la foto</div>
+    ${its.length?its.map((x,i)=>`<label class="row" style="gap:10px;padding:9px 0;border-top:.5px solid var(--border);cursor:pointer;font-size:15px">
+        <input type="checkbox" ${DESP.check[i]?'checked':''} onchange="DESP.check[${i}]=this.checked" style="width:22px;height:22px;accent-color:var(--green)">
+        <b>${x.cant}×</b> ${esc(x.prodNombre)}</label>`).join("")
+      :`<div class="muted">Este pedido no tiene productos cargados.</div>`}
+    <button class="btn block green" style="margin-top:14px" onclick="despConfirmar()">✓ Todo coincide${p.estado==="pendiente"?' → marcar PREPARADO':''}</button>
+    <button class="btn block" style="margin-top:8px;background:#e5484d;color:#fff" onclick="despNoCoincide()">✗ Algo no coincide → avisar</button>
+    <button class="btn block ghost" style="margin-top:8px" onclick="DESP=null;vistaDespachar()">Cancelar</button>
+  </div>`;
+}
+async function despFoto(file){
+  if(!file) return;
+  toast("Leyendo la etiqueta…");
+  let codigos=[], foto="";
+  try{ [codigos,foto]=await Promise.all([leerCodigosDeFoto(file), comprimirFoto(file)]); }
+  catch(e){ alert("No pude leer la foto: "+(e.message||e)); return; }
+  let p=codigos.length?await buscarPedidoPorCodigos(codigos):null;
+  if(!p){
+    // no se leyó o no está cargado: dejo elegir el pedido a mano y queda el aviso
+    const pend=soloPedidos().filter(x=>["pendiente","preparado"].includes(x.estado)).sort((a,b)=>(a.cliente||"").localeCompare(b.cliente||""));
+    const motivo=codigos.length?"La etiqueta de la foto no corresponde a ningún pedido cargado":"No se pudo leer la etiqueta en la foto";
+    const lista=pend.map((x,i)=>(i+1)+". "+(x.cliente||"—")+" · "+numOrden(x)).join("\n");
+    const r=prompt("⚠ "+motivo+".\n\nSi sabés de quién es, escribí el número de la lista (o dejalo vacío para sacar otra foto):\n\n"+lista.slice(0,1800));
+    const n=parseInt(r,10); if(!n||!pend[n-1]){ toast("Probá otra foto con la etiqueta más cerca"); return; }
+    p=pend[n-1];
+    DESP={id:p.id, foto, check:{}, avisos:[motivo+" (se eligió a mano)"]};
+  } else {
+    DESP={id:p.id, foto, check:{}, avisos:[]};
+  }
+  // controles automáticos
+  if(p.estado==="anulado") DESP.avisos.push("El pedido está ANULADO");
+  else if(!["pendiente","preparado"].includes(p.estado)) DESP.avisos.push("El pedido ya figura como "+estObj(p.estado).label);
+  if(p.fotoPrep) DESP.avisos.push("Este pedido ya tenía foto ("+fmt(p.fotoPrepTs)+") — ¿se armó dos veces?");
+  const its=(()=>{ try{ return itemsPedido(p); }catch(e){ return []; } })();
+  if(!its.length) DESP.avisos.push("El pedido no tiene productos cargados");
+  if((p.prods||[]).some(x=>x&&x.reconocido===false)) DESP.avisos.push("Tiene productos sin reconocer en el catálogo");
+  if(DESP.avisos.length) try{ navigator.vibrate&&navigator.vibrate([300,100,300]); }catch(e){}
+  OPVIEW="despachar"; vistaDespachar();
+}
+async function despConfirmar(){
+  const p=PEDIDOS.find(x=>x.id===DESP.id); if(!p) return;
+  const its=(()=>{ try{ return itemsPedido(p); }catch(e){ return []; } })();
+  const faltan=its.filter((x,i)=>!DESP.check[i]);
+  if(faltan.length){ alert("Tildá los productos que ves en la foto.\n\nSi falta alguno, tocá \"Algo no coincide\".\n\nSin tildar:\n"+faltan.map(x=>"• "+x.cant+"× "+x.prodNombre).join("\n")); return; }
+  const patch={fotoPrep:DESP.foto, fotoPrepTs:Date.now()};
+  if(DESP.avisos.length){ Object.assign(patch,{despachoAviso:true, despachoAvisoVisto:false, despachoAvisoTs:Date.now(), despachoAvisoTxt:DESP.avisos.slice()}); }
+  await DB.update(p.id,patch);
+  if(p.estado==="pendiente" && !DESP.avisos.some(a=>/ANULADO/.test(a))) await avanzar(p.id,"preparado","Preparado · verificado con foto en Despacho");
+  toast("✓ "+(p.cliente||"Pedido")+(DESP.avisos.length?" guardado con aviso ⚠":" listo 📷"));
+  DESP=null; vistaDespachar();
+}
+async function despNoCoincide(){
+  const p=PEDIDOS.find(x=>x.id===DESP.id); if(!p) return;
+  const its=(()=>{ try{ return itemsPedido(p); }catch(e){ return []; } })();
+  const noVistos=its.filter((x,i)=>!DESP.check[i]).map(x=>"Falta en la foto: "+x.cant+"× "+x.prodNombre);
+  const nota=prompt("¿Qué no coincide? (ej: falta un frasco, mandaron otro producto, etiqueta de otro cliente)", "");
+  if(nota===null) return;
+  const txt=DESP.avisos.concat(noVistos, nota.trim()?["Nota: "+nota.trim()]:[]);
+  if(!txt.length) txt.push("Marcado como que no coincide");
+  await DB.update(p.id,{fotoPrep:DESP.foto, fotoPrepTs:Date.now(), despachoAviso:true, despachoAvisoVisto:false, despachoAvisoTs:Date.now(), despachoAvisoTxt:txt});
+  toast("⚠ Aviso enviado · el pedido NO se marcó como preparado");
+  DESP=null; vistaDespachar();
+}
+async function despAvisoVisto(id){ await DB.update(id,{despachoAvisoVisto:true}); toast("Aviso resuelto"); vistaDespachar(); }
 function abrirEtiquetaPDF(p){
   try{
     const bin=atob(p.etiquetaPdf); const arr=new Uint8Array(bin.length);
@@ -2825,7 +2940,8 @@ function render(){
 
   // el link ?rol=operador fuerza el modo preparar (para el celu de la empleada), aunque haya login
   const rolLink=q.get("rol");
-  if(rolLink==="operador"||rolLink==="empleado"){ ROL="operador"; EMPLEADO=true; OPVIEW="prepararhoy"; }
+  if(rolLink==="operador"||rolLink==="empleado"){ ROL="operador"; EMPLEADO=true; if(OPVIEW!=="despachar") OPVIEW="prepararhoy"; }
+  else if(rolLink==="despacho"){ ROL="operador"; EMPLEADO=true; if(!["despachar","prepararhoy","preparar"].includes(OPVIEW)) OPVIEW="despachar"; }   // link para quien despacha y saca las fotos
   else if(DB.modo==="firebase"){
     if(!AUTH_READY) return vistaCargando();
     if(!USER)       return vistaLogin();
@@ -2846,7 +2962,7 @@ function render(){
     if(PREVIEW==="cadete"){ if(!CADETE_ACTIVO){ vistaElegirCadete(); } else { vistaCadete(); } return bannerPreview("Reparto"); }
     return vistaOperador();
   }
-  if(ROL==="operador"){ OPVIEW="prepararhoy"; return vistaPrepararHoy(); }
+  if(ROL==="operador"){ if(OPVIEW==="despachar") return vistaDespachar(); OPVIEW="prepararhoy"; return vistaPrepararHoy(); }
   if(ROL==="cadete")   return CADETE_ACTIVO?vistaCadete():vistaElegirCadete();
 }
 function verComo(r){ PREVIEW=r; CADETE_ACTIVO=null; render(); }
@@ -2939,7 +3055,8 @@ function pintarSidebar(){
   const nActivos=ped.filter(p=>!p.cerradoEn && !["entregado","confirmado","anulado"].includes(p.estado)).length;
   const nPrep=ped.filter(p=>p.estado==="pendiente").length;
   const nPend=ped.filter(p=>p.estado==="pendiente" && !p.metodo).length + ped.filter(p=>p.estado==="pendiente" && p.metodo).length + ped.filter(p=>p.estado==="preparado").length;
-  const items=[["hoy","Hoy","📋",nPend||null],["pedidos","Pedidos","📦",nActivos||null],
+  const nAvisos=ped.filter(p=>p.despachoAviso && !p.despachoAvisoVisto).length;
+  const items=[["hoy","Hoy","📋",nPend||null],["pedidos","Pedidos","📦",nActivos||null],["despachar","Despacho","📷",nAvisos||null],
     ["stock","Stock","🗃️",null],["listados","Listados","📊",null]];
   sb.innerHTML=`<div class="logo-sys">
       <div class="logo-mark">F</div>
@@ -3725,6 +3842,7 @@ function vistaOperador(){
   try{ pintarSidebar(); }catch(e){}
   if(OPVIEW==="hoy") return vistaHoy();
   if(OPVIEW==="prepararhoy") return vistaPrepararHoy();
+  if(OPVIEW==="despachar") return vistaDespachar();
   if(OPVIEW==="preparar" && PREP_ID) return pantallaPreparar(PREP_ID);
   if(OPVIEW==="listados") return vistaListados();
   if(OPVIEW==="cortecaja") return vistaCorteCaja();
@@ -4230,12 +4348,12 @@ async function traerTiendaNube(){
         f.prodsTN.forEach(x=>{
           const pk=packDef(x.sku, x.nombre);
           let prod=null;
-          if(pk && pk.comps && pk.comps.length){ prods.push({nombre:x.nombre, cant:x.cant, sku:x.sku}); return; }   // itemsPedido lo expande
+          if(pk && pk.comps && pk.comps.length){ prods.push({nombre:x.nombre, cant:x.cant, sku:x.sku, reconocido:true}); return; }   // itemsPedido lo expande
           for(const c of [x.barcode,x.sku]){ if(!prod && nb(c).length>=8) prod=prodPorBarcode(c); }
           const pn=packDeNombre(x.nombre); x.cant=x.cant*pn.n;   // "Pack x3 ..." → multiplica
           if(!prod) prod=mejorProducto(pn.nombre);
-          if(prod) prods.push({nombre:prod.nombre, cant:x.cant, sku:x.sku});
-          else { todos=false; prods.push({nombre:x.nombre, cant:x.cant, sku:x.sku}); }
+          if(prod) prods.push({nombre:prod.nombre, cant:x.cant, sku:x.sku, reconocido:true});
+          else { todos=false; prods.push({nombre:x.nombre, nomML:x.nombre, cant:x.cant, sku:x.sku, reconocido:false}); }
         });
         f.prods=prods; f.items=prods.map(p=>p.cant+"x "+p.nombre).join(" · ");
         if(!todos) f.prodsDudosos=true;
@@ -4436,12 +4554,17 @@ async function guardarEnseniado(){
       if(r) await DB.update(r.id,{lista}); else await DB.create({tipo:"prodsExtra",lista});
     } else return;
   } }
-  const wasPrep=c.prep;
+  const wasPrep=c.prep, seguir=c.seguirImport;
   await aprenderPack(c.sku, c.nombre, comps);
+  if(!wasPrep && IMP_FILAS[c.fi] && IMP_FILAS[c.fi].prods && IMP_FILAS[c.fi].prods[c.pi]){
+    const x=IMP_FILAS[c.fi].prods[c.pi]; x.reconocido=true;
+    if(comps.length===1 && comps[0].cant===1) x.nombre=comps[0].prod;   // producto simple: queda con el nombre del catálogo
+    IMP_FILAS[c.fi].items=IMP_FILAS[c.fi].prods.map(p=>p.cant+"x "+p.nombre).join(" · ");
+  }
   cerrarEnseniar();
   toast("Aprendido ✓ No te vuelvo a preguntar por esto");
   if(wasPrep){ if(typeof PREP_ID!=="undefined" && PREP_ID) pantallaPreparar(PREP_ID); else render(); }
-  else mostrarPreviewImport();
+  else { mostrarPreviewImport(); if(seguir) confirmarImport(); }
 }
 /* Corregir a mano UN producto de UNA etiqueta importada (o agregar uno que faltó): la etiqueta
    se leyó mal, es otro SKU, o el producto quedó pegado al pedido de otro cliente. pi=-1 = agregar nuevo. */
@@ -4589,15 +4712,25 @@ async function confirmarImport(){
   const sel=IMP_FILAS.filter((f,i)=>IMP_SEL[i]);
   if(!sel.length){ toast("Marcá al menos un pedido"); return; }
   if(faltaRevisarImport()){ toast("Revisá los productos de cada pedido antes de guardar (tildá 'Revisé')"); return; }
+  // Productos que no reconocí: pregunto uno por uno qué producto es antes de guardar (y queda aprendido)
+  for(let fi=0; fi<IMP_FILAS.length; fi++){ if(!IMP_SEL[fi]) continue;
+    const pi=(IMP_FILAS[fi].prods||[]).findIndex(x=>x && x.reconocido===false);
+    if(pi>=0){ const x=IMP_FILAS[fi].prods[pi];
+      alert("❓ No reconozco un producto del pedido de "+(IMP_FILAS[fi].cliente||"—")+":\n\n\""+(x.nomML||x.nombre)+"\""+(x.sku?("  (SKU "+x.sku+")"):"")+"\n\nDecime qué producto es. Queda guardado y no te vuelvo a preguntar.");
+      enseniarPack(fi,pi); if(ENS_CTX) ENS_CTX.seguirImport=true; return; } }
   // Última barrera anti-duplicados, justo antes de crear: por más que ya se filtró al leer la etiqueta,
   // puede pasar que 1) la misma venta haya quedado dos veces en la selección, o 2) el pedido ya se haya
   // guardado por otro lado (otro dispositivo, u otra importación) mientras tenías esto en pantalla.
   const todos=PEDIDOS.filter(p=>p.tipo===undefined || p.cliente!==undefined);
   const vistos=new Set(); const aCrear=[], duplicados=[];
   for(const f of sel){
-    const dup = f.ref && (todos.some(p=>p.ref===f.ref) || vistos.has(f.ref));
+    // comparo por dígitos (así "#123" y "123" son lo mismo) y también por N° de envío de ML
+    const dg=s=>String(s||"").replace(/\D/g,"").replace(/^0+/,"");
+    const r=dg(f.ref), e=dg(f.envio);
+    const dup = (r && (todos.some(p=>p.estado!=="anulado" && dg(p.ref)===r) || vistos.has("r"+r)))
+             || (e.length>=8 && (todos.some(p=>p.estado!=="anulado" && dg(p.envio)===e) || vistos.has("e"+e)));
     if(dup){ duplicados.push(f); continue; }
-    if(f.ref) vistos.add(f.ref);
+    if(r) vistos.add("r"+r); if(e.length>=8) vistos.add("e"+e);
     aCrear.push(f);
   }
   if(duplicados.length){
@@ -6024,6 +6157,7 @@ function vistaPrepararHoy(){
   app().innerHTML=`
     ${segOp('hoy')}
     <button class="btn sm ghost" onclick="OPVIEW='hoy';vistaOperador()">← Volver a Hoy</button>
+    ${ROL!=="admin"?`<div class="seg" style="margin-top:12px"><button class="on">Preparar</button><button onclick="OPVIEW='despachar';render()">📷 Despacho</button></div>`:''}
     <div class="title" style="margin-top:14px">Preparar pedidos</div>
     <div class="subtitle">Elegí empresa y tipo de envío. Entrá a uno, escaneá sus productos, y cerralo.</div>
     <label class="btn block green" style="cursor:pointer;margin-top:10px">📷 Foto del pedido armado (detecta el cliente por la etiqueta)
