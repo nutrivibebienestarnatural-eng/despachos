@@ -1007,6 +1007,108 @@ async function fotoDetectarPedido(file){
   toast("✓ "+(p.cliente||"Pedido")+" preparado con foto 📷");
   render();
 }
+/* ===== Carpeta "Ventas" vigilada (Chrome/Edge en PC) =====
+   Ventas\            ← se puede tirar todo acá, o separado en:
+     Etiquetas\       ← PDF de ML / Tienda Nube
+     Fotos\           ← fotos de los pedidos armados
+     Procesadas\      ← la app mueve acá lo que ya tomó (la crea sola)
+   Mientras la app está abierta revisa cada 5 s y muestra un aviso con lo nuevo. */
+const CARPETA={handle:null, activa:false, etiquetas:[], fotos:[], vistos:new Set(), timer:null, ocupado:false};
+function idbCarpeta(modo,valor){ return new Promise((res)=>{ try{
+  const rq=indexedDB.open("despacho_carpeta",1);
+  rq.onupgradeneeded=()=>rq.result.createObjectStore("kv");
+  rq.onsuccess=()=>{ const tx=rq.result.transaction("kv",modo==="get"?"readonly":"readwrite"); const st=tx.objectStore("kv");
+    if(modo==="get"){ const g=st.get("ventas"); g.onsuccess=()=>res(g.result||null); g.onerror=()=>res(null); }
+    else { st.put(valor,"ventas"); tx.oncomplete=()=>res(true); } };
+  rq.onerror=()=>res(null); }catch(e){ res(null); } }); }
+async function conectarCarpeta(){
+  if(!window.showDirectoryPicker){ alert("Tu navegador no permite vigilar carpetas. Usá Chrome o Edge en la computadora."); return; }
+  try{
+    const h=CARPETA.handle && (await CARPETA.handle.queryPermission({mode:"readwrite"}))!=="granted"
+      ? CARPETA.handle : await window.showDirectoryPicker({id:"ventas",mode:"readwrite"});
+    if((await h.requestPermission({mode:"readwrite"}))!=="granted"){ toast("Sin permiso para la carpeta"); return; }
+    CARPETA.handle=h; await idbCarpeta("put",h); iniciarVigilancia();
+    toast("📂 Vigilando la carpeta "+h.name);
+  }catch(e){ if(e&&e.name!=="AbortError") alert("No pude abrir la carpeta: "+(e.message||e)); }
+}
+async function reconectarCarpetaGuardada(){
+  if(!window.showDirectoryPicker) return;
+  const h=await idbCarpeta("get"); if(!h) return;
+  CARPETA.handle=h;
+  try{ if((await h.queryPermission({mode:"readwrite"}))==="granted") iniciarVigilancia(); else pintarAvisoCarpeta(); }catch(e){}
+}
+function desconectarCarpeta(){ clearInterval(CARPETA.timer); CARPETA.activa=false; CARPETA.etiquetas=[]; CARPETA.fotos=[]; pintarAvisoCarpeta(); toast("Carpeta desconectada"); }
+function iniciarVigilancia(){ clearInterval(CARPETA.timer); CARPETA.activa=true; revisarCarpeta(); CARPETA.timer=setInterval(revisarCarpeta,5000); }
+async function revisarCarpeta(){
+  if(!CARPETA.activa||!CARPETA.handle||CARPETA.ocupado) return;
+  CARPETA.ocupado=true;
+  try{
+    const dirs=[CARPETA.handle];
+    for await (const [nombre,h] of CARPETA.handle.entries()){ if(h.kind==="directory" && /^(etiquetas|fotos)$/i.test(nombre)) dirs.push(h); }
+    for(const d of dirs){
+      for await (const [nombre,h] of d.entries()){
+        if(h.kind!=="file") continue;
+        const clave=d.name+"/"+nombre; if(CARPETA.vistos.has(clave)) continue;
+        if(/\.pdf$/i.test(nombre)){ CARPETA.vistos.add(clave); CARPETA.etiquetas.push({dir:d,nombre,h}); }
+        else if(/\.(jpe?g|png|webp|heic)$/i.test(nombre)){ CARPETA.vistos.add(clave); CARPETA.fotos.push({dir:d,nombre,h}); }
+      }
+    }
+  }catch(e){ console.warn("Carpeta:",e); if(e&&e.name==="NotAllowedError"){ CARPETA.activa=false; clearInterval(CARPETA.timer); } }
+  CARPETA.ocupado=false; pintarAvisoCarpeta();
+}
+function pintarAvisoCarpeta(){
+  let el=document.getElementById("avisoCarpeta");
+  if(!el){ el=document.createElement("div"); el.id="avisoCarpeta";
+    el.style.cssText="position:fixed;right:16px;bottom:16px;z-index:9999;background:var(--card,#fff);border:1px solid var(--border,#ddd);border-radius:14px;padding:10px 12px;box-shadow:0 6px 24px rgba(0,0,0,.18);font-size:14px;max-width:320px";
+    document.body.appendChild(el); }
+  if(!CARPETA.handle){ el.hidden=true; return; }
+  el.hidden=false;
+  if(!CARPETA.activa){ el.innerHTML=`📂 <b>${esc(CARPETA.handle.name)}</b> desconectada <button class="btn sm" onclick="conectarCarpeta()">Reactivar</button>`; return; }
+  const ne=CARPETA.etiquetas.length, nf=CARPETA.fotos.length;
+  el.innerHTML=`<div class="row" style="justify-content:space-between;gap:8px"><span>📂 <b>${esc(CARPETA.handle.name)}</b> ${ne||nf?'':'<span class="muted">· sin novedades</span>'}</span>
+      <button class="btn sm ghost" title="Dejar de vigilar" onclick="desconectarCarpeta()">✕</button></div>
+    ${ne?`<button class="btn sm block" style="margin-top:8px" onclick="procesarEtiquetasCarpeta()">🏷️ ${ne} etiqueta${ne===1?'':'s'} nueva${ne===1?'':'s'} → Revisar</button>`:''}
+    ${nf?`<button class="btn sm block green" style="margin-top:6px" onclick="procesarFotosCarpeta()">📷 ${nf} foto${nf===1?'':'s'} nueva${nf===1?'':'s'} → Asignar</button>`:''}`;
+}
+async function moverAProcesadas(item){
+  try{
+    const proc=await CARPETA.handle.getDirectoryHandle("Procesadas",{create:true});
+    const file=await item.h.getFile();
+    let nombre=item.nombre;
+    try{ await proc.getFileHandle(nombre); nombre=Date.now()+"_"+nombre; }catch(_){}   // si ya existe, no piso
+    const nuevo=await proc.getFileHandle(nombre,{create:true});
+    const w=await nuevo.createWritable(); await w.write(file); await w.close();
+    await item.dir.removeEntry(item.nombre);
+  }catch(e){ console.warn("No pude mover "+item.nombre, e); }
+}
+async function procesarEtiquetasCarpeta(){
+  const lote=CARPETA.etiquetas.splice(0); pintarAvisoCarpeta(); if(!lote.length) return;
+  const files=[]; for(const it of lote){ try{ files.push(await it.h.getFile()); }catch(e){} }
+  // separo ML (traen "Venta:" / "Pack ID") de los PDF de Tienda Nube
+  pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+  const ml=[], tn=[];
+  for(const f of files){ let t=""; try{ t=await pdfTextoRemito(f); }catch(e){}
+    (/Venta:|Pack ID|Envio:/i.test(t)?ml:tn).push({f,t}); }
+  formImportar();
+  for(const {f,t} of tn){   // leerPDF reemplaza la lista: voy juntando lo de cada PDF
+    const emp=EMPRESAS.find(e=>new RegExp(e.nombre.split(/[\s.]/)[0],"i").test(t.split(/Remitente/i).pop()||""));
+    if(emp) IMP_EMPRESA=emp.id;
+    const antes=IMP_FILAS.slice();
+    await leerPDF(f);
+    if(emp) IMP_FILAS.forEach(x=>{ if(!antes.includes(x)) x.empresa=emp.id; });
+    IMP_FILAS=antes.concat(IMP_FILAS.filter(x=>!antes.includes(x)));
+  }
+  if(tn.length && IMP_FILAS.length){ IMP_SEL={}; mostrarPreviewImport(); }
+  if(ml.length) await leerEtiquetaML(ml.map(x=>x.f));
+  for(const it of lote) await moverAProcesadas(it);
+}
+async function procesarFotosCarpeta(){
+  const lote=CARPETA.fotos.splice(0); pintarAvisoCarpeta();
+  for(const it of lote){
+    try{ const f=await it.h.getFile(); await fotoDetectarPedido(f); }catch(e){ console.warn(e); }
+    await moverAProcesadas(it);
+  }
+}
 function abrirEtiquetaPDF(p){
   try{
     const bin=atob(p.etiquetaPdf); const arr=new Uint8Array(bin.length);
@@ -4037,6 +4139,7 @@ function formImportar(){
     <button class="btn sm ghost" onclick="vistaOperador()">← Volver</button>
     <div class="title" style="margin-top:14px">Importar pedidos</div>
     <div class="subtitle">Subí el archivo que exportaste de Tienda Nube (CSV o PDF). Yo me encargo del resto.</div>
+    ${window.showDirectoryPicker?`<button class="btn ghost block" style="margin:10px 0" onclick="conectarCarpeta()">📂 ${CARPETA.activa?('Vigilando "'+esc(CARPETA.handle.name)+'" · cambiar carpeta'):'Conectar carpeta Ventas (trae las etiquetas y fotos solas)'}</button>`:''}
     <div class="card">
       <span class="label">¿De qué empresa son?</span>
       <div class="seg" id="impEmp" style="margin-bottom:14px;flex-wrap:wrap">
@@ -6749,6 +6852,7 @@ function vistaSimulacion(){
    ========================================================================= */
 (function start(){
   initDB();
+  setTimeout(reconectarCarpetaGuardada,1500);   // si ya conectaste la carpeta Ventas, retoma la vigilancia
   const q=new URLSearchParams(location.search);
   const esCliente=!!q.get("p");
   const qInit=new URLSearchParams(location.search);
