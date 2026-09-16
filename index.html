@@ -4034,6 +4034,23 @@ async function traerTiendaNube(){
     try{
       f.empresa=IMP_EMPRESA; f.canal=IMP_CANAL||"tiendanube";
       f.cliente=f.cliente||""; f.dir=f.dir||""; f.ciudad=f.ciudad||""; f.provincia=f.provincia||""; f.items=f.items||"";
+      // productos: los vinculo al catálogo por SKU/código de barras (o lo aprendido), y si no por nombre
+      if(Array.isArray(f.prodsTN) && f.prodsTN.length){
+        const nb=s=>String(s||"").replace(/\D/g,"").replace(/^0+/,"");
+        const prods=[]; let todos=true;
+        f.prodsTN.forEach(x=>{
+          const pk=packDef(x.sku, x.nombre);
+          let prod=null;
+          if(pk && pk.comps && pk.comps.length){ prods.push({nombre:x.nombre, cant:x.cant, sku:x.sku}); return; }   // itemsPedido lo expande
+          for(const c of [x.barcode,x.sku]){ if(!prod && nb(c).length>=8) prod=prodPorBarcode(c); }
+          if(!prod) prod=mejorProducto(x.nombre);
+          if(prod) prods.push({nombre:prod.nombre, cant:x.cant, sku:x.sku});
+          else { todos=false; prods.push({nombre:x.nombre, cant:x.cant, sku:x.sku}); }
+        });
+        f.prods=prods; f.items=prods.map(p=>p.cant+"x "+p.nombre).join(" · ");
+        if(!todos) f.prodsDudosos=true;
+      }
+      delete f.prodsTN;
       const rr=sugerirRuta(f.provincia,f.ciudad); f.origen=(rr&&rr.origen)||"bsas";
       if(f.retiro){ f.metodo="correo"; f.correo="Punto de retiro"; }         // retira en sucursal
       else if(llegaCadete(f)){ f.metodo="cadete"; f.correo=""; }             // CABA / Zona 1-3 (por CP) => Cardinal
@@ -5273,7 +5290,9 @@ function parseEtiquetaML(texto){
   if(!cp){ const i=L.findIndex(x=>/^CP:?$/.test(x)); if(i>0){ const m=L[i-1].match(/^(\d{4})$/); if(m) cp=m[1]; } }
   // Cliente: "Destinatario:" (Flex) o el nombre antes de "Domicilio:" (Correo)
   let cli=(T.match(/Destinatario:\s*([^(\n]+)/i)||[])[1]||"";
-  if(!cli){ const i=L.findIndex(x=>/^Domicilio:/i.test(x)); if(i>0){ cli=L[i-1].replace(/\s*\([^)]*\)\s*$/,"").trim(); } }
+  if(!cli){ const i=L.findIndex(x=>/^Domicilio:/i.test(x));
+    if(i>0){ let k=i-1; if(/^\([^)]*\)$/.test(L[k]) && k>0) k--;   // la línea justo arriba suele ser el alias "(USUARIOML)"
+      cli=L[k].replace(/\s*\([^)]*\)\s*$/,"").trim(); } }
   // Dirección: "Direccion:" (Flex) o "Domicilio:" (Correo)
   let dir=(T.match(/Direccion:\s*(.+?)(?:\s*Barrio:|\s*Referencia:|\s*Destinatario:|\n|$)/i)||[])[1]||"";
   if(!dir) dir=(T.match(/Domicilio:\s*(.+?)(?:\s*CP:|\s*Central:|\s*Ciudad de destino:|\n|$)/i)||[])[1]||"";
@@ -5299,7 +5318,20 @@ function parseEtiquetaML(texto){
   // y le busco el "SKU:" más cercano hacia atrás si lo hay; si no hay, igual reconstruyo el nombre.
   const prods=[], items=[], vistos=new Set();
   const cantMatches=[...texto.matchAll(/Cantidad:\s*(\d+)/g)];
-  const skuMatches=[...texto.matchAll(/SKU:\s*([A-Za-z0-9]{2,})/g)];
+  // el SKU puede traer símbolos (ej "POT+MAG"): tomo todo hasta el espacio
+  const skuMatches=[...texto.matchAll(/SKU:\s*([^\s]{2,})/g)];
+  // En las etiquetas actuales de ML los nombres de los productos van AL FINAL, después de
+  // "Despacha tu(s) producto(s) cuanto antes…", uno por línea y en el mismo orden que las "Cantidad:".
+  const nombresFinal=[];
+  { const iDesp=L.findIndex(x=>/^Despacha tus? productos?/i.test(x));
+    if(iDesp>=0) for(let j=iDesp+1;j<L.length;j++){ const t=L[j];
+      if(/^(Pack ID|Venta|Envio|Remitente|Identifi|SKU|Cantidad|Destinatario|Domicilio)\b/i.test(t)) break;
+      nombresFinal.push(t); } }
+  // si hay más líneas que productos es porque algún nombre largo ocupó 2 líneas: las junto
+  while(nombresFinal.length>cantMatches.length && cantMatches.length>0){
+    let m=0; nombresFinal.forEach((n,i)=>{ if(i && n.length<nombresFinal[m].length) m=i; });
+    const i=Math.max(1,m); nombresFinal.splice(i-1,2,nombresFinal[i-1]+" "+nombresFinal[i]); }
+  let idxProd=0;
   // para nunca confundir el nombre del cliente con un producto (pasa cuando el nombre queda
   // pegado justo arriba del primer producto en el texto de la etiqueta)
   const cliNorm=(cli||"").toLowerCase().trim();
@@ -5328,7 +5360,9 @@ function parseEtiquetaML(texto){
       if(cliNorm && tSinAlias===cliNorm) continue;
       nombreLineas.unshift(t);
     }
-    const nomML=nombreLineas.join(" ").replace(/^[A-Z0-9]{2,}\s+/,"").replace(/^\d{6,}\s*/,"");
+    const nomFinal=nombresFinal[idxProd++]||"";
+    const nomML=(nomFinal || nombreLineas.join(" ").replace(/^[A-Z0-9]{2,}\s+/,"").replace(/^\d{6,}\s*/,""))
+      .replace(/\s+(Sin sabor|Frasco)\s*$/i,"").trim();
     // ¿lo conozco? 1) diccionario de packs  2) código de barras exacto (tolerante a 0 inicial)  3) nombre
     // 1º lo que ya aprendiste por SKU (packs/vínculos), 2º código de barras exacto, 3º por nombre
     const packDefinido = packDef(sku, nomML);
@@ -5778,15 +5812,38 @@ async function repararProdsPedidos(){
   if(dudosos.length) msg+="\n\n⚠ "+dudosos.length+" productos no se reconocieron y quedaron sin cargar:\n"+dudosos.slice(0,10).join("\n");
   alert(msg); render();
 }
+/* Tipo de envío para agrupar la preparación */
+const ENVIOS_PREP=[{id:"cadete",nombre:"🛵 Cadete / Flex"},{id:"pickit",nombre:"📦 Pickit"},{id:"correo",nombre:"✉️ Correo"}];
+function tipoEnvioPrep(p){ if(p.pickit) return "pickit"; if(p.metodo==="correo") return "correo"; return "cadete"; }
+let PREP_EMP="todas", PREP_ENV="todos";
 function vistaPrepararHoy(){
-  const arr=soloPedidos().filter(p=>p.estado==="pendiente" && !p.cerradoEn).sort((a,b)=>(a.creado||0)-(b.creado||0));
+  const todos=soloPedidos().filter(p=>p.estado==="pendiente" && !p.cerradoEn).sort((a,b)=>(a.creado||0)-(b.creado||0));
+  const arr=todos.filter(p=>(PREP_EMP==="todas"||(p.empresa||"")===PREP_EMP) && (PREP_ENV==="todos"||tipoEnvioPrep(p)===PREP_ENV));
+  const cuenta=(fn)=>todos.filter(fn).length;
+  const empsConPed=[...new Set(todos.map(p=>p.empresa||""))];
+  const chip=(on,txt,n,click)=>`<button class="${on?'on':''}" onclick="${click}">${txt} <b style="opacity:.7">${n}</b></button>`;
+  // grupos: empresa → tipo de envío
+  const grupos=[];
+  empsConPed.filter(e=>PREP_EMP==="todas"||e===PREP_EMP).forEach(e=>{
+    ENVIOS_PREP.forEach(t=>{ const g=arr.filter(p=>(p.empresa||"")===e && tipoEnvioPrep(p)===t.id); if(g.length) grupos.push({e,t,g}); });
+  });
+  let nro=0;
   app().innerHTML=`
     ${segOp('hoy')}
     <button class="btn sm ghost" onclick="OPVIEW='hoy';vistaOperador()">← Volver a Hoy</button>
     <div class="title" style="margin-top:14px">Preparar pedidos</div>
-    <div class="subtitle">Entrá a uno, escaneá sus productos, y cerralo. De a uno para no mezclarlos.</div>
-    ${!arr.length?`<div class="card"><div class="muted" style="text-align:center;padding:24px">No hay pedidos para preparar 👍</div></div>`:
-      arr.map((p,i)=>{ const it=(()=>{try{return itemsPedido(p);}catch(e){return[];}})();
+    <div class="subtitle">Elegí empresa y tipo de envío. Entrá a uno, escaneá sus productos, y cerralo.</div>
+    <div class="seg" style="flex-wrap:wrap;margin:10px 0 8px">
+      ${chip(PREP_EMP==="todas","Todas",todos.length,"PREP_EMP='todas';vistaPrepararHoy()")}
+      ${empsConPed.map(e=>chip(PREP_EMP===e,esc(e?nombreEmp(e):"Sin empresa"),cuenta(p=>(p.empresa||"")===e),`PREP_EMP='${e}';vistaPrepararHoy()`)).join("")}
+    </div>
+    <div class="seg" style="flex-wrap:wrap;margin-bottom:14px">
+      ${chip(PREP_ENV==="todos","Todos los envíos",cuenta(p=>PREP_EMP==="todas"||(p.empresa||"")===PREP_EMP),"PREP_ENV='todos';vistaPrepararHoy()")}
+      ${ENVIOS_PREP.map(t=>chip(PREP_ENV===t.id,t.nombre,cuenta(p=>(PREP_EMP==="todas"||(p.empresa||"")===PREP_EMP)&&tipoEnvioPrep(p)===t.id),`PREP_ENV='${t.id}';vistaPrepararHoy()`)).join("")}
+    </div>
+    ${!arr.length?`<div class="card"><div class="muted" style="text-align:center;padding:24px">No hay pedidos para preparar con este filtro 👍</div></div>`:
+      grupos.map(({e,t,g})=>`<div class="label" style="margin:16px 0 8px;font-size:14px">${esc(e?nombreEmp(e):"Sin empresa")} · ${t.nombre} · ${g.length} ${g.length===1?'pedido':'pedidos'}</div>`+
+      g.map(p=>{ const i=nro++; const it=(()=>{try{return itemsPedido(p);}catch(e){return[];}})();
         const uds=it.reduce((s,x)=>s+x.cant,0);
         return `<div class="card" style="margin-bottom:10px;cursor:pointer" onclick="abrirPreparar('${p.id}')">
           <div class="row" style="justify-content:space-between;align-items:center">
@@ -5797,7 +5854,7 @@ function vistaPrepararHoy(){
             </div>
             <button class="btn sm" style="flex:0 0 auto" onclick="event.stopPropagation();abrirPreparar('${p.id}')">Preparar →</button>
           </div>
-        </div>`; }).join("")}`;
+        </div>`; }).join("")).join("")}`;
 }
 function abrirPreparar(id){ PREP_ID=id; PREP_SCAN={}; PREP_REAL={}; PREP_ALERTAS=[]; OPVIEW='preparar'; render(); }
 /* muestra en Listados/Hoy los pedidos que se cerraron con inconsistencias autorizadas */
@@ -5881,7 +5938,8 @@ function pantallaPreparar(id){
 }
 /* Va al próximo pedido pendiente de preparar, o vuelve a la lista si no queda ninguno */
 function siguientePedidoPrep(){
-  const quedan=soloPedidos().filter(p=>p.estado==="pendiente" && !p.cerradoEn).sort((a,b)=>(a.creado||0)-(b.creado||0));
+  const quedan=soloPedidos().filter(p=>p.estado==="pendiente" && !p.cerradoEn
+    && (PREP_EMP==="todas"||(p.empresa||"")===PREP_EMP) && (PREP_ENV==="todos"||tipoEnvioPrep(p)===PREP_ENV)).sort((a,b)=>(a.creado||0)-(b.creado||0));
   if(quedan.length){ abrirPreparar(quedan[0].id); }
   else { PREP_ID=null; toast("¡No quedan pedidos para preparar! 🎉"); OPVIEW="prepararhoy"; vistaOperador(); }
 }

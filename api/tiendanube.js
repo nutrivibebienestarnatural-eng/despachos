@@ -26,9 +26,15 @@ function tnHeaders() {
 function mapearPedido(o) {
   const s = o.shipping_address || {};
   const dir = [s.address, s.number, s.floor].filter(Boolean).join(" ").trim();
-  const items = (o.products || [])
-    .map(p => (p.quantity || 1) + "x " + (p.name || "").replace(/\s+/g, " ").trim())
-    .join(" · ");
+  // nombre limpio: sin comas/punto y coma/"·" (la app separa los items por esos caracteres)
+  const limpio = n => String(n || "").replace(/[·,;]+/g, " ").replace(/\s+/g, " ").trim();
+  const prods = (o.products || []).map(p => ({
+    nombre: limpio(p.name),
+    cant: parseInt(p.quantity, 10) || 1,
+    sku: String(p.sku || p.barcode || "").trim(),
+    barcode: String(p.barcode || "").trim(),
+  }));
+  const items = prods.map(p => p.cant + "x " + p.nombre).join(" · ");
   const retiro = (o.shipping_pickup_type === "pickup");   // retira en punto → va a correo/retiro
   return {
     tnId: o.id,                                  // id interno de Tienda Nube (para devolver el tracking)
@@ -40,6 +46,7 @@ function mapearPedido(o) {
     provincia: s.province || "",
     cp: (s.zipcode || "").toString().replace(/\D/g, "").slice(0, 4),
     items: items,
+    prodsTN: prods,
     nota: o.note || "",
     retiro: retiro,
     pago: o.payment_status || "",
