@@ -1165,18 +1165,21 @@ function despCardHTML(p){
         <div style="font-size:18px;font-weight:800">${esc(p.cliente||'—')}</div>
         <div class="muted" style="font-size:13px">N° ${esc(numOrden(p))} · ${esc(nombreEmp(p.empresa))} · ${esc(ENVIOS_PREP.find(t=>t.id===tipoEnvioPrep(p)).nombre)}</div>
         <div class="muted" style="font-size:13px">Estado: ${esc(estObj(p.estado).label)}</div>
+        ${DESP.guardada?`<div style="margin-top:6px;font-size:13px;font-weight:700;color:var(--green)">📷 Foto guardada en este pedido ✓</div>`:''}
       </div>
     </div>
     ${av.length?`<div style="margin-top:12px;padding:10px 12px;border-radius:10px;background:#ffe8e8;color:#7a1f1f;font-size:14px">
       ${av.map(t=>`<div>⚠ ${esc(t)}</div>`).join("")}</div>`:''}
-    <div class="label" style="margin-top:14px">Tiene que llevar — tildá lo que ves en la foto</div>
+    <div class="label" style="margin-top:14px">Tiene que llevar (podés tildar para controlar)</div>
     ${its.length?its.map((x,i)=>`<label class="row" style="gap:10px;padding:9px 0;border-top:.5px solid var(--border);cursor:pointer;font-size:15px;flex-wrap:nowrap;align-items:center">
         <input type="checkbox" ${DESP.check[i]?'checked':''} onchange="DESP.check[${i}]=this.checked" style="width:22px;height:22px;accent-color:var(--green);flex:0 0 auto">
         <span><b>${x.cant}×</b> ${esc(x.prodNombre)}</span></label>`).join("")
       :`<div class="muted">Este pedido no tiene productos cargados.</div>`}
     <button class="btn block green" style="margin-top:14px" onclick="despConfirmar()">✓ Todo coincide${p.estado==="pendiente"?' → marcar PREPARADO':''}</button>
     <button class="btn block" style="margin-top:8px;background:#e5484d;color:#fff" onclick="despNoCoincide()">✗ Algo no coincide → avisar</button>
-    <button class="btn block ghost" style="margin-top:8px" onclick="DESP=null;vistaDespachar()">Cancelar</button>
+    <label class="btn block" style="margin-top:8px;cursor:pointer">📷 Siguiente foto
+      <input type="file" accept="image/*" capture="environment" style="display:none" onchange="DESP=null;despFoto(this.files[0]);this.value=''"></label>
+    <button class="btn block ghost" style="margin-top:8px" onclick="DESP=null;vistaDespachar()">Volver</button>
   </div>`;
 }
 async function despFoto(file){
@@ -1201,18 +1204,21 @@ async function despFoto(file){
   // controles automáticos
   if(p.estado==="anulado") DESP.avisos.push("El pedido está ANULADO");
   else if(!["pendiente","preparado"].includes(p.estado)) DESP.avisos.push("El pedido ya figura como "+estObj(p.estado).label);
-  if(p.fotoPrep) DESP.avisos.push("Este pedido ya tenía foto ("+fmt(p.fotoPrepTs)+") — ¿se armó dos veces?");
+  if(p.fotoPrep) DESP.avisos.push("Este pedido ya tenía foto ("+fmt(p.fotoPrepTs)+") — se reemplaza por la nueva. ¿Se armó dos veces?");
   const its=(()=>{ try{ return itemsPedido(p); }catch(e){ return []; } })();
   if(!its.length) DESP.avisos.push("El pedido no tiene productos cargados");
   if((p.prods||[]).some(x=>x&&x.reconocido===false)) DESP.avisos.push("Tiene productos sin reconocer en el catálogo");
   if(DESP.avisos.length) try{ navigator.vibrate&&navigator.vibrate([300,100,300]); }catch(e){}
+  // la foto queda guardada en ESE pedido apenas se encuentra (aunque después no toquen nada)
+  try{ await DB.update(p.id,{fotoPrep:foto, fotoPrepTs:Date.now()}); DESP.guardada=true; toast("📷 Foto guardada en el pedido de "+(p.cliente||"")); }
+  catch(e){ alert("No pude guardar la foto: "+(e.message||e)); }
   OPVIEW="despachar"; vistaDespachar();
 }
 async function despConfirmar(){
   const p=PEDIDOS.find(x=>x.id===DESP.id); if(!p) return;
   const its=(()=>{ try{ return itemsPedido(p); }catch(e){ return []; } })();
   const faltan=its.filter((x,i)=>!DESP.check[i]);
-  if(faltan.length){ alert("Tildá los productos que ves en la foto.\n\nSi falta alguno, tocá \"Algo no coincide\".\n\nSin tildar:\n"+faltan.map(x=>"• "+x.cant+"× "+x.prodNombre).join("\n")); return; }
+  if(faltan.length && !confirm("¿Está todo lo del pedido en la foto?\n\n"+its.map(x=>"• "+x.cant+"× "+x.prodNombre).join("\n")+"\n\nSi falta algo, tocá Cancelar y después \"Algo no coincide\".")) return;
   const patch={fotoPrep:DESP.foto, fotoPrepTs:Date.now()};
   if(DESP.avisos.length){ Object.assign(patch,{despachoAviso:true, despachoAvisoVisto:false, despachoAvisoTs:Date.now(), despachoAvisoTxt:DESP.avisos.slice()}); }
   await DB.update(p.id,patch);
