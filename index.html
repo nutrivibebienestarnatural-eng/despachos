@@ -910,7 +910,7 @@ async function adjuntarFotoPedido(id,file){
     toast("Subiendo foto…");
     const foto=await comprimirFoto(file);
     await DB.update(id,{fotoPrep:foto, fotoPrepTs:Date.now()});
-    toast("Foto del pedido guardada 📷"); refrescarFoto(id,{fotoPrep:foto, fotoPrepTs:Date.now()});
+    telegramPedido(PEDIDOS.find(x=>x.id===id),foto,"📷 PEDIDO CON FOTO",[]); toast("Foto del pedido guardada 📷"); refrescarFoto(id,{fotoPrep:foto, fotoPrepTs:Date.now()});
   }catch(e){ console.error(e); alert("No se pudo guardar la foto: "+(e.message||e)); }
 }
 async function borrarFotoPedido(id){
