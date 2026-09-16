@@ -1159,8 +1159,8 @@ function despCardHTML(p){
   const its=(()=>{ try{ return itemsPedido(p); }catch(e){ return []; } })();
   const av=DESP.avisos||[];
   return `<div class="card" style="margin:14px 0">
-    <div class="row" style="gap:12px;align-items:flex-start">
-      <img src="${DESP.foto}" style="width:130px;height:130px;object-fit:cover;border-radius:12px;flex:0 0 auto">
+    <div class="row" style="gap:12px;align-items:flex-start;flex-wrap:nowrap">
+      <img src="${DESP.foto}" style="width:110px;height:110px;object-fit:cover;border-radius:12px;flex:0 0 auto">
       <div style="min-width:0">
         <div style="font-size:18px;font-weight:800">${esc(p.cliente||'—')}</div>
         <div class="muted" style="font-size:13px">N° ${esc(numOrden(p))} · ${esc(nombreEmp(p.empresa))} · ${esc(ENVIOS_PREP.find(t=>t.id===tipoEnvioPrep(p)).nombre)}</div>
@@ -1170,9 +1170,9 @@ function despCardHTML(p){
     ${av.length?`<div style="margin-top:12px;padding:10px 12px;border-radius:10px;background:#ffe8e8;color:#7a1f1f;font-size:14px">
       ${av.map(t=>`<div>⚠ ${esc(t)}</div>`).join("")}</div>`:''}
     <div class="label" style="margin-top:14px">Tiene que llevar — tildá lo que ves en la foto</div>
-    ${its.length?its.map((x,i)=>`<label class="row" style="gap:10px;padding:9px 0;border-top:.5px solid var(--border);cursor:pointer;font-size:15px">
-        <input type="checkbox" ${DESP.check[i]?'checked':''} onchange="DESP.check[${i}]=this.checked" style="width:22px;height:22px;accent-color:var(--green)">
-        <b>${x.cant}×</b> ${esc(x.prodNombre)}</label>`).join("")
+    ${its.length?its.map((x,i)=>`<label class="row" style="gap:10px;padding:9px 0;border-top:.5px solid var(--border);cursor:pointer;font-size:15px;flex-wrap:nowrap;align-items:center">
+        <input type="checkbox" ${DESP.check[i]?'checked':''} onchange="DESP.check[${i}]=this.checked" style="width:22px;height:22px;accent-color:var(--green);flex:0 0 auto">
+        <span><b>${x.cant}×</b> ${esc(x.prodNombre)}</span></label>`).join("")
       :`<div class="muted">Este pedido no tiene productos cargados.</div>`}
     <button class="btn block green" style="margin-top:14px" onclick="despConfirmar()">✓ Todo coincide${p.estado==="pendiente"?' → marcar PREPARADO':''}</button>
     <button class="btn block" style="margin-top:8px;background:#e5484d;color:#fff" onclick="despNoCoincide()">✗ Algo no coincide → avisar</button>
