@@ -642,6 +642,15 @@ function rutaOptima(stops){                                 // vecino más cerca
   return out; }
 /* --- Preparación / picking --- */
 let PICK={};   // progreso de escaneo de la sesión: {nombreProducto: cantidadEscaneada}
+/* "Pack X 3 - Malato De Magnesio" / "Pack x2 Omega 3" / "Combo 3 unidades" → {n:3, nombre:"Malato De Magnesio"} */
+function packDeNombre(nombre){
+  const s=String(nombre||"");
+  const m=s.match(/\bpack\s*(?:x|por|de)?\s*(\d{1,2})\b\s*(?:unidades|u\.?|frascos)?\s*[-–:]?\s*/i)
+       || s.match(/\b(\d{1,2})\s*(?:unidades|frascos)\b\s*[-–:]?\s*/i);
+  const n=m?parseInt(m[1],10):1;
+  if(!m || !(n>1 && n<=24)) return {n:1, nombre:s};
+  return {n, nombre:(s.slice(0,m.index)+" "+s.slice(m.index+m[0].length)).replace(/\s+/g," ").trim()};
+}
 function parseItems(t){ return (t||"").split(/·|,|\n|;/).map(s=>s.trim()).filter(Boolean).map(s=>{
   const m=s.match(/^(\d+)\s*[xX]\s*(.+)$/); return m?{cant:+m[1],nombre:m[2].trim()}:{cant:1,nombre:s}; }); }
 function pickingConsolidado(){
@@ -4223,7 +4232,8 @@ async function traerTiendaNube(){
           let prod=null;
           if(pk && pk.comps && pk.comps.length){ prods.push({nombre:x.nombre, cant:x.cant, sku:x.sku}); return; }   // itemsPedido lo expande
           for(const c of [x.barcode,x.sku]){ if(!prod && nb(c).length>=8) prod=prodPorBarcode(c); }
-          if(!prod) prod=mejorProducto(x.nombre);
+          const pn=packDeNombre(x.nombre); x.cant=x.cant*pn.n;   // "Pack x3 ..." → multiplica
+          if(!prod) prod=mejorProducto(pn.nombre);
           if(prod) prods.push({nombre:prod.nombre, cant:x.cant, sku:x.sku});
           else { todos=false; prods.push({nombre:x.nombre, cant:x.cant, sku:x.sku}); }
         });
@@ -5551,11 +5561,14 @@ function parseEtiquetaML(texto){
       esAprendido=true;   // es un SKU ya enseñado (simple o pack)
       prodCat = PRODUCTOS.find(pp=>pp.nombre===packDefinido.comps[0].prod) || null;
     } else {
-      prodCat = (sku && PRODUCTOS.find(pp=>normBarcode(pp.barcode)===normBarcode(sku))) || (nomML?mejorProducto(nomML):null);
+      prodCat = (sku && PRODUCTOS.find(pp=>normBarcode(pp.barcode)===normBarcode(sku))) || (nomML?mejorProducto(packDeNombre(nomML).nombre):null);
     }
+    // "Pack X 3 - Malato De Magnesio" con Cantidad: 1 → son 3 frascos (salvo que ese pack ya esté enseñado)
+    const pn = esAprendido ? {n:1} : packDeNombre(nomML);
+    const cantReal = cant*(pn.n||1);
     const etiq = nomML || (sku?("SKU "+sku):"Producto sin código detectado");
-    prods.push({ nombre: prodCat?prodCat.nombre:etiq, cant, sku, nomML, reconocido: !!prodCat || esAprendido });
-    items.push(cant+"x "+(prodCat?prodCat.nombre:etiq));
+    prods.push({ nombre: prodCat?prodCat.nombre:etiq, cant:cantReal, sku, nomML, reconocido: !!prodCat || esAprendido, packX: pn.n>1?pn.n:undefined });
+    items.push(cantReal+"x "+(prodCat?prodCat.nombre:etiq));
   }
   if(!cli && !venta && !prods.length) return null;
   // etiqueta a un punto Pickit (locker): se nota porque el propio PDF de ML imprime "PICKIT" bien grande
