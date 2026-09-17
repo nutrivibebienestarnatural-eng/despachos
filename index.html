@@ -937,27 +937,65 @@ function comprimirFoto(file,max=1100,calidad=0.6){ return new Promise((res,rej)=
     res(d); };
   img.onerror=()=>{ URL.revokeObjectURL(url); rej(new Error("No se pudo leer la imagen")); };
   img.src=url; }); }
+/* ===== Guardado de fotos =====
+   Firestore permite 1 MB por documento y el pedido ya puede traer el PDF de la etiqueta.
+   Por eso en el pedido va SOLO una miniatura liviana, y la foto grande se guarda aparte. */
+function fotoChica(dataUrl, max, calidad, limiteKB){ return new Promise((res,rej)=>{
+  const img=new Image();
+  img.onload=()=>{ const k=Math.min(1,max/Math.max(img.width,img.height));
+    const c=document.createElement("canvas"); c.width=Math.max(1,Math.round(img.width*k)); c.height=Math.max(1,Math.round(img.height*k));
+    c.getContext("2d").drawImage(img,0,0,c.width,c.height);
+    let q=calidad, d=c.toDataURL("image/jpeg",q);
+    while(d.length>limiteKB*1024 && q>0.2){ q-=0.08; d=c.toDataURL("image/jpeg",q); }
+    res(d); };
+  img.onerror=()=>rej(new Error("No se pudo leer la imagen")); img.src=dataUrl; }); }
+async function guardarFotoGrande(pedidoId, dataUrl){
+  try{
+    if(DB.modo==="firebase"){
+      const col=firebase.firestore().collection("fotos");
+      const ref=await col.add({pedidoId, data:dataUrl, ts:Date.now()});
+      return ref.id;
+    }
+    localStorage.setItem("foto_"+pedidoId, dataUrl); return "local:"+pedidoId;
+  }catch(e){ console.warn("foto grande:", e); return ""; }
+}
+async function leerFotoGrande(docId){
+  try{
+    if(!docId) return "";
+    if(docId.startsWith("local:")) return localStorage.getItem("foto_"+docId.slice(6))||"";
+    const d=await firebase.firestore().collection("fotos").doc(docId).get();
+    return d.exists?(d.data().data||""):"";
+  }catch(e){ console.warn("foto grande:", e); return ""; }
+}
+/* Guarda la foto de un pedido: miniatura adentro del pedido + foto grande aparte. Devuelve la miniatura. */
+async function guardarFotoPedido(id, dataUrl){
+  const mini=await fotoChica(dataUrl, 600, 0.55, 90);          // ~60-90 KB: entra siempre
+  const docId=await guardarFotoGrande(id, dataUrl);
+  await DB.update(id, {fotoPrep:mini, fotoPrepTs:Date.now(), fotoDoc:docId||""});
+  return mini;
+}
 async function adjuntarFotoPedido(id,file){
   if(!file) return;
   try{
     toast("Subiendo foto…");
     const foto=await comprimirFoto(file);
-    await DB.update(id,{fotoPrep:foto, fotoPrepTs:Date.now()});
-    telegramPedido(PEDIDOS.find(x=>x.id===id),foto,"📷 PEDIDO CON FOTO",[]); toast("Foto del pedido guardada 📷"); refrescarFoto(id,{fotoPrep:foto, fotoPrepTs:Date.now()});
+    const mini=await guardarFotoPedido(id, foto);
+    telegramPedido(PEDIDOS.find(x=>x.id===id),foto,"📷 PEDIDO CON FOTO",[]); toast("Foto del pedido guardada 📷"); refrescarFoto(id,{fotoPrep:mini, fotoPrepTs:Date.now()});
   }catch(e){ console.error(e); alert("No se pudo guardar la foto: "+(e.message||e)); }
 }
 async function borrarFotoPedido(id){
   if(!confirm("¿Borrar la foto de este pedido?")) return;
-  await DB.update(id,{fotoPrep:"", fotoPrepTs:null}); toast("Foto borrada"); refrescarFoto(id,{fotoPrep:"", fotoPrepTs:null});
+  await DB.update(id,{fotoPrep:"", fotoPrepTs:null, fotoDoc:""}); toast("Foto borrada"); refrescarFoto(id,{fotoPrep:"", fotoPrepTs:null});
 }
 // actualiza solo el bloque de la foto (sin redibujar la pantalla, así no se pierde lo que se está editando)
 function refrescarFoto(id,patch){
   const p=PEDIDOS.find(x=>x.id===id); if(p) Object.assign(p,patch);
   document.querySelectorAll(`[data-foto="${id}"]`).forEach(el=>{ el.outerHTML=fotoPedidoHTML(p||{id,...patch}); });
 }
-function verFotoPedido(id){
+async function verFotoPedido(id){
   const p=PEDIDOS.find(x=>x.id===id); if(!p||!p.fotoPrep) return;
   const w=window.open("","_blank"); if(!w){ toast("Permití las ventanas emergentes"); return; }
+  if(p.fotoDoc){ leerFotoGrande(p.fotoDoc).then(g=>{ if(g){ const i=w.document.querySelector("img"); if(i) i.src=g; } }); }
   w.document.write(`<title>Foto pedido ${esc(numOrden(p))}</title><body style="margin:0;background:#111;color:#fff;font-family:sans-serif;text-align:center">
     <div style="padding:10px">${esc(p.cliente||"")} · N° ${esc(numOrden(p))} · ${fmt(p.fotoPrepTs)}</div>
     <img src="${p.fotoPrep}" style="max-width:100%;max-height:92vh"></body>`);
@@ -1062,10 +1100,10 @@ async function fotoDetectarPedido(file){
   const foto=await comprimirFoto(file);
   if(p.estado!=="pendiente"){
     if(!confirm("Pedido de "+(p.cliente||"—")+" · N° "+numOrden(p)+"\nYa está en estado: "+estObj(p.estado).label+"\n\n¿Guardar igual la foto en este pedido?")) return;
-    await DB.update(p.id,{fotoPrep:foto,fotoPrepTs:Date.now()}); telegramPedido(p,foto,"📷 PEDIDO CON FOTO",["Ya estaba en estado "+estObj(p.estado).label]); toast("Foto guardada en el pedido de "+(p.cliente||"")); render(); return;
+    await guardarFotoPedido(p.id, foto); telegramPedido(p,foto,"📷 PEDIDO CON FOTO",["Ya estaba en estado "+estObj(p.estado).label]); toast("Foto guardada en el pedido de "+(p.cliente||"")); render(); return;
   }
   if(!confirm("✅ Es el pedido de "+(p.cliente||"—")+"\nN° "+numOrden(p)+" · "+nombreEmp(p.empresa)+"\n\nTiene que llevar:\n"+lista+"\n\nRevisá que la foto coincida.\n¿Marcarlo como PREPARADO y guardar la foto?")) return;
-  await DB.update(p.id,{fotoPrep:foto,fotoPrepTs:Date.now()});
+  await guardarFotoPedido(p.id, foto);
   await avanzar(p.id,"preparado","Preparado por foto de etiqueta");
   telegramPedido(p,foto,"✅ PEDIDO PREPARADO CON FOTO",[]);
   toast("✓ "+(p.cliente||"Pedido")+" preparado con foto 📷");
@@ -1553,7 +1591,7 @@ async function despFotoPara(id,file){
   const p=PEDIDOS.find(x=>x.id===id); if(!p) return;
   try{
     const foto=await comprimirFoto(file);
-    await DB.update(id,{fotoPrep:foto, fotoPrepTs:Date.now()});
+    await guardarFotoPedido(id, foto);
     DESP.foto=foto; DESP.guardada=true; toast("📷 Foto guardada en el pedido de "+(p.cliente||""));
     telegramPedido(p, foto, "📷 PEDIDO CON FOTO", p.fotoPrep?["Reemplazó una foto anterior"]:[]);
     vistaDespachar();
@@ -1618,7 +1656,7 @@ async function despFoto(file){
   if((p.prods||[]).some(x=>x&&x.reconocido===false)) DESP.avisos.push("Tiene productos sin reconocer en el catálogo");
   if(DESP.avisos.length) try{ navigator.vibrate&&navigator.vibrate([300,100,300]); }catch(e){}
   // la foto queda guardada en ESE pedido apenas se encuentra (aunque después no toquen nada)
-  try{ await DB.update(p.id,{fotoPrep:foto, fotoPrepTs:Date.now()}); DESP.guardada=true; toast("📷 Foto guardada en el pedido de "+(p.cliente||""));
+  try{ await guardarFotoPedido(p.id, foto); DESP.guardada=true; toast("📷 Foto guardada en el pedido de "+(p.cliente||""));
     telegramPedido(p, foto, DESP.avisos.length?"⚠ PEDIDO CON FOTO — REVISAR":"📷 PEDIDO CON FOTO", DESP.avisos); }
   catch(e){ alert("No pude guardar la foto: "+(e.message||e)); }
   OPVIEW="despachar"; vistaDespachar();
@@ -1629,7 +1667,8 @@ async function despConfirmar(){
   const faltan=its.filter((x,i)=>!DESP.check[i]);
   if(faltan.length && !confirm("¿Está todo lo del pedido en la foto?\n\n"+its.map(x=>"• "+x.cant+"× "+x.prodNombre).join("\n")+"\n\nSi falta algo, tocá Cancelar y después \"Algo no coincide\".")) return;
   if(!DESP.foto && !confirm("Este pedido no tiene foto. ¿Marcarlo igual?")) return;
-  const patch=DESP.foto&&!DESP.guardada?{fotoPrep:DESP.foto, fotoPrepTs:Date.now()}:{};
+  if(DESP.foto&&!DESP.guardada){ try{ await guardarFotoPedido(p.id, DESP.foto); DESP.guardada=true; }catch(e){ console.warn(e); } }
+  const patch={};
   if(DESP.avisos.length){ Object.assign(patch,{despachoAviso:true, despachoAvisoVisto:false, despachoAvisoTs:Date.now(), despachoAvisoTxt:DESP.avisos.slice()}); }
   if(Object.keys(patch).length) await DB.update(p.id,patch);
   if(p.estado==="pendiente" && !DESP.avisos.some(a=>/ANULADO/.test(a))) await avanzar(p.id,"preparado","Preparado · verificado con foto en Despacho");
@@ -1644,7 +1683,8 @@ async function despNoCoincide(){
   if(nota===null) return;
   const txt=DESP.avisos.concat(noVistos, nota.trim()?["Nota: "+nota.trim()]:[]);
   if(!txt.length) txt.push("Marcado como que no coincide");
-  await DB.update(p.id,{...(DESP.foto&&!DESP.guardada?{fotoPrep:DESP.foto, fotoPrepTs:Date.now()}:{}), despachoAviso:true, despachoAvisoVisto:false, despachoAvisoTs:Date.now(), despachoAvisoTxt:txt});
+  if(DESP.foto&&!DESP.guardada){ try{ await guardarFotoPedido(p.id, DESP.foto); DESP.guardada=true; }catch(e){ console.warn(e); } }
+  await DB.update(p.id,{despachoAviso:true, despachoAvisoVisto:false, despachoAvisoTs:Date.now(), despachoAvisoTxt:txt});
   telegramPedido(p, DESP.foto||p.fotoPrep, "🚨 ALGO NO COINCIDE — NO SE MARCÓ PREPARADO", txt);
   toast("⚠ Aviso enviado · el pedido NO se marcó como preparado");
   DESP=null; vistaDespachar();
@@ -7444,11 +7484,15 @@ function vistaSimulacion(){
   if(esCliente){
     if(DB.modo!=="firebase") DB.subscribe(d=>{ PEDIDOS=d; cargarProdsExtra(); render(); });
     render();                                  // vistaCliente lee su pedido con DB.get
-  } else if((rolInit==="operador"||rolInit==="empleado") && DB.modo==="firebase"){
-    // empleada por link: sin login, cargo los pedidos directo para que pueda preparar
+  } else if((rolInit==="operador"||rolInit==="empleado"||rolInit==="despacho") && DB.modo==="firebase"){
+    // empleada por link: sin login propio. Firestore igual pide sesión, así que entro como anónimo.
     AUTH_READY=true;
-    if(!SUBSCRITO){ SUBSCRITO=true; DB.subscribe(d=>{ PEDIDOS=d; cargarProdsExtra(); render(); }); }
-    render();
+    const arrancar=()=>{ if(!SUBSCRITO){ SUBSCRITO=true; DB.subscribe(d=>{ PEDIDOS=d; cargarProdsExtra(); render(); }); } render(); };
+    firebase.auth().signInAnonymously()
+      .then(arrancar)
+      .catch(e=>{ console.warn("anonimo:", e);
+        arrancar();
+        setTimeout(()=>toast("No pude entrar con este link. Avisale al admin: falta activar el acceso anónimo en Firebase."),1200); });
   } else if(DB.modo==="firebase"){
     firebase.auth().onAuthStateChanged(async (user)=>{
       USER=user; USERROL=null; CADETE_ACTIVO=null;
