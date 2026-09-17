@@ -1179,6 +1179,145 @@ function vistaDespachar(){
         <div style="font-size:11px;line-height:1.2;margin-top:2px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${h.despachoAviso&&!h.despachoAvisoVisto?'⚠ ':'✓ '}${esc(h.cliente||'')}</div></div>`).join("")}
       </div>`:''}`;
 }
+/* ===== CONTROL: tablero estratégico del admin ===== */
+let CTL_RANGO="hoy", CTL_EMP="todas", CTL_LISTA="faltan";
+const CTL_EN_CAMINO=["asignado","en_reparto","despachado","en_camino"];
+function ctlRango(){
+  const hoy=new Date(); hoy.setHours(0,0,0,0); const h=hoy.getTime();
+  if(CTL_RANGO==="ayer") return {ini:h-864e5, fin:h};
+  if(CTL_RANGO==="semana"){ const dow=(hoy.getDay()+6)%7; return {ini:h-dow*864e5, fin:Date.now()+864e5}; }
+  return {ini:h, fin:Date.now()+864e5};
+}
+function ctlPedidos(){
+  const {ini,fin}=ctlRango();
+  // lo del período + todo lo que sigue abierto (aunque sea de antes: es lo que hay que resolver)
+  return soloPedidos().filter(p=>p.estado!=="anulado" && (p.cliente||"")!=="_PRUEBA_DIAGNOSTICO"
+    && (CTL_EMP==="todas"||(p.empresa||"")===CTL_EMP)
+    && ((p.creado||0)>=ini && (p.creado||0)<fin || ["pendiente","preparado",...CTL_EN_CAMINO].includes(p.estado)));
+}
+function ctlEstado(p){
+  if(p.despachoAviso && !p.despachoAvisoVisto) return "mal";
+  if(p.estado==="pendiente") return "faltan";
+  if(p.estado==="preparado") return "listos";
+  if(CTL_EN_CAMINO.includes(p.estado)) return "camino";
+  return "entregados";
+}
+function vistaControl(){
+  try{ pintarSidebar(); }catch(e){}
+  const peds=ctlPedidos();
+  const by=f=>peds.filter(f);
+  const cnt={faltan:0,listos:0,camino:0,entregados:0,mal:0};
+  peds.forEach(p=>cnt[ctlEstado(p)]++);
+  const conFoto=by(p=>p.fotoPrep && !(p.despachoAviso&&!p.despachoAvisoVisto)).length;
+  const sinFotoSalida=by(p=>!p.fotoPrep && ["preparado",...CTL_EN_CAMINO].includes(p.estado));
+  const sinProd=by(p=>["pendiente","preparado"].includes(p.estado) && ((()=>{ try{ return !itemsPedido(p).length; }catch(_){ return true; } })() || (p.prods||[]).some(x=>x&&x.reconocido===false)));
+  const pct=(a,b)=>b?Math.round(a*100/b):0;
+  const totalAct=cnt.faltan+cnt.listos+cnt.mal;
+  const avance=pct(cnt.listos+cnt.camino+cnt.entregados, peds.length);
+  const emps=[...new Set(soloPedidos().map(p=>p.empresa||""))].filter(Boolean);
+  const btn=(on,txt,click)=>`<button class="${on?'on':''}" onclick="${click}">${txt}</button>`;
+  const kpi=(n,l,color,lista)=>`<div class="kpi" style="cursor:pointer;${CTL_LISTA===lista?'outline:2px solid '+color:''}" onclick="CTL_LISTA='${lista}';vistaControl()">
+      <div class="n" style="color:${color}">${n}</div><div class="l">${l}</div></div>`;
+  // matriz empresa × envío
+  const tipos=ENVIOS_PREP;
+  const celda=g=>{ const c={faltan:0,listos:0,camino:0,entregados:0,mal:0}; g.forEach(p=>c[ctlEstado(p)]++);
+    if(!g.length) return `<td class="muted" style="text-align:center">—</td>`;
+    return `<td style="font-size:12.5px;line-height:1.5;white-space:nowrap">
+      <b style="font-size:15px">${g.length}</b>
+      ${c.faltan?`<span style="color:var(--amber)"> · ⏳${c.faltan}</span>`:''}${c.listos?`<span style="color:var(--green)"> · ✓${c.listos}</span>`:''}${c.camino?`<span style="color:var(--accent)"> · 🚚${c.camino}</span>`:''}${c.mal?`<span style="color:var(--red)"> · ⚠${c.mal}</span>`:''}${c.entregados?`<span class="muted"> · 🏁${c.entregados}</span>`:''}</td>`; };
+  const filasEmp=(CTL_EMP==="todas"?emps:[CTL_EMP]).map(e=>{ const pe=peds.filter(p=>(p.empresa||"")===e); if(!pe.length) return "";
+    return `<tr><td><b>${esc(nombreEmp(e))}</b></td>${tipos.map(t=>celda(pe.filter(p=>tipoEnvioPrep(p)===t.id))).join("")}${celda(pe)}</tr>`; }).join("");
+  // cadetes
+  const cadetes={}; by(p=>tipoEnvioPrep(p)==="cadete" && ["preparado",...CTL_EN_CAMINO].includes(p.estado)).forEach(p=>{ const k=p.cadete||"Sin asignar"; (cadetes[k]=cadetes[k]||[]).push(p); });
+  // productos que faltan preparar
+  const prods={}; by(p=>p.estado==="pendiente").forEach(p=>{ try{ itemsPedido(p).forEach(it=>{ const k=it.prodNombre||it.nombre; prods[k]=(prods[k]||0)+(it.cant||0); }); }catch(_){} });
+  const topProds=Object.entries(prods).sort((a,b)=>b[1]-a[1]);
+  // lista de detalle según la tarjeta elegida
+  const listas={
+    faltan:{t:"⏳ Falta preparar", arr:by(p=>ctlEstado(p)==="faltan")},
+    listos:{t:"✓ Preparados, listos para salir", arr:by(p=>ctlEstado(p)==="listos")},
+    camino:{t:"🚚 En camino", arr:by(p=>ctlEstado(p)==="camino")},
+    entregados:{t:"🏁 Entregados", arr:by(p=>ctlEstado(p)==="entregados")},
+    mal:{t:"⚠ Con problema", arr:by(p=>ctlEstado(p)==="mal")},
+    bien:{t:"📷 Bien, con foto", arr:by(p=>p.fotoPrep && ctlEstado(p)!=="mal")},
+    sinfoto:{t:"📷 Salieron / listos SIN foto", arr:sinFotoSalida},
+    sinprod:{t:"❓ Productos sin cargar o sin reconocer", arr:sinProd},
+  };
+  const L=listas[CTL_LISTA]||listas.faltan;
+  const fila=p=>{ const its=(()=>{ try{ return itemsPedido(p); }catch(_){ return []; } })();
+    const est=ctlEstado(p), col={faltan:'var(--amber)',listos:'var(--green)',camino:'var(--accent)',entregados:'var(--text-3)',mal:'var(--red)'}[est];
+    return `<div class="row" style="gap:10px;padding:9px 0;border-top:.5px solid var(--border);flex-wrap:nowrap;align-items:center;cursor:pointer" onclick="DESP=null;despElegir('${p.id}');OPVIEW='despachar'">
+      ${p.fotoPrep?`<img src="${p.fotoPrep}" style="width:42px;height:42px;object-fit:cover;border-radius:8px;flex:0 0 auto">`:`<div style="width:42px;height:42px;border-radius:8px;border:1px dashed var(--border);flex:0 0 auto;display:flex;align-items:center;justify-content:center;opacity:.5">📷</div>`}
+      <div style="min-width:0;flex:1">
+        <div style="font-weight:650">${esc(p.cliente||'—')} <span class="muted" style="font-weight:400;font-size:12px">· ${esc(numOrden(p))} · ${esc(nombreEmp(p.empresa))} · ${(ENVIOS_PREP.find(t=>t.id===tipoEnvioPrep(p))||{}).nombre||''}${p.cadete?(' · '+esc(p.cadete)):''}</span></div>
+        <div style="font-size:12.5px;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${its.map(x=>x.cant+"× "+esc(x.prodNombre)).join(" · ")||'<span style="color:var(--red)">sin productos</span>'}</div>
+        ${p.despachoAviso&&!p.despachoAvisoVisto?`<div style="font-size:12px;color:var(--red)">⚠ ${esc((p.despachoAvisoTxt||[]).join(" · "))}</div>`:''}
+      </div>
+      <span style="flex:0 0 auto;font-size:11.5px;font-weight:700;color:${col}">${esc(estObj(p.estado).label)}</span>
+    </div>`; };
+  app().innerHTML=`
+    <div class="row" style="justify-content:space-between;align-items:flex-end;gap:10px;margin-bottom:10px">
+      <div><div class="title" style="margin:0">🎯 Control</div>
+        <div class="subtitle" style="margin:2px 0 0">${new Date().toLocaleDateString("es-AR",{weekday:"long",day:"numeric",month:"long"})} · ${peds.length} pedidos · avance ${avance}%</div></div>
+      <button class="btn sm ghost" onclick="telegramResumenDia()">✈️ Resumen a Telegram</button>
+    </div>
+    <div class="seg" style="margin-bottom:8px">${btn(CTL_RANGO==="hoy","Hoy","CTL_RANGO='hoy';vistaControl()")}${btn(CTL_RANGO==="ayer","Ayer","CTL_RANGO='ayer';vistaControl()")}${btn(CTL_RANGO==="semana","Semana","CTL_RANGO='semana';vistaControl()")}</div>
+    <div class="seg" style="margin-bottom:14px;flex-wrap:wrap">${btn(CTL_EMP==="todas","Todas","CTL_EMP='todas';vistaControl()")}${emps.map(e=>btn(CTL_EMP===e,esc(nombreEmp(e)),`CTL_EMP='${e}';vistaControl()`)).join("")}</div>
+
+    <div style="height:10px;border-radius:6px;background:var(--bg-2);overflow:hidden;display:flex;margin-bottom:14px;border:.5px solid var(--border)">
+      ${[["entregados","var(--text-3)"],["camino","var(--accent)"],["listos","var(--green)"],["faltan","var(--amber)"],["mal","var(--red)"]].map(([k,c])=>cnt[k]?`<div title="${k}" style="width:${pct(cnt[k],peds.length)}%;background:${c}"></div>`:'').join("")}
+    </div>
+    <div class="kpis">
+      ${kpi(cnt.faltan,"⏳ Falta preparar","var(--amber)","faltan")}
+      ${kpi(cnt.listos,"✓ Listos para salir","var(--green)","listos")}
+      ${kpi(cnt.camino,"🚚 En camino","var(--accent)","camino")}
+      ${kpi(cnt.mal,"⚠ Con problema","var(--red)","mal")}
+    </div>
+    <div class="kpis">
+      ${kpi(conFoto,"📷 Bien con foto","var(--green)","bien")}
+      ${kpi(sinFotoSalida.length,"Sin foto al salir",sinFotoSalida.length?"var(--amber)":"var(--text-3)","sinfoto")}
+      ${kpi(sinProd.length,"❓ Productos a revisar",sinProd.length?"var(--red)":"var(--text-3)","sinprod")}
+      ${kpi(cnt.entregados,"🏁 Entregados","var(--text-3)","entregados")}
+    </div>
+
+    <div class="card" style="margin-bottom:12px">
+      <div class="row" style="justify-content:space-between"><span class="label" style="margin:0">${L.t} · ${L.arr.length}</span>
+        ${CTL_LISTA==="mal"&&L.arr.length?`<button class="btn sm ghost" onclick="OPVIEW='despachar';vistaOperador()">Ver avisos →</button>`:''}</div>
+      ${L.arr.length?L.arr.slice(0,60).map(fila).join(""):`<div class="muted" style="padding:14px 0;text-align:center">Nada acá 👍</div>`}
+    </div>
+
+    <div class="card" style="margin-bottom:12px">
+      <span class="label">Por empresa y tipo de envío</span>
+      <div style="overflow-x:auto"><table class="tbl2" style="width:100%">
+        <tr><th style="text-align:left">Empresa</th>${tipos.map(t=>`<th>${t.nombre}</th>`).join("")}<th>Total</th></tr>
+        ${filasEmp||`<tr><td class="muted">Sin pedidos</td></tr>`}
+      </table></div>
+      <div class="muted" style="font-size:11.5px;margin-top:6px">⏳ falta preparar · ✓ listo · 🚚 en camino · ⚠ problema · 🏁 entregado</div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px">
+      <div class="card">
+        <span class="label">🛵 Lo que lleva cada cadete</span>
+        ${Object.keys(cadetes).length?Object.entries(cadetes).sort((a,b)=>b[1].length-a[1].length).map(([c,arr])=>`
+          <div class="row" style="justify-content:space-between;padding:8px 0;border-top:.5px solid var(--border)">
+            <span style="${c==='Sin asignar'?'color:var(--amber);font-weight:700':''}">${esc(c)}</span>
+            <span><b>${arr.length}</b> <span class="muted" style="font-size:12px">· ${arr.filter(p=>p.estado==='preparado').length} por salir · ${arr.filter(p=>CTL_EN_CAMINO.includes(p.estado)).length} en camino</span></span>
+          </div>`).join(""):`<div class="muted" style="padding:10px 0">Nada para cadetes</div>`}
+      </div>
+      <div class="card">
+        <span class="label">✉️ Correo y 📦 Pickit</span>
+        ${["correo","pickit"].map(t=>{ const g=by(p=>tipoEnvioPrep(p)===t); return `
+          <div class="row" style="justify-content:space-between;padding:8px 0;border-top:.5px solid var(--border)">
+            <span>${(ENVIOS_PREP.find(x=>x.id===t)||{}).nombre}</span>
+            <span><b>${g.length}</b> <span class="muted" style="font-size:12px">· ${g.filter(p=>p.estado==='pendiente').length} a preparar · ${g.filter(p=>p.estado==='preparado').length} a despachar · ${g.filter(p=>p.metodo==='correo'&&!p.etiquetaPdf&&['pendiente','preparado'].includes(p.estado)).length} sin etiqueta</span></span>
+          </div>`; }).join("")}
+      </div>
+      <div class="card">
+        <span class="label">📦 Qué juntar para lo que falta preparar</span>
+        ${topProds.length?topProds.slice(0,15).map(([n,c])=>`<div class="row" style="justify-content:space-between;padding:6px 0;border-top:.5px solid var(--border);flex-wrap:nowrap"><span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(n)}</span><b>${c}</b></div>`).join(""):`<div class="muted" style="padding:10px 0">Nada pendiente 👍</div>`}
+      </div>
+    </div>`;
+}
 /* ===== Telegram: foto + resumen de cada pedido (el bot se configura en Vercel) ===== */
 function resumenPedidoTG(p, titulo, avisos){
   const its=(()=>{ try{ return itemsPedido(p); }catch(_){ return []; } })();
@@ -3175,7 +3314,7 @@ function pintarSidebar(){
   const nPrep=ped.filter(p=>p.estado==="pendiente").length;
   const nPend=ped.filter(p=>p.estado==="pendiente" && !p.metodo).length + ped.filter(p=>p.estado==="pendiente" && p.metodo).length + ped.filter(p=>p.estado==="preparado").length;
   const nAvisos=ped.filter(p=>p.despachoAviso && !p.despachoAvisoVisto).length;
-  const items=[["hoy","Hoy","📋",nPend||null],["pedidos","Pedidos","📦",nActivos||null],["despachar","Despacho","📷",nAvisos||null],
+  const items=[["control","Control","🎯",nAvisos||null],["hoy","Hoy","📋",nPend||null],["pedidos","Pedidos","📦",nActivos||null],["despachar","Despacho","📷",nAvisos||null],
     ["stock","Stock","🗃️",null],["listados","Listados","📊",null]];
   sb.innerHTML=`<div class="logo-sys">
       <div class="logo-mark">F</div>
@@ -3962,6 +4101,7 @@ function vistaOperador(){
   if(OPVIEW==="hoy") return vistaHoy();
   if(OPVIEW==="prepararhoy") return vistaPrepararHoy();
   if(OPVIEW==="despachar") return vistaDespachar();
+  if(OPVIEW==="control") return vistaControl();
   if(OPVIEW==="preparar" && PREP_ID) return pantallaPreparar(PREP_ID);
   if(OPVIEW==="listados") return vistaListados();
   if(OPVIEW==="cortecaja") return vistaCorteCaja();
