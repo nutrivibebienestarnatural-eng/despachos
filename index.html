@@ -652,7 +652,36 @@ function packDeNombre(nombre){
   return {n, nombre:(s.slice(0,m.index)+" "+s.slice(m.index+m[0].length)).replace(/\s+/g," ").trim()};
 }
 function parseItems(t){ return (t||"").split(/·|,|\n|;/).map(s=>s.trim()).filter(Boolean).map(s=>{
-  const m=s.match(/^(\d+)\s*[xX]\s*(.+)$/); return m?{cant:+m[1],nombre:m[2].trim()}:{cant:1,nombre:s}; }); }
+  const m=s.match(/^(\d+)\s*[xX]\s*(.+)$/); return m?{cant:+m[1],nombre:m[2].replace(/^[\s.\-:·]+/,"").trim()}:{cant:1,nombre:s}; }).filter(x=>x.nombre); }
+/* Del texto de referencia ("2x . Testo UP - Precursor…") arma la lista de productos del catálogo para descontar.
+   ok: los que reconoció · dudosos: los que no encontró en el catálogo */
+function prodsDesdeTexto(t){
+  const ok=[], dudosos=[];
+  const base=s=>baseProducto(s).replace(/\b(pura?|natural|suplemento|dietario|labs|nutrition)\b/g," ").replace(/\s+/g," ").trim();
+  const compacto=s=>base(s).replace(/ /g,"");
+  const buscar=nombre=>{
+    const ci=compacto(nombre); if(ci.length<4) return null;
+    const pal=base(nombre).split(" ").filter(w=>w.length>=4);
+    // 1) el nombre compacto del producto arranca igual (ej "multimag nesio" → "multimagnesio…")
+    const pref=ci.slice(0,Math.min(10,ci.length));
+    let cand=PRODUCTOS.filter(p=>compacto(p.nombre).startsWith(pref) || compacto(p.nombre).startsWith(ci.slice(0,6)));
+    if(cand.length===1) return cand[0];
+    // 2) el mejor por puntaje, pero solo si comparte una palabra real (no "capsulas", "60", etc.)
+    const m=mejorProducto(nombre);
+    if(m && pal.some(w=>compacto(m.nombre).includes(w))) return m;
+    if(cand.length>1) return cand.sort((a,b)=>compacto(a.nombre).length-compacto(b.nombre).length)[0];
+    return null;
+  };
+  parseItems(t).forEach(it=>{
+    const pk=packDef("", it.nombre);
+    if(pk && pk.comps && pk.comps.length){ ok.push({nombre:it.nombre, cant:it.cant}); return; }   // pack ya enseñado: itemsPedido lo abre
+    const pn=packDeNombre(it.nombre);
+    const prod=buscar(pn.nombre);
+    if(prod){ const ya=ok.find(x=>x.nombre===prod.nombre); if(ya) ya.cant+=it.cant*pn.n; else ok.push({nombre:prod.nombre, cant:it.cant*pn.n}); }
+    else dudosos.push(it.cant+"x "+it.nombre);
+  });
+  return {ok, dudosos};
+}
 function pickingConsolidado(){
   const map={};
   PEDIDOS.filter(p=>(!p.tipo||p.tipo==="pedido")&&p.estado==="pendiente").forEach(p=>{
@@ -3290,7 +3319,7 @@ async function crearPedido(d){
   const id=await DB.create({tipo:"pedido",empresa:emp.id,canal:d.canal||emp.canalDefault,ref:d.ref||"",
     cliente:d.cliente,tel:d.tel||"",dir:d.dir||"",ciudad:d.ciudad||"",provincia:d.provincia||"",cp:d.cp||"",
     etiquetaPdf:d.etiquetaPdf||"",etiquetaPdfNombre:d.etiquetaPdfNombre||"",nota:d.nota||"",zonaFija:(d.zonaFija!=null?d.zonaFija:""),
-    items:d.items||"",prods:d.prods||[],origen:d.origen||r.origen,metodo:d.metodo||r.metodo,pickit:!!d.pickit,envio:d.envio||"",
+    items:d.items||"",prods:(d.prods&&d.prods.length)?d.prods:prodsDesdeTexto(d.items||"").ok,origen:d.origen||r.origen,metodo:d.metodo||r.metodo,pickit:!!d.pickit,envio:d.envio||"",
     correo:d.correo||"",tracking:d.tracking||"",tnId:d.tnId||"",cadete:"",estado:"pendiente",creado:Date.now(),
     eventos:[{estado:"pendiente",ts:Date.now(),nota:"Pedido creado"}]});
   return id;
@@ -5305,6 +5334,12 @@ function formNuevo(edit){
       <button class="btn block" onclick='${edit?`guardarEdicion(${JSON.stringify(p.id)})`:"guardarNuevo()"}'>${edit?'Guardar cambios':'Crear pedido'}</button>
     </div>`;
   EDIT_PRODS=(p.prods&&p.prods.length)?p.prods.map(x=>({nombre:x.nombre,cant:+x.cant||1})):[];
+  // pedido sin productos para descontar: los armo solos desde el texto de referencia
+  if(!EDIT_PRODS.length && (p.items||"").trim()){
+    const r=prodsDesdeTexto(p.items); EDIT_PRODS=r.ok.map(x=>({nombre:x.nombre,cant:x.cant}));
+    if(EDIT_PRODS.length) setTimeout(()=>toast("Cargué "+EDIT_PRODS.length+" producto"+(EDIT_PRODS.length===1?"":"s")+" desde la referencia · revisalos y guardá"),50);
+    if(r.dudosos.length) setTimeout(()=>alert("❓ No encontré en el catálogo:\n\n"+r.dudosos.join("\n")+"\n\nAgregalo a mano con el buscador."),300);
+  }
   pintarProdsEdit();
 }
 function toggleCorreo(){ const m=$("#f_metodo").value;
@@ -6521,9 +6556,8 @@ async function repararProdsPedidos(){
   if(!sinProds.length){ toast("Todos los pedidos ya tienen sus productos cargados 👍"); return; }
   let reparados=0, dudosos=[];
   for(const p of sinProds){
-    const its=parseItems(p.items||"");
-    const prods=[];
-    its.forEach(it=>{ const prod=mejorProducto(it.nombre); if(prod) prods.push({nombre:prod.nombre, cant:it.cant||1}); else dudosos.push(p.cliente+": "+it.nombre); });
+    const r=prodsDesdeTexto(p.items||""); const prods=r.ok;
+    r.dudosos.forEach(x=>dudosos.push(p.cliente+": "+x));
     if(prods.length){ try{ await DB.update(p.id,{prods}); reparados++; }catch(e){} }
   }
   let msg="✅ "+reparados+" pedidos reparados (ahora descuentan bien).";
