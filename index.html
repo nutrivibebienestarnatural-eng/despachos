@@ -966,33 +966,54 @@ async function leerCodigosDeFoto(file){
   return [...out];
 }
 // N° de envío de ML de un pedido: el guardado, o sacado del PDF de la etiqueta (para pedidos viejos)
-const ENVIO_CACHE={};
+const ENVIO_CACHE={}, ETQ_TXT_CACHE={};
+// Texto de la etiqueta PDF guardada en el pedido (ML o Correo/Tienda Nube), cacheado
+async function textoEtiquetaPedido(p){
+  if(!p.etiquetaPdf || typeof pdfjsLib==="undefined") return "";
+  if(ETQ_TXT_CACHE[p.id]!=null) return ETQ_TXT_CACHE[p.id];
+  let t="";
+  try{ const bin=atob(p.etiquetaPdf); const arr=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
+    const pdf=await pdfjsLib.getDocument({data:arr}).promise;
+    for(let n=1;n<=Math.min(pdf.numPages,3);n++){ const tc=await (await pdf.getPage(n)).getTextContent(); t+=tc.items.map(x=>x.str).join(" ")+"\n"; }
+  }catch(e){}
+  ETQ_TXT_CACHE[p.id]=t; return t;
+}
 async function envioDePedido(p){
   if(p.envio) return String(p.envio);
   if(ENVIO_CACHE[p.id]!=null) return ENVIO_CACHE[p.id];
-  let env="";
-  if(p.etiquetaPdf && typeof pdfjsLib!=="undefined"){
-    try{ const bin=atob(p.etiquetaPdf); const arr=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
-      const pdf=await pdfjsLib.getDocument({data:arr}).promise; let t="";
-      for(let n=1;n<=Math.min(pdf.numPages,2);n++){ const tc=await (await pdf.getPage(n)).getTextContent(); t+=tc.items.map(x=>x.str).join(" ")+"\n"; }
-      const m=t.match(/Envio:\s*(\d[\d ]{4,20}\d)/i); if(m) env=m[1].replace(/\D/g,"");
-    }catch(e){}
-  }
-  ENVIO_CACHE[p.id]=env; return env;
+  const m=(await textoEtiquetaPedido(p)).match(/Envio:\s*(\d[\d ]{4,20}\d)/i);
+  return ENVIO_CACHE[p.id]=m?m[1].replace(/\D/g,""):"";
 }
+/* Busca el pedido de la foto con lo que traiga el QR / código de barras:
+   · ML:     {"id":"48028812120",...}           → N° de envío
+   · Correo: "1978130CE9ICI21901|DOM|CORDOBA|5841|HC523871123" → código TN / seguimiento / CP
+   Devuelve el pedido, o null. Si solo coincide el CP y hay un único pedido de correo con ese CP, lo devuelve con .porCP */
 async function buscarPedidoPorCodigos(codigos){
-  // del texto del QR saco todos los números largos (ML trae JSON tipo {"id":"48028812120",...})
-  const nums=new Set(); codigos.forEach(c=>{ (String(c).match(/\d{6,}/g)||[]).forEach(n=>nums.add(n.replace(/^0+/,""))); });
-  if(!nums.size) return null;
+  const nums=new Set(), toks=new Set(); let cp="";
+  codigos.forEach(c=>{ const s=String(c);
+    (s.match(/\d{6,}/g)||[]).forEach(n=>nums.add(n.replace(/^0+/,"")));
+    s.split(/[|;,\s"{}:]+/).forEach(x=>{ x=x.trim().toUpperCase(); if(x.length>=8 && /[A-Z]/.test(x) && /\d/.test(x)) toks.add(x.replace(/AR$/,"")); });
+    const mcp=s.match(/\|(\d{4})\|/); if(mcp) cp=mcp[1]; });
+  if(!nums.size && !toks.size) return null;
   const cand=soloPedidos().filter(p=>p.estado!=="anulado").sort((a,b)=>(b.creado||0)-(a.creado||0));
+  const orden=cand.filter(p=>p.estado==="pendiente"||p.estado==="preparado").concat(cand.filter(p=>!["pendiente","preparado"].includes(p.estado)));
   const d=s=>String(s||"").replace(/\D/g,"").replace(/^0+/,"");
-  // 1) por N° de venta / orden
+  const up=s=>String(s||"").toUpperCase().replace(/[^A-Z0-9]/g,"");
+  // 1) N° de venta / orden largo
   let hit=cand.find(p=>{ const r=d(p.ref); return r.length>=6 && nums.has(r); });
   if(hit) return hit;
-  // 2) por N° de envío (primero los pendientes, que son los que se están preparando)
-  const orden=cand.filter(p=>p.estado==="pendiente").concat(cand.filter(p=>p.estado!=="pendiente"));
-  for(const p of orden){ if(!p.envio && !p.etiquetaPdf) continue;
-    const e=d(await envioDePedido(p)); if(e && nums.has(e)) return p; }
+  // 2) seguimiento cargado en el pedido
+  hit=orden.find(p=>{ const t=up(p.tracking).replace(/AR$/,""); return t.length>=8 && (toks.has(t)||nums.has(d(p.tracking))); });
+  if(hit) return hit;
+  // 3) N° de envío de ML, o códigos que aparezcan en el texto de la etiqueta guardada (Correo / TN)
+  for(const p of orden){
+    if(!p.envio && !p.etiquetaPdf) continue;
+    const e=d(await envioDePedido(p)); if(e && nums.has(e)) return p;
+    if(p.etiquetaPdf && toks.size){ const t=up(await textoEtiquetaPedido(p)); for(const k of toks){ if(t.includes(k)) return p; } }
+  }
+  // 4) último recurso: mismo código postal y un solo pedido de correo pendiente con ese CP
+  if(cp){ const mismos=orden.filter(p=>["pendiente","preparado"].includes(p.estado) && p.metodo==="correo" && String(p.cp||"").slice(0,4)===cp);
+    if(mismos.length===1){ mismos[0].porCP=true; return mismos[0]; } }
   return null;
 }
 async function fotoDetectarPedido(file){
@@ -1000,9 +1021,9 @@ async function fotoDetectarPedido(file){
   toast("Buscando la etiqueta en la foto…");
   let codigos=[];
   try{ codigos=await leerCodigosDeFoto(file); }catch(e){ alert(e.message||e); return; }
-  if(!codigos.length){ alert("No encontré ningún código QR ni de barras en la foto.\n\nProbá de nuevo con la etiqueta más cerca, derecha y con buena luz."); return; }
+  if(!codigos.length){ comprimirFoto(file).then(f=>enviarTelegram("❌ FOTO SIN ASIGNAR\n\nNo se pudo leer la etiqueta en la foto",f)).catch(()=>{}); alert("No encontré ningún código QR ni de barras en la foto.\n\nProbá de nuevo con la etiqueta más cerca, derecha y con buena luz."); return; }
   const p=await buscarPedidoPorCodigos(codigos);
-  if(!p){ alert("Leí la etiqueta pero no encontré ese pedido cargado en la app.\n\nCódigo leído: "+codigos.join(" | ").slice(0,160)+"\n\nImportá primero la etiqueta y volvé a intentar."); return; }
+  if(!p){ comprimirFoto(file).then(f=>enviarTelegram("❌ FOTO SIN ASIGNAR\n\nLa etiqueta no corresponde a ningún pedido cargado\nCódigo leído: "+codigos.join(" | ").slice(0,200),f)).catch(()=>{}); alert("Leí la etiqueta pero no encontré ese pedido cargado en la app.\n\nCódigo leído: "+codigos.join(" | ").slice(0,160)+"\n\nImportá primero la etiqueta y volvé a intentar."); return; }
   const its=(()=>{ try{ return itemsPedido(p); }catch(e){ return []; } })();
   const lista=its.map(x=>"  • "+x.cant+"× "+x.prodNombre).join("\n")||"  (sin productos cargados)";
   const foto=await comprimirFoto(file);
@@ -1280,13 +1301,15 @@ async function despFoto(file){
     // no se leyó o no está cargado: dejo elegir el pedido a mano y queda el aviso
     const pend=soloPedidos().filter(x=>["pendiente","preparado"].includes(x.estado)).sort((a,b)=>(a.cliente||"").localeCompare(b.cliente||""));
     const motivo=codigos.length?"La etiqueta de la foto no corresponde a ningún pedido cargado":"No se pudo leer la etiqueta en la foto";
+    enviarTelegram("❌ FOTO SIN ASIGNAR\n\n"+motivo+(codigos.length?("\nCódigo leído: "+codigos.join(" | ").slice(0,200)):"")+"\n\n🕒 "+new Date().toLocaleString("es-AR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}), foto);
     const lista=pend.map((x,i)=>(i+1)+". "+(x.cliente||"—")+" · "+numOrden(x)).join("\n");
     const r=prompt("⚠ "+motivo+".\n\nSi sabés de quién es, escribí el número de la lista (o dejalo vacío para sacar otra foto):\n\n"+lista.slice(0,1800));
     const n=parseInt(r,10); if(!n||!pend[n-1]){ toast("Probá otra foto con la etiqueta más cerca"); return; }
     p=pend[n-1];
     DESP={id:p.id, foto, check:{}, avisos:[motivo+" (se eligió a mano)"]};
   } else {
-    DESP={id:p.id, foto, check:{}, avisos:[]};
+    DESP={id:p.id, foto, check:{}, avisos:p.porCP?["Encontrado solo por código postal — confirmá que sea este cliente"]:[]};
+    delete p.porCP;
   }
   // controles automáticos
   if(p.estado==="anulado") DESP.avisos.push("El pedido está ANULADO");
