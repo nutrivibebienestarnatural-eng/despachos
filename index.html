@@ -778,7 +778,11 @@ function initDB(){
   const ok = FIREBASE_CONFIG && FIREBASE_CONFIG.projectId && typeof firebase!=="undefined";
   if(ok){
     firebase.initializeApp(FIREBASE_CONFIG);
-    const col=firebase.firestore().collection("pedidos");
+    const fs=firebase.firestore();
+    // Un dato vacio (undefined) en cualquier campo hacia fallar TODO el guardado ("Unsupported field value: undefined").
+    // Con esto Firebase simplemente omite ese campo y guarda el pedido.
+    try{ fs.settings({ignoreUndefinedProperties:true, merge:true}); }catch(e){ console.warn(e); }
+    const col=fs.collection("pedidos");
     DB={ modo:"firebase",
       subscribe(cb){ col.onSnapshot(s=>{ const a=s.docs.map(d=>({id:d.id,...d.data()}));
         a.sort((x,y)=>(y.creado||0)-(x.creado||0)); cb(a); }); },   // sin orderBy: los docs sin fecha (stock) también llegan
@@ -6085,7 +6089,7 @@ function parseEtiquetaML(texto){
     const pn = esAprendido ? {n:1} : packDeNombre(nomML);
     const cantReal = cant*(pn.n||1);
     const etiq = nomML || (sku?("SKU "+sku):"Producto sin código detectado");
-    prods.push({ nombre: prodCat?prodCat.nombre:etiq, cant:cantReal, sku, nomML, reconocido: !!prodCat || esAprendido, packX: pn.n>1?pn.n:undefined });
+    prods.push({ nombre: prodCat?prodCat.nombre:etiq, cant:cantReal, sku, nomML, reconocido: !!prodCat || esAprendido, ...(pn.n>1?{packX:pn.n}:{}) });
     items.push(cantReal+"x "+(prodCat?prodCat.nombre:etiq));
   }
   if(!cli && !venta && !prods.length) return null;
@@ -6294,7 +6298,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v40-fix-alias-simple-no-es-pack";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v41-fix-import-campo-vacio";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
