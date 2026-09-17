@@ -1354,6 +1354,21 @@ function fotoMiniatura(dataUrl, max=220){ return new Promise(res=>{
   img.onerror=()=>res(null); img.src=dataUrl; }); }
 // jsPDF usa Helvetica: saco emojis y caracteres que no tiene
 const pdfTxt=s=>String(s==null?"":s).replace(/[\u2013\u2014\u2022]/g,"-").replace(/[^\x20-\xFF]/g,"").replace(/\s+/g," ").trim();
+/* Plata de una empresa para el resumen: total del día (cadete / correo) y unidades que salieron hoy */
+function plataEmpresa(emp){
+  const hoy=new Date(); hoy.setHours(0,0,0,0); const h0=hoy.getTime();
+  const esCad=p=>catPedido(p)!=="correo";
+  const todos=soloPedidos().filter(p=>p.estado!=="anulado" && (p.cliente||"")!=="_PRUEBA_DIAGNOSTICO" && (p.empresa||"")===emp);
+  const sumar=arr=>{ const cad=arr.filter(esCad), cor=arr.filter(p=>!esCad(p));
+    const $=a=>a.reduce((s,p)=>s+(costoEnvio(p)||0),0);
+    return {cadN:cad.length, cad$:$(cad), corN:cor.length, cor$:$(cor), totN:arr.length, tot$:$(arr)}; };
+  const hoyP=todos.filter(p=>(p.creado||0)>=h0);
+  // unidades que salieron del stock hoy para esta empresa
+  const prods={}; let unid=0;
+  try{ (stockState().movs||[]).filter(m=>m.tipo==="salida" && m.empresa===emp && (m.ts||0)>=h0)
+    .forEach(m=>{ prods[m.prod]=(prods[m.prod]||0)+m.cant; unid+=m.cant; }); }catch(_){}
+  return {hoy:sumar(hoyP), unid, prods:Object.entries(prods).sort((a,b)=>b[1]-a[1])};
+}
 async function pdfResumenEmpresa(emp, peds, fecha){
   const { jsPDF }=window.jspdf;
   const doc=new jsPDF({unit:"mm", format:"a4"});
@@ -1382,6 +1397,33 @@ async function pdfResumenEmpresa(emp, peds, fecha){
     doc.setFont("helvetica","normal"); doc.setFontSize(8); doc.setTextColor(110); doc.text(pdfTxt(l), x+4, y+13); doc.setTextColor(0); });
   y+=21;
   doc.setFontSize(9); doc.setTextColor(90); doc.text(pdfTxt("Por envio: "+porEnvio.map(([n,c])=>n+" "+c).join("  ·  ")), M, y); doc.setTextColor(0); y+=6;
+
+  // ===== Plata: lo que sacó hoy y lo que debe =====
+  const pl=plataEmpresa(emp);
+  const $f=n=>"$ "+Math.round(n||0).toLocaleString("es-AR");
+  salto(62); y+=2;
+  doc.setFillColor(40,40,40); doc.rect(M,y,3,6,"F");
+  doc.setFont("helvetica","bold"); doc.setFontSize(11); doc.text("CUENTA DE ENVIOS", M+5, y+4.8); y+=9;
+  const colX=[M+2, M+62, M+100, M+138];
+  doc.setFontSize(8.5); doc.setTextColor(110); doc.setFont("helvetica","bold");
+  ["","Cadete","Correo","TOTAL"].forEach((t,i)=>doc.text(t, colX[i], y)); doc.setTextColor(0); y+=2;
+  const filaPlata=(titulo,d,resaltar)=>{
+    doc.setDrawColor(225); doc.line(M,y,W-M,y); y+=5.5;
+    doc.setFont("helvetica","bold"); doc.setFontSize(9.5); doc.text(pdfTxt(titulo), colX[0], y);
+    doc.setFont("helvetica","normal");
+    [[d.cadN,d.cad$],[d.corN,d.cor$]].forEach(([n,$],i)=>{ doc.text(n+" env.", colX[i+1], y); doc.text($f($), colX[i+1], y+4.5); });
+    doc.setFont("helvetica","bold"); if(resaltar) doc.setTextColor(200,40,40);
+    doc.text(d.totN+" env.", colX[3], y); doc.setFontSize(11); doc.text($f(d.tot$), colX[3], y+4.8);
+    doc.setTextColor(0); doc.setFont("helvetica","normal"); y+=8; };
+  filaPlata("Total del dia", pl.hoy, false);
+  doc.setDrawColor(225); doc.line(M,y,W-M,y); y+=4;
+  doc.setFontSize(8); doc.setTextColor(120);
+  doc.text("Cadete: precio por zona  ·  Correo: gestion. El precio de cada orden figura abajo.", M, y); y+=5;
+  if(pl.unid){
+    const txtProd=doc.splitTextToSize(pdfTxt("Productos que saco hoy ("+pl.unid+" u.): "+pl.prods.map(([n,c])=>c+"x "+n).join(" · ")), W-2*M);
+    salto(txtProd.length*4+2); doc.setTextColor(60); doc.setFontSize(8.5); doc.text(txtProd, M, y); y+=txtProd.length*4+1;
+  }
+  doc.setTextColor(0); y+=3;
   // pedidos por grupo, con fotito
   for(const [titulo,filtro,col] of grupos){
     const arr=peds.filter(filtro); if(!arr.length) continue;
@@ -1390,8 +1432,8 @@ async function pdfResumenEmpresa(emp, peds, fecha){
     doc.setFont("helvetica","bold"); doc.setFontSize(11); doc.text(pdfTxt(titulo+" ("+arr.length+")"), M+5, y+4.8); y+=9;
     for(const p of arr){
       const its=(()=>{ try{ return itemsPedido(p); }catch(_){ return []; } })();
-      const prodLines=doc.splitTextToSize(pdfTxt(its.map(x=>x.cant+"x "+x.prodNombre).join("  ·  ")||"sin productos cargados"), W-2*M-42);
-      const avisoLines=(p.despachoAviso&&!p.despachoAvisoVisto)?doc.splitTextToSize(pdfTxt("AVISO: "+(p.despachoAvisoTxt||[]).join(" · ")), W-2*M-42):[];
+      const prodLines=doc.splitTextToSize(pdfTxt(its.map(x=>x.cant+"x "+x.prodNombre).join("  ·  ")||"sin productos cargados"), W-2*M-72);
+      const avisoLines=(p.despachoAviso&&!p.despachoAvisoVisto)?doc.splitTextToSize(pdfTxt("AVISO: "+(p.despachoAvisoTxt||[]).join(" · ")), W-2*M-72):[];
       const S=36;   // tamaño de la fotito (mm)
       const h=Math.max(S+4, 12+prodLines.length*4+avisoLines.length*4);
       salto(h+2);
@@ -1402,6 +1444,11 @@ async function pdfResumenEmpresa(emp, peds, fecha){
         doc.setFontSize(7); doc.setTextColor(150); doc.text("sin foto", M+2+S/2-5, y+2+S/2); doc.setTextColor(0); }
       const x=M+S+6;
       doc.setFont("helvetica","bold"); doc.setFontSize(10.5); doc.text(pdfTxt(p.cliente||"-"), x, y+6);
+      { const precio=costoEnvio(p)||0; const cat=catPedido(p);
+        doc.setFontSize(11); doc.text("$ "+Math.round(precio).toLocaleString("es-AR"), W-M-3, y+6, {align:"right"});
+        doc.setFont("helvetica","normal"); doc.setFontSize(7.5); doc.setTextColor(120);
+        doc.text(pdfTxt(cat==="correo"?"correo":(cat==="caba"?"cadete CABA":"cadete zona "+cat)), W-M-3, y+10, {align:"right"}); doc.setTextColor(0);
+        doc.setFont("helvetica","bold"); }
       doc.setFont("helvetica","normal"); doc.setFontSize(8.5); doc.setTextColor(100);
       const env=(ENVIOS_PREP.find(t=>t.id===tipoEnvioPrep(p))||{}).nombre||"";
       doc.text(pdfTxt(numOrden(p)+"  ·  "+env.replace(/^\S+\s/,"")+(p.cadete?("  ·  "+p.cadete):"")+"  ·  "+estObj(p.estado).label+(p.fotoPrepTs?("  ·  foto "+fmt(p.fotoPrepTs)):"")), x, y+10.5);
@@ -1427,7 +1474,8 @@ async function telegramResumenDia(){
     try{
       const pdf=await pdfResumenEmpresa(e, peds, fecha);
       const n=k=>peds.filter(k).length;
-      const pie="📋 "+nombreEmp(e)+" · "+hoy.toLocaleDateString("es-AR")+"\n"+peds.length+" pedidos · ⏳ "+n(p=>p.estado==="pendiente")+" a preparar · ✓ "+n(p=>p.estado==="preparado")+" listos · 🚚 "+n(p=>CTL_EN_CAMINO.includes(p.estado))+" en camino · ⚠ "+n(p=>p.despachoAviso&&!p.despachoAvisoVisto)+" con problema";
+      const pl=plataEmpresa(e), $f=n=>"$ "+Math.round(n||0).toLocaleString("es-AR");
+      const pie="📋 "+nombreEmp(e)+" · "+hoy.toLocaleDateString("es-AR")+"\n💰 Total del día: "+$f(pl.hoy.tot$)+"\n🛵 Cadete: "+pl.hoy.cadN+" = "+$f(pl.hoy.cad$)+"  ·  ✉️ Correo: "+pl.hoy.corN+" = "+$f(pl.hoy.cor$)+"\n"+peds.length+" pedidos · ⏳ "+n(p=>p.estado==="pendiente")+" a preparar · ✓ "+n(p=>p.estado==="preparado")+" listos · 🚚 "+n(p=>CTL_EN_CAMINO.includes(p.estado))+" en camino · ⚠ "+n(p=>p.despachoAviso&&!p.despachoAvisoVisto)+" con problema";
       const nombre="Resumen "+nombreEmp(e).replace(/[^\w ]/g,"")+" "+hoy.toISOString().slice(0,10)+".pdf";
       const r=await fetch("/api/telegram",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({documento:pdf,nombre,texto:pie})});
       const d=await r.json().catch(()=>({}));
