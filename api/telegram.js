@@ -7,6 +7,7 @@
 //
 // Endpoints:
 //   POST /api/telegram {foto:"data:image/jpeg;base64,...", texto:"..."}  -> manda la foto con el texto de pie
+//   POST /api/telegram {documento:"data:application/pdf;base64,...", nombre:"x.pdf", texto} -> manda un archivo
 //   POST /api/telegram {texto:"..."}                                      -> manda solo texto
 //   GET  /api/telegram                                                    -> dice si está configurado
 
@@ -44,7 +45,15 @@ module.exports = async (req, res) => {
     const texto = String(body.texto || "").slice(0, 4000);
     const api = `https://api.telegram.org/bot${token}`;
     let r;
-    if (body.foto) {
+    if (body.documento) {
+      const m = String(body.documento).match(/^data:([a-z]+\/[a-z0-9.+-]+);base64,(.+)$/i);
+      if (!m) return res.status(400).json({ ok: false, error: "Archivo inválido" });
+      const form = new FormData();
+      form.append("chat_id", chat);
+      if (texto) form.append("caption", texto.slice(0, 1024));
+      form.append("document", new Blob([Buffer.from(m[2], "base64")], { type: m[1] }), String(body.nombre || "resumen.pdf").slice(0, 80));
+      r = await fetch(`${api}/sendDocument`, { method: "POST", body: form });
+    } else if (body.foto) {
       const m = String(body.foto).match(/^data:(image\/[a-z]+);base64,(.+)$/);
       if (!m) return res.status(400).json({ ok: false, error: "Foto inválida" });
       const form = new FormData();

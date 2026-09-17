@@ -1344,19 +1344,97 @@ async function enviarTelegram(texto, foto){
   }catch(e){ console.warn("Telegram:",e); return false; }
 }
 function telegramPedido(p, foto, titulo, avisos){ if(p) enviarTelegram(resumenPedidoTG(p,titulo,avisos), foto); }   // no espero: que no frene el despacho
+/* Resumen del día a Telegram: UN PDF POR EMPRESA (Nutrivibe, Suplemundo, Labs…), cada pedido con su fotito */
+function fotoMiniatura(dataUrl, max=220){ return new Promise(res=>{
+  if(!dataUrl) return res(null);
+  const img=new Image();
+  img.onload=()=>{ const k=Math.min(1,max/Math.max(img.width,img.height)); const c=document.createElement("canvas");
+    c.width=Math.round(img.width*k); c.height=Math.round(img.height*k); c.getContext("2d").drawImage(img,0,0,c.width,c.height);
+    res({url:c.toDataURL("image/jpeg",0.6), w:c.width, h:c.height}); };
+  img.onerror=()=>res(null); img.src=dataUrl; }); }
+// jsPDF usa Helvetica: saco emojis y caracteres que no tiene
+const pdfTxt=s=>String(s==null?"":s).replace(/[\u2013\u2014\u2022]/g,"-").replace(/[^\x20-\xFF]/g,"").replace(/\s+/g," ").trim();
+async function pdfResumenEmpresa(emp, peds, fecha){
+  const { jsPDF }=window.jspdf;
+  const doc=new jsPDF({unit:"mm", format:"a4"});
+  const W=210, M=12; let y=M;
+  const salto=h=>{ if(y+h>285){ doc.addPage(); y=M; } };
+  const grupos=[
+    ["CON PROBLEMA", p=>p.despachoAviso&&!p.despachoAvisoVisto, [229,72,77]],
+    ["FALTA PREPARAR", p=>p.estado==="pendiente"&&!(p.despachoAviso&&!p.despachoAvisoVisto), [245,147,0]],
+    ["PREPARADOS - LISTOS PARA SALIR", p=>p.estado==="preparado"&&!(p.despachoAviso&&!p.despachoAvisoVisto), [47,179,80]],
+    ["EN CAMINO", p=>CTL_EN_CAMINO.includes(p.estado)&&!(p.despachoAviso&&!p.despachoAvisoVisto), [0,113,227]],
+    ["ENTREGADOS", p=>["entregado","confirmado"].includes(p.estado)&&!(p.despachoAviso&&!p.despachoAvisoVisto), [120,120,120]],
+  ];
+  // encabezado
+  doc.setFont("helvetica","bold"); doc.setFontSize(18); doc.text(pdfTxt("Resumen de despacho - "+nombreEmp(emp)), M, y+6);
+  doc.setFont("helvetica","normal"); doc.setFontSize(10); doc.setTextColor(110);
+  doc.text(pdfTxt(fecha+"  ·  "+peds.length+" pedidos"), M, y+12); doc.setTextColor(0); y+=18;
+  // totales
+  const tot=[["Falta preparar",grupos[1][1]],["Listos",grupos[2][1]],["En camino",grupos[3][1]],["Con problema",grupos[0][1]]]
+    .map(([l,f])=>[l,peds.filter(f).length]);
+  const conFoto=peds.filter(p=>p.fotoPrep).length;
+  tot.push(["Con foto",conFoto]);
+  const porEnvio=ENVIOS_PREP.map(t=>[t.nombre.replace(/^\S+\s/,""), peds.filter(p=>tipoEnvioPrep(p)===t.id).length]).filter(x=>x[1]);
+  const bw=(W-2*M-4*3)/5;
+  tot.forEach(([l,n],i)=>{ const x=M+i*(bw+3); doc.setDrawColor(220); doc.roundedRect(x,y,bw,16,2,2);
+    doc.setFont("helvetica","bold"); doc.setFontSize(15); doc.text(String(n), x+4, y+8);
+    doc.setFont("helvetica","normal"); doc.setFontSize(8); doc.setTextColor(110); doc.text(pdfTxt(l), x+4, y+13); doc.setTextColor(0); });
+  y+=21;
+  doc.setFontSize(9); doc.setTextColor(90); doc.text(pdfTxt("Por envio: "+porEnvio.map(([n,c])=>n+" "+c).join("  ·  ")), M, y); doc.setTextColor(0); y+=6;
+  // pedidos por grupo, con fotito
+  for(const [titulo,filtro,col] of grupos){
+    const arr=peds.filter(filtro); if(!arr.length) continue;
+    salto(14); y+=2;
+    doc.setFillColor(...col); doc.rect(M,y,3,6,"F");
+    doc.setFont("helvetica","bold"); doc.setFontSize(11); doc.text(pdfTxt(titulo+" ("+arr.length+")"), M+5, y+4.8); y+=9;
+    for(const p of arr){
+      const its=(()=>{ try{ return itemsPedido(p); }catch(_){ return []; } })();
+      const prodLines=doc.splitTextToSize(pdfTxt(its.map(x=>x.cant+"x "+x.prodNombre).join("  ·  ")||"sin productos cargados"), W-2*M-42);
+      const avisoLines=(p.despachoAviso&&!p.despachoAvisoVisto)?doc.splitTextToSize(pdfTxt("AVISO: "+(p.despachoAvisoTxt||[]).join(" · ")), W-2*M-42):[];
+      const S=36;   // tamaño de la fotito (mm)
+      const h=Math.max(S+4, 12+prodLines.length*4+avisoLines.length*4);
+      salto(h+2);
+      doc.setDrawColor(230); doc.roundedRect(M,y,W-2*M,h,2,2);
+      const th=await fotoMiniatura(p.fotoPrep, 360);
+      if(th){ const s=Math.min(S/th.w,S/th.h); const w=th.w*s, hh=th.h*s; doc.addImage(th.url,"JPEG",M+2+(S-w)/2,y+2+(S-hh)/2,w,hh); }
+      else { doc.setDrawColor(200); doc.setLineDashPattern([1,1],0); doc.rect(M+2,y+2,S,S); doc.setLineDashPattern([],0);
+        doc.setFontSize(7); doc.setTextColor(150); doc.text("sin foto", M+2+S/2-5, y+2+S/2); doc.setTextColor(0); }
+      const x=M+S+6;
+      doc.setFont("helvetica","bold"); doc.setFontSize(10.5); doc.text(pdfTxt(p.cliente||"-"), x, y+6);
+      doc.setFont("helvetica","normal"); doc.setFontSize(8.5); doc.setTextColor(100);
+      const env=(ENVIOS_PREP.find(t=>t.id===tipoEnvioPrep(p))||{}).nombre||"";
+      doc.text(pdfTxt(numOrden(p)+"  ·  "+env.replace(/^\S+\s/,"")+(p.cadete?("  ·  "+p.cadete):"")+"  ·  "+estObj(p.estado).label+(p.fotoPrepTs?("  ·  foto "+fmt(p.fotoPrepTs)):"")), x, y+10.5);
+      doc.setTextColor(0); doc.setFontSize(9.5); doc.text(prodLines, x, y+15.5);
+      if(avisoLines.length){ doc.setTextColor(200,40,40); doc.text(avisoLines, x, y+15.5+prodLines.length*4); doc.setTextColor(0); }
+      y+=h+2;
+    }
+  }
+  return doc.output("datauristring").replace(/^data:application\/pdf;[^,]*base64,/,"data:application/pdf;base64,");
+}
 async function telegramResumenDia(){
+  if(!window.jspdf){ toast("No cargó el generador de PDF, recargá la página"); return; }
   const hoy=new Date(); hoy.setHours(0,0,0,0);
-  const peds=soloPedidos().filter(p=>p.estado!=="anulado" && ((p.fotoPrepTs||0)>=hoy.getTime() || ["pendiente","preparado"].includes(p.estado)));
-  const conFoto=peds.filter(p=>(p.fotoPrepTs||0)>=hoy.getTime());
-  const sinFoto=peds.filter(p=>!((p.fotoPrepTs||0)>=hoy.getTime()) && ["pendiente","preparado"].includes(p.estado));
-  const avisos=peds.filter(p=>p.despachoAviso&&!p.despachoAvisoVisto);
-  const lin=p=>"• "+(p.cliente||"—")+" · "+numOrden(p)+" · "+nombreEmp(p.empresa);
-  const txt=["📋 RESUMEN DE DESPACHO · "+hoy.toLocaleDateString("es-AR"),"",
-    "📷 Con foto hoy: "+conFoto.length, ...conFoto.map(lin), "",
-    "⏳ Sin foto todavía: "+sinFoto.length, ...sinFoto.map(lin),
-    ...(avisos.length?["","⚠ Con aviso: "+avisos.length, ...avisos.map(p=>lin(p)+" — "+(p.despachoAvisoTxt||[]).join("; "))]:[])].join("\n");
-  toast("Enviando resumen a Telegram…");
-  if(await enviarTelegram(txt)) toast("Resumen enviado a Telegram ✓");
+  const fecha=hoy.toLocaleDateString("es-AR",{weekday:"long",day:"numeric",month:"long",year:"numeric"});
+  const base=soloPedidos().filter(p=>p.estado!=="anulado" && (p.cliente||"")!=="_PRUEBA_DIAGNOSTICO"
+    && ((p.creado||0)>=hoy.getTime() || (p.fotoPrepTs||0)>=hoy.getTime() || ["pendiente","preparado",...CTL_EN_CAMINO].includes(p.estado)));
+  const emps=EMPRESAS.map(e=>e.id).filter(id=>base.some(p=>(p.empresa||"")===id));
+  if(!emps.length){ toast("No hay pedidos para resumir hoy"); return; }
+  toast("Armando "+emps.length+" resúmenes para Telegram…");
+  let ok=0;
+  for(const e of emps){
+    const peds=base.filter(p=>(p.empresa||"")===e);
+    try{
+      const pdf=await pdfResumenEmpresa(e, peds, fecha);
+      const n=k=>peds.filter(k).length;
+      const pie="📋 "+nombreEmp(e)+" · "+hoy.toLocaleDateString("es-AR")+"\n"+peds.length+" pedidos · ⏳ "+n(p=>p.estado==="pendiente")+" a preparar · ✓ "+n(p=>p.estado==="preparado")+" listos · 🚚 "+n(p=>CTL_EN_CAMINO.includes(p.estado))+" en camino · ⚠ "+n(p=>p.despachoAviso&&!p.despachoAvisoVisto)+" con problema";
+      const nombre="Resumen "+nombreEmp(e).replace(/[^\w ]/g,"")+" "+hoy.toISOString().slice(0,10)+".pdf";
+      const r=await fetch("/api/telegram",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({documento:pdf,nombre,texto:pie})});
+      const d=await r.json().catch(()=>({}));
+      if(r.ok&&d.ok) ok++; else toast(nombreEmp(e)+": "+(d.error||r.status));
+    }catch(err){ console.error(err); toast(nombreEmp(e)+": no se pudo armar el PDF"); }
+  }
+  toast(ok===emps.length?("✓ "+ok+" resúmenes enviados a Telegram"):(ok+" de "+emps.length+" enviados"));
 }
 /* Lista de pedidos para despachar (pendientes + preparados), por empresa y tipo de envío */
 function despListaHTML(){
