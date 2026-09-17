@@ -7180,16 +7180,27 @@ async function bajarEtiqueta1015(id){
     toast("Listo ✓ QR intacto, lista para WhatsApp");
   }catch(e){ console.error(e); toast("No pude preparar la etiqueta"); }
 }
-/* Varias etiquetas juntas en un solo PDF 10x15 (una por hoja) */
+/* Etiquetas 10x15 del día: UN PDF POR PEDIDO, numerado y con el nombre del cliente
+   ej: "01 - Andres Manchado - 2000018489188852.pdf" (mismo orden que la lista de preparar) */
 async function bajarEtiquetasDelDia(){
-  const arr=soloPedidos().filter(p=>p.etiquetaPdf && ["pendiente","preparado","asignado","en_reparto"].includes(p.estado));
+  const arr=soloPedidos().filter(p=>p.etiquetaPdf && ["pendiente","preparado","asignado","en_reparto"].includes(p.estado))
+    .sort((a,b)=>(a.creado||0)-(b.creado||0));
   if(!arr.length){ toast("No hay etiquetas de ML pendientes"); return; }
-  toast("Armando "+arr.length+" etiquetas…");
-  try{
-    const bytes=await etiqueta10x15Bytes(arr);
-    descargarBytesPDF(bytes, "etiquetas-"+new Date().toLocaleDateString("es-AR").replace(/\//g,"-")+".pdf");
-    toast(arr.length+" etiquetas en un PDF ✓");
-  }catch(e){ console.error(e); toast("No pude armar las etiquetas"); }
+  const limpio=s=>String(s||"").replace(/[\\/:*?"<>|#]+/g," ").replace(/\s+/g," ").trim().slice(0,60);
+  const dig=String(arr.length).length<2?2:String(arr.length).length;
+  toast("Armando "+arr.length+" etiquetas separadas…");
+  let ok=0;
+  for(let i=0;i<arr.length;i++){
+    const p=arr[i];
+    try{
+      const bytes=await etiqueta10x15Bytes([p]);
+      const nombre=String(i+1).padStart(dig,"0")+" - "+(limpio(p.cliente)||"Sin nombre")+" - "+limpio(numOrden(p))+".pdf";
+      descargarBytesPDF(bytes, nombre);
+      ok++;
+      await new Promise(r=>setTimeout(r,450));   // pausa: el navegador baja mejor varios archivos de a uno
+    }catch(e){ console.error(e); toast("No pude armar la etiqueta de "+(p.cliente||"")); }
+  }
+  toast(ok+" etiquetas descargadas por separado ✓"+(ok>1?" (si Chrome pregunta, tocá Permitir)":""));
 }
 async function imprimirEtiquetaML(id, soloPDF){
   const p=PEDIDOS.find(x=>x.id===id)||await DB.get(id);
