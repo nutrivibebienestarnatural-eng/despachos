@@ -5170,6 +5170,9 @@ async function pdfTexto(file){
   return lineas.join("\n");
 }
 function parsePDF(text){
+  // Si el primer producto tiene un nombre largo, Tiendanube parte el titulo en dos renglones:
+  // "Orden - Paquete #1" arriba y "#187" abajo. Lo vuelvo a juntar para no perder esa orden.
+  text=String(text||"").replace(/Orden\s*(?:-\s*Paquete\s*#\d+\s*)?\n\s*(?:-\s*Paquete\s*#\d+\s*\n\s*)?#(\d+)/g, "Orden #$1\n");
   const out=[]; const bloques=text.split(/(?=Orden #\d+)/);
   bloques.forEach(b=>{
     const mref=b.match(/Orden #(\d+)/); if(!mref) return;
@@ -6298,7 +6301,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v41-fix-import-campo-vacio";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v42-fix-orden-titulo-partido";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
