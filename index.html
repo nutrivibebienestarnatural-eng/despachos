@@ -814,7 +814,14 @@ function initDB(){
     const col=fs.collection("pedidos");
     DB={ modo:"firebase",
       subscribe(cb){ col.onSnapshot(s=>{ const a=s.docs.map(d=>({id:d.id,...d.data()}));
-        a.sort((x,y)=>(y.creado||0)-(x.creado||0)); cb(a); }); },   // sin orderBy: los docs sin fecha (stock) también llegan
+        a.sort((x,y)=>(y.creado||0)-(x.creado||0)); cb(a); },
+        e=>{ console.error("pedidos:", e);   // sin esto, si Firestore rechaza la lectura la lista queda vacía sin aviso
+          const permiso=e&&e.code==="permission-denied";
+          const msg=permiso?"⚠️ No tengo permiso para leer los pedidos. Avisale al admin: hay que habilitar este acceso en las reglas de Firebase."
+                           :"⚠️ No pude cargar los pedidos ("+((e&&e.code)||"error")+"). Revisá la conexión y recargá.";
+          const b=document.createElement("div");
+          b.style.cssText="position:fixed;top:0;left:0;right:0;z-index:9999;background:#b00020;color:#fff;padding:12px 16px;font-weight:600;text-align:center";
+          b.textContent=msg; document.body.appendChild(b); }); },   // sin orderBy: los docs sin fecha (stock) también llegan
       async create(o){ if(o.creado==null) o.creado=Date.now(); return (await col.add(o)).id; },
       async update(id,patch){ await col.doc(id).update(patch); },
       async delete(id){ await col.doc(id).delete(); },
