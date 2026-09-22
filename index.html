@@ -523,7 +523,9 @@ function zonaCosto(){ const st=stockState(); const d={caba:4000,1:ZONAS[1].preci
   return Object.assign(d,(st&&st.zonas)||{}); }   // lo que te cobra Flex (el cadete) por CABA/Zona
 function margenReparto(){ const st=stockState(); return (st&&st.margen!=null)?st.margen:5000; }   // tu ganancia por envío de cadete
 function correoGestion(){ const st=stockState(); return (st&&st.correoGestion!=null)?st.correoGestion:2500; }  // solo gestión (etiqueta ya paga)
+function pickitPrecio(){ const st=stockState(); return (st&&st.pickitPrecio!=null)?st.pickitPrecio:2500; }  // Pickit: precio fijo por envío
 function precioCat(cat){ const c=zonaCosto();     // lo que le cobrás a la marca
+  if(cat==="pickit") return pickitPrecio();
   if(cat==="correo") return correoGestion();
   if(["caba","1","2","3"].includes(cat)) return (c[cat]||0)+margenReparto();
   return 0; }
@@ -2356,7 +2358,7 @@ function imprimirRecibo(quien){
 function pantallaZonas(){
   const peds=soloPedidos().filter(p=>p.estado!=="anulado" && (p.cliente||"")!=="_PRUEBA_DIAGNOSTICO" && enCuenta(p));
   const zc=zonaCosto();
-  const orden=[["caba","CABA",0],["1","Zona 1",1],["2","Zona 2",2],["3","Zona 3",3],["correo","Correo",9]];
+  const orden=[["caba","CABA",0],["1","Zona 1",1],["2","Zona 2",2],["3","Zona 3",3],["correo","Correo",9],["pickit","Pickit",9]];
   const g={}; orden.forEach(([k,l])=>g[k]={k,label:l,n:0,cobro:0,costo:0});
   peds.forEach(p=>{ const c=catPedido(p); if(!g[c]) return;
     g[c].n++; g[c].cobro+=costoEnvio(p);
@@ -2409,7 +2411,7 @@ function pantallaZonas(){
 function imprimirZonas(){
   const peds=soloPedidos().filter(p=>p.estado!=="anulado" && (p.cliente||"")!=="_PRUEBA_DIAGNOSTICO" && enCuenta(p));
   const zc=zonaCosto();
-  const orden=[["caba","CABA"],["1","Zona 1"],["2","Zona 2"],["3","Zona 3"],["correo","Correo"]];
+  const orden=[["caba","CABA"],["1","Zona 1"],["2","Zona 2"],["3","Zona 3"],["correo","Correo"],["pickit","Pickit"]];
   const g={}; orden.forEach(([k,l])=>g[k]={label:l,n:0,cobro:0,costo:0});
   peds.forEach(p=>{ const c=catPedido(p); if(!g[c]) return; g[c].n++; g[c].cobro+=costoEnvio(p); g[c].costo+=["caba","1","2","3"].includes(c)?(zc[c]||0):0; });
   const filas=orden.map(([k])=>g[k]).filter(x=>x.n>0);
@@ -2696,10 +2698,11 @@ function entregadosEn(desde,hasta){
 /* Cobro de reparto: lo que Fullminet le cobra a cada empresa según la zona */
 let COB_DESDE="", COB_HASTA="";
 function catPedido(p){
+  if(p.pickit) return "pickit";
   if(p.zonaFija!=null && p.zonaFija!==""){ const n=+p.zonaFija; return n===0?"caba":(n>=1&&n<=3)?String(n):"correo"; }
   if(p.metodo==="correo") return "correo"; const an=anilloDe(p);
   if(an.n===0) return "caba"; if(an.n>=1&&an.n<=3) return String(an.n); return "correo"; }
-const COB_ET={caba:"CABA","1":"Zona 1","2":"Zona 2","3":"Zona 3",correo:"Correo",revisar:"A revisar"};
+const COB_ET={caba:"CABA","1":"Zona 1","2":"Zona 2","3":"Zona 3",correo:"Correo",pickit:"Pickit",revisar:"A revisar"};
 let COB_VERPAGADOS=false;
 function facturable(p){
   if(p.estado==="finalizado"||p.estado==="anulado") return false;
@@ -6178,8 +6181,8 @@ function parseEtiquetaML(texto){
     items.push(cantReal+"x "+(prodCat?prodCat.nombre:etiq));
   }
   if(!cli && !venta && !prods.length) return null;
-  // etiqueta a un punto Pickit (locker): se nota porque el propio PDF de ML imprime "PICKIT" bien grande
-  const esPickit=/\bPICKIT\b/i.test(texto);
+  // etiqueta a un punto Pickit (locker): el PDF de ML imprime "PICKIT" o "Comprador retira en Centro de Envío: <punto>"
+  const esPickit=/\bPICKIT\b/i.test(texto) || /Comprador retira en Centro de Env[ií]o/i.test(texto);
   return { ref: venta?("#"+venta):(envio?("#"+envio):""), cliente:cli.trim(), tel:"", dir:dir.trim(),
     ciudad:loc, provincia:prov, cp, items:items.join(" · "), prods, nota:nota.trim(), etiquetaML:true,
     pickit:esPickit, envio:envio.replace(/\D/g,""), empresaML: empresaPorVendedorML(texto) };
@@ -6445,7 +6448,7 @@ function vistaInformes(){
   const zc=zonaCosto(); const esCadeteCat=c=>["caba","1","2","3"].includes(c);
   const aCardinal=peds.reduce((s,p)=>{ const c=catPedido(p); const q=p.metodo==="correo"?"Correo":(p.cadete||"");
     return s+((esCadeteCat(c)&&p.metodo!=="correo"&&cadeteCobra(q))?(zc[c]||0):0); },0);
-  const cats=[["caba","CABA",0],["1","Zona 1",1],["2","Zona 2",2],["3","Zona 3",3],["correo","Correo",null]];
+  const cats=[["caba","CABA",0],["1","Zona 1",1],["2","Zona 2",2],["3","Zona 3",3],["correo","Correo",null],["pickit","Pickit",null]];
   const porZona=cats.map(([c,lbl,anillo])=>{ const g=peds.filter(p=>catPedido(p)===c);
     return {c,lbl,anillo,n:g.length, cobrar:g.reduce((s,p)=>s+costoEnvio(p),0), cardinal:esCadeteCat(c)?g.reduce((s,p)=>s+(zc[c]||0),0):0}; }).filter(z=>z.n>0);
   const dias=[]; for(let i=6;i>=0;i--){ const d=new Date(); d.setHours(0,0,0,0); d.setDate(d.getDate()-i);
