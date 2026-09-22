@@ -6182,7 +6182,7 @@ function parseEtiquetaML(texto){
   }
   if(!cli && !venta && !prods.length) return null;
   // etiqueta a un punto Pickit (locker): el PDF de ML imprime "PICKIT" o "Comprador retira en Centro de Envío: <punto>"
-  const esPickit=/\bPICKIT\b/i.test(texto) || /Comprador retira en Centro de Env[ií]o/i.test(texto);
+  const esPickit=/\bPICKIT\b/i.test(texto) || /Comprador\s*retira\s*en\s*Centro\s*de\s*Env[ií]o/i.test(texto);
   return { ref: venta?("#"+venta):(envio?("#"+envio):""), cliente:cli.trim(), tel:"", dir:dir.trim(),
     ciudad:loc, provincia:prov, cp, items:items.join(" · "), prods, nota:nota.trim(), etiquetaML:true,
     pickit:esPickit, envio:envio.replace(/\D/g,""), empresaML: empresaPorVendedorML(texto) };
