@@ -1063,9 +1063,15 @@ async function leerCodigosDeFoto(file){
       try{ const det=new BarcodeDetector(); (await det.detect(c)).forEach(x=>x.rawValue&&out.add(x.rawValue)); }catch(e){}
     }
     if(!out.size && typeof ZXing!=="undefined"){
-      try{ const hints=new Map(); hints.set(ZXing.DecodeHintType.TRY_HARDER,true);
-        const rd=new ZXing.BrowserMultiFormatReader(hints);
-        const res=await rd.decodeFromImageUrl(c.toDataURL("image/png")); if(res) out.add(res.getText()); }catch(e){}
+      const dataUrl=c.toDataURL("image/png");
+      const hints=new Map(); hints.set(ZXing.DecodeHintType.TRY_HARDER,true);
+      // el lector específico de QR encuentra códigos en fotos reales que el multi-formato genérico
+      // se pierde (probado con etiquetas reales: el genérico solo, sin esto, fallaba siempre)
+      try{ const rd=new ZXing.BrowserQRCodeReader(hints); const res=await rd.decodeFromImageUrl(dataUrl); if(res) out.add(res.getText()); }catch(e){}
+      if(!out.size){
+        try{ const rd=new ZXing.BrowserMultiFormatReader(hints);
+          const res=await rd.decodeFromImageUrl(dataUrl); if(res) out.add(res.getText()); }catch(e){}
+      }
     }
     if(out.size) break;
   }
