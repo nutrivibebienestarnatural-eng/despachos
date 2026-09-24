@@ -1152,6 +1152,11 @@ async function fotoDetectarPedido(file, opts){
   if(!codigos.length){ comprimirFoto(file).then(f=>enviarTelegram("❌ FOTO SIN ASIGNAR\n\nNo se pudo leer la etiqueta en la foto",f)).catch(()=>{}); aviso("No encontré ningún código QR ni de barras en la foto.\n\nProbá de nuevo con la etiqueta más cerca, derecha y con buena luz."); return {ok:false, motivo:"No se encontró ningún código QR/barras en la foto (probable compresión de WhatsApp: mandala como Documento, no como Foto)"}; }
   const p=await buscarPedidoPorCodigos(codigos);
   if(!p){ comprimirFoto(file).then(f=>enviarTelegram("❌ FOTO SIN ASIGNAR\n\nLa etiqueta no corresponde a ningún pedido cargado\nCódigo leído: "+codigos.join(" | ").slice(0,200),f)).catch(()=>{}); aviso("Leí la etiqueta pero no encontré ese pedido cargado en la app.\n\nCódigo leído: "+codigos.join(" | ").slice(0,160)+"\n\nImportá primero la etiqueta y volvé a intentar."); return {ok:false, motivo:"Código leído ("+codigos.join(" | ").slice(0,60)+") pero no coincide con ningún pedido cargado"}; }
+  return await asignarFotoAPedido(p, file);
+}
+/* Confirma y guarda la foto en el pedido dado (ya identificado, sea por código o a mano).
+   Comparte la misma lógica de confirmación que el camino automático. */
+async function asignarFotoAPedido(p, file){
   const its=(()=>{ try{ return itemsPedido(p); }catch(e){ return []; } })();
   const lista=its.map(x=>"  • "+x.cant+"× "+x.prodNombre).join("\n")||"  (sin productos cargados)";
   const foto=await comprimirFoto(file);
@@ -1259,7 +1264,8 @@ function pintarAvisoCarpeta(){
       ${CARPETA.errores.map((it,idx)=>`<div style="margin-top:8px;padding-top:8px;border-top:.5px solid rgba(255,59,48,.2)">
         <div style="font-size:11.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(it.nombre)}</div>
         ${it.motivo?`<div class="muted" style="font-size:11px;margin-top:2px">${esc(it.motivo)}</div>`:''}
-        <span style="display:flex;gap:4px;margin-top:4px">
+        <span style="display:flex;gap:4px;margin-top:4px;flex-wrap:wrap">
+          <button class="btn sm" style="padding:4px 8px;font-size:11px" onclick="asignarFotoManual(${idx})">Asignar a mano</button>
           <button class="btn sm ghost" style="padding:4px 8px;font-size:11px" onclick="reintentarFotoError(${idx})">Reintentar</button>
           <button class="btn sm ghost" style="padding:4px 8px;font-size:11px;color:var(--red)" onclick="descartarFotoError(${idx})">Descartar</button>
         </span>
@@ -1331,6 +1337,58 @@ async function descartarFotoError(idx){
   CARPETA.errores.splice(idx,1);
   await moverAProcesadas(it);
   pintarAvisoCarpeta();
+}
+/* Cuando la lectura automática del código no funciona (etiqueta borrosa o muy chica en la foto),
+   dejar elegir el pedido a mano por nombre de cliente o N° de pedido, en vez de quedar trabado. */
+let ASIGNAR_MANUAL_CTX=null;
+async function asignarFotoManual(idx){
+  const it=CARPETA.errores[idx]; if(!it) return;
+  let file; try{ file=await it.h.getFile(); }catch(e){ toast("No pude abrir el archivo"); return; }
+  ASIGNAR_MANUAL_CTX={it, file, q:""};
+  dibujarAsignarManual();
+}
+function dibujarAsignarManual(){
+  const c=ASIGNAR_MANUAL_CTX; if(!c) return;
+  let ov=document.getElementById("asignarManualOverlay");
+  if(!ov){ ov=document.createElement("div"); ov.id="asignarManualOverlay"; document.body.appendChild(ov); }
+  ov.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px";
+  const q=(c.q||"").trim().toLowerCase();
+  const candidatos=soloPedidos().filter(p=>p.estado!=="anulado")
+    .filter(p=>!q || (p.cliente||"").toLowerCase().includes(q) || numOrden(p).toLowerCase().includes(q))
+    .sort((a,b)=>(a.estado==="pendiente"?0:1)-(b.estado==="pendiente"?0:1) || (b.creado||0)-(a.creado||0))
+    .slice(0,30);
+  ov.innerHTML=`<div style="background:var(--bg-2);border-radius:16px;max-width:480px;width:100%;max-height:85vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.5)">
+    <div style="padding:18px 20px 10px">
+      <div style="font-size:17px;font-weight:800">Asignar foto a mano</div>
+      <div class="muted" style="font-size:12.5px;margin:2px 0 10px">${esc(c.it.nombre)}</div>
+      <input id="buscarPedManual" type="text" placeholder="Buscá por cliente o N° de pedido…" value="${esc(c.q||'')}" oninput="ASIGNAR_MANUAL_CTX.q=this.value;dibujarAsignarManual()" style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--bg);font:inherit">
+    </div>
+    <div style="overflow-y:auto;padding:0 12px 12px;flex:1;min-height:120px">
+      ${candidatos.length?candidatos.map(p=>`<div class="row" style="justify-content:space-between;align-items:center;gap:8px;padding:10px 8px;border-radius:10px;cursor:pointer" onclick="elegirPedidoManual('${p.id}')">
+        <div style="min-width:0">
+          <div style="font-weight:650;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.cliente||'—')}</div>
+          <div class="muted" style="font-size:12px">N° ${esc(numOrden(p))} · ${esc(nombreEmp(p.empresa))} · ${esc(estObj(p.estado).label)}</div>
+        </div>
+        <span class="btn sm ghost" style="flex:0 0 auto">Elegir</span>
+      </div>`).join(""):'<div class="muted" style="text-align:center;padding:20px">Sin resultados</div>'}
+    </div>
+    <div style="padding:10px 20px 18px;border-top:.5px solid var(--border)">
+      <button class="btn block ghost" onclick="cerrarAsignarManual()">Cancelar</button>
+    </div>
+  </div>`;
+  const inp=document.getElementById("buscarPedManual"); if(inp){ inp.focus(); inp.selectionStart=inp.selectionEnd=inp.value.length; }
+}
+function cerrarAsignarManual(){ const ov=document.getElementById("asignarManualOverlay"); if(ov) ov.remove(); ASIGNAR_MANUAL_CTX=null; }
+async function elegirPedidoManual(pid){
+  const c=ASIGNAR_MANUAL_CTX; if(!c) return;
+  const p=PEDIDOS.find(x=>x.id===pid); if(!p) return;
+  cerrarAsignarManual();
+  const r=await asignarFotoAPedido(p, c.file);
+  if(r.ok){
+    const i=CARPETA.errores.indexOf(c.it);
+    if(i>=0){ CARPETA.errores.splice(i,1); await moverAProcesadas(c.it); }
+    pintarAvisoCarpeta();
+  }
 }
 /* ===== Solapa DESPACHO: quien despacha saca la foto del pedido armado, la app lo encuentra por la
    etiqueta, muestra qué tiene que llevar y avisa si algo no coincide ===== */
