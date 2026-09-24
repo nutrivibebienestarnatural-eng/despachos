@@ -40,6 +40,8 @@ body{background:var(--bg);color:var(--text);font-family:var(--fs);font-size:17px
   -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;min-height:100vh}
 button,input,select,textarea{font-family:inherit;font-size:17px;color:inherit}
 button{cursor:pointer;border:none;background:none}
+button:focus-visible,a:focus-visible,.role-card:focus-visible,.tile:focus-visible{
+  outline:2px solid var(--accent);outline-offset:2px;border-radius:8px}
 a{color:var(--accent);text-decoration:none}
 .ico{width:18px;height:18px;flex:none;vertical-align:-3px}
 
@@ -275,8 +277,32 @@ hr{border:none;border-top:.5px solid var(--border);margin:20px 0}
 #toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);
   background:var(--text);color:var(--bg);padding:13px 22px;border-radius:var(--r-pill);font-size:15px;
   font-weight:540;opacity:0;transition:.3s cubic-bezier(.2,.8,.2,1);z-index:200;pointer-events:none;
-  max-width:90vw;text-align:center;box-shadow:var(--sh-md)}
+  max-width:90vw;text-align:center;box-shadow:var(--sh-md);border:.5px solid transparent}
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+#toast.ok{background:var(--green)}
+#toast.warn{background:var(--amber);color:#1d1d1f}
+
+/* ---- Diálogo propio (reemplaza alert/confirm nativos) ---- */
+.dlg-ov{position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.4);backdrop-filter:blur(4px);
+  -webkit-backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;padding:20px;
+  opacity:0;transition:opacity .18s ease}
+.dlg-ov.show{opacity:1}
+.dlg-card{background:var(--bg-2);border:.5px solid var(--border);border-radius:var(--r-card);
+  max-width:380px;width:100%;padding:22px 22px 18px;box-shadow:var(--sh-md);
+  transform:scale(.94) translateY(6px);transition:transform .18s cubic-bezier(.2,.8,.2,1)}
+.dlg-ov.show .dlg-card{transform:scale(1) translateY(0)}
+.dlg-ico{width:44px;height:44px;border-radius:13px;display:flex;align-items:center;justify-content:center;
+  font-size:22px;margin-bottom:12px;background:var(--bg-3)}
+.dlg-ico.ok{background:var(--green-weak)}.dlg-ico.warn{background:var(--amber-weak)}.dlg-ico.q{background:var(--accent-weak)}
+.dlg-title{font-size:17px;font-weight:700;letter-spacing:-.015em;line-height:1.3;margin-bottom:6px}
+.dlg-body{font-size:14.5px;color:var(--text-2);line-height:1.5;white-space:pre-line;max-height:50vh;overflow-y:auto}
+.dlg-acts{display:flex;gap:8px;margin-top:20px}
+.dlg-acts .btn{flex:1}
+
+.spin{width:30px;height:30px;border-radius:50%;margin:0 auto;
+  border:3px solid var(--bg-3);border-top-color:var(--accent);
+  animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
 </style>
 </head>
 <body>
@@ -926,7 +952,7 @@ function leerArchivoBase64(file){ return new Promise((res,rej)=>{ const r=new Fi
   r.onload=()=>res(String(r.result).split(",")[1]||""); r.onerror=rej; r.readAsDataURL(file); }); }
 async function archivoEtiqueta(file){
   if(!file) return null;
-  if(file.size>700*1024){ alert("Ese PDF pesa mucho ("+Math.round(file.size/1024)+" KB). Tiene que ser menor a 700 KB."); return null; }
+  if(file.size>700*1024){ notify("Ese PDF pesa mucho ("+Math.round(file.size/1024)+" KB). Tiene que ser menor a 700 KB."); return null; }
   const b64=await leerArchivoBase64(file);
   return {etiquetaPdf:b64, etiquetaPdfNombre:file.name||"etiqueta-correo.pdf"};
 }
@@ -990,10 +1016,10 @@ async function adjuntarFotoPedido(id,file){
     const foto=await comprimirFoto(file);
     const mini=await guardarFotoPedido(id, foto);
     telegramPedido(PEDIDOS.find(x=>x.id===id),foto,"📷 PEDIDO CON FOTO",[]); toast("Foto del pedido guardada 📷"); refrescarFoto(id,{fotoPrep:mini, fotoPrepTs:Date.now()});
-  }catch(e){ console.error(e); alert("No se pudo guardar la foto: "+(e.message||e)); }
+  }catch(e){ console.error(e); notify("No se pudo guardar la foto: "+(e.message||e)); }
 }
 async function borrarFotoPedido(id){
-  if(!confirm("¿Borrar la foto de este pedido?")) return;
+  if(!await askConfirm("¿Borrar la foto de este pedido?")) return;
   await DB.update(id,{fotoPrep:"", fotoPrepTs:null, fotoDoc:""}); toast("Foto borrada"); refrescarFoto(id,{fotoPrep:"", fotoPrepTs:null});
 }
 // actualiza solo el bloque de la foto (sin redibujar la pantalla, así no se pierde lo que se está editando)
@@ -1100,18 +1126,18 @@ async function fotoDetectarPedido(file){
   if(!file) return;
   toast("Buscando la etiqueta en la foto…");
   let codigos=[];
-  try{ codigos=await leerCodigosDeFoto(file); }catch(e){ alert(e.message||e); return; }
-  if(!codigos.length){ comprimirFoto(file).then(f=>enviarTelegram("❌ FOTO SIN ASIGNAR\n\nNo se pudo leer la etiqueta en la foto",f)).catch(()=>{}); alert("No encontré ningún código QR ni de barras en la foto.\n\nProbá de nuevo con la etiqueta más cerca, derecha y con buena luz."); return; }
+  try{ codigos=await leerCodigosDeFoto(file); }catch(e){ notify(e.message||e); return; }
+  if(!codigos.length){ comprimirFoto(file).then(f=>enviarTelegram("❌ FOTO SIN ASIGNAR\n\nNo se pudo leer la etiqueta en la foto",f)).catch(()=>{}); notify("No encontré ningún código QR ni de barras en la foto.\n\nProbá de nuevo con la etiqueta más cerca, derecha y con buena luz."); return; }
   const p=await buscarPedidoPorCodigos(codigos);
-  if(!p){ comprimirFoto(file).then(f=>enviarTelegram("❌ FOTO SIN ASIGNAR\n\nLa etiqueta no corresponde a ningún pedido cargado\nCódigo leído: "+codigos.join(" | ").slice(0,200),f)).catch(()=>{}); alert("Leí la etiqueta pero no encontré ese pedido cargado en la app.\n\nCódigo leído: "+codigos.join(" | ").slice(0,160)+"\n\nImportá primero la etiqueta y volvé a intentar."); return; }
+  if(!p){ comprimirFoto(file).then(f=>enviarTelegram("❌ FOTO SIN ASIGNAR\n\nLa etiqueta no corresponde a ningún pedido cargado\nCódigo leído: "+codigos.join(" | ").slice(0,200),f)).catch(()=>{}); notify("Leí la etiqueta pero no encontré ese pedido cargado en la app.\n\nCódigo leído: "+codigos.join(" | ").slice(0,160)+"\n\nImportá primero la etiqueta y volvé a intentar."); return; }
   const its=(()=>{ try{ return itemsPedido(p); }catch(e){ return []; } })();
   const lista=its.map(x=>"  • "+x.cant+"× "+x.prodNombre).join("\n")||"  (sin productos cargados)";
   const foto=await comprimirFoto(file);
   if(p.estado!=="pendiente"){
-    if(!confirm("Pedido de "+(p.cliente||"—")+" · N° "+numOrden(p)+"\nYa está en estado: "+estObj(p.estado).label+"\n\n¿Guardar igual la foto en este pedido?")) return;
+    if(!await askConfirm("Pedido de "+(p.cliente||"—")+" · N° "+numOrden(p)+"\nYa está en estado: "+estObj(p.estado).label+"\n\n¿Guardar igual la foto en este pedido?")) return;
     await guardarFotoPedido(p.id, foto); telegramPedido(p,foto,"📷 PEDIDO CON FOTO",["Ya estaba en estado "+estObj(p.estado).label]); toast("Foto guardada en el pedido de "+(p.cliente||"")); render(); return;
   }
-  if(!confirm("✅ Es el pedido de "+(p.cliente||"—")+"\nN° "+numOrden(p)+" · "+nombreEmp(p.empresa)+"\n\nTiene que llevar:\n"+lista+"\n\nRevisá que la foto coincida.\n¿Marcarlo como PREPARADO y guardar la foto?")) return;
+  if(!await askConfirm("✅ Es el pedido de "+(p.cliente||"—")+"\nN° "+numOrden(p)+" · "+nombreEmp(p.empresa)+"\n\nTiene que llevar:\n"+lista+"\n\nRevisá que la foto coincida.\n¿Marcarlo como PREPARADO y guardar la foto?")) return;
   await guardarFotoPedido(p.id, foto);
   await avanzar(p.id,"preparado","Preparado por foto de etiqueta");
   telegramPedido(p,foto,"✅ PEDIDO PREPARADO CON FOTO",[]);
@@ -1124,7 +1150,9 @@ async function fotoDetectarPedido(file){
      Fotos\           ← fotos de los pedidos armados
      Procesadas\      ← la app mueve acá lo que ya tomó (la crea sola)
    Mientras la app está abierta revisa cada 5 s y muestra un aviso con lo nuevo. */
-const CARPETA={handle:null, activa:false, etiquetas:[], fotos:[], vistos:new Set(), timer:null, ocupado:false};
+const CARPETA={handle:null, activa:false, etiquetas:[], fotos:[], viejos:[], vistos:new Set(), timer:null, ocupado:false};
+const esHoy=ts=>{ const d=new Date(ts), h=new Date();
+  return d.getFullYear()===h.getFullYear() && d.getMonth()===h.getMonth() && d.getDate()===h.getDate(); };
 function idbCarpeta(modo,valor){ return new Promise((res)=>{ try{
   const rq=indexedDB.open("despacho_carpeta",1);
   rq.onupgradeneeded=()=>rq.result.createObjectStore("kv");
@@ -1133,14 +1161,14 @@ function idbCarpeta(modo,valor){ return new Promise((res)=>{ try{
     else { st.put(valor,"ventas"); tx.oncomplete=()=>res(true); } };
   rq.onerror=()=>res(null); }catch(e){ res(null); } }); }
 async function conectarCarpeta(){
-  if(!window.showDirectoryPicker){ alert("Tu navegador no permite vigilar carpetas. Usá Chrome o Edge en la computadora."); return; }
+  if(!window.showDirectoryPicker){ notify("Tu navegador no permite vigilar carpetas. Usá Chrome o Edge en la computadora."); return; }
   try{
     const h=CARPETA.handle && (await CARPETA.handle.queryPermission({mode:"readwrite"}))!=="granted"
-      ? CARPETA.handle : await window.showDirectoryPicker({id:"ventas",mode:"readwrite"});
+      ? CARPETA.handle : await window.showDirectoryPicker({id:"ventas",mode:"readwrite",startIn:"downloads"});
     if((await h.requestPermission({mode:"readwrite"}))!=="granted"){ toast("Sin permiso para la carpeta"); return; }
     CARPETA.handle=h; await idbCarpeta("put",h); iniciarVigilancia();
     toast("📂 Vigilando la carpeta "+h.name);
-  }catch(e){ if(e&&e.name!=="AbortError") alert("No pude abrir la carpeta: "+(e.message||e)); }
+  }catch(e){ if(e&&e.name!=="AbortError") notify("No pude abrir la carpeta: "+(e.message||e)); }
 }
 async function reconectarCarpetaGuardada(){
   if(!window.showDirectoryPicker) return;
@@ -1148,7 +1176,7 @@ async function reconectarCarpetaGuardada(){
   CARPETA.handle=h;
   try{ if((await h.queryPermission({mode:"readwrite"}))==="granted") iniciarVigilancia(); else pintarAvisoCarpeta(); }catch(e){}
 }
-function desconectarCarpeta(){ clearInterval(CARPETA.timer); CARPETA.activa=false; CARPETA.etiquetas=[]; CARPETA.fotos=[]; pintarAvisoCarpeta(); toast("Carpeta desconectada"); }
+function desconectarCarpeta(){ clearInterval(CARPETA.timer); CARPETA.activa=false; CARPETA.etiquetas=[]; CARPETA.fotos=[]; CARPETA.viejos=[]; pintarAvisoCarpeta(); toast("Carpeta desconectada"); }
 function iniciarVigilancia(){ clearInterval(CARPETA.timer); CARPETA.activa=true; revisarCarpeta(); CARPETA.timer=setInterval(revisarCarpeta,5000); }
 async function revisarCarpeta(){
   if(!CARPETA.activa||!CARPETA.handle||CARPETA.ocupado) return;
@@ -1160,8 +1188,13 @@ async function revisarCarpeta(){
       for await (const [nombre,h] of d.entries()){
         if(h.kind!=="file") continue;
         const clave=d.name+"/"+nombre; if(CARPETA.vistos.has(clave)) continue;
-        if(/\.pdf$/i.test(nombre)){ CARPETA.vistos.add(clave); CARPETA.etiquetas.push({dir:d,nombre,h}); }
-        else if(/\.(jpe?g|png|webp|heic)$/i.test(nombre)){ CARPETA.vistos.add(clave); CARPETA.fotos.push({dir:d,nombre,h}); }
+        const esEtiqueta=/\.pdf$/i.test(nombre), esFoto=/\.(jpe?g|png|webp|heic)$/i.test(nombre);
+        if(!esEtiqueta && !esFoto) continue;
+        CARPETA.vistos.add(clave);
+        let fecha=null; try{ fecha=(await h.getFile()).lastModified; }catch(e){}
+        const item={dir:d,nombre,h,fecha};
+        if(fecha && !esHoy(fecha)){ CARPETA.viejos.push(item); continue; }   // no es de hoy: aviso aparte, no lo mezclo con lo nuevo
+        (esEtiqueta?CARPETA.etiquetas:CARPETA.fotos).push(item);
       }
     }
   }catch(e){ console.warn("Carpeta:",e); if(e&&e.name==="NotAllowedError"){ CARPETA.activa=false; clearInterval(CARPETA.timer); } }
@@ -1175,11 +1208,21 @@ function pintarAvisoCarpeta(){
   if(!CARPETA.handle){ el.hidden=true; return; }
   el.hidden=false;
   if(!CARPETA.activa){ el.innerHTML=`📂 <b>${esc(CARPETA.handle.name)}</b> desconectada <button class="btn sm" onclick="conectarCarpeta()">Reactivar</button>`; return; }
-  const ne=CARPETA.etiquetas.length, nf=CARPETA.fotos.length;
-  el.innerHTML=`<div class="row" style="justify-content:space-between;gap:8px"><span>📂 <b>${esc(CARPETA.handle.name)}</b> ${ne||nf?'':'<span class="muted">· sin novedades</span>'}</span>
+  const ne=CARPETA.etiquetas.length, nf=CARPETA.fotos.length, nv=CARPETA.viejos.length;
+  el.innerHTML=`<div class="row" style="justify-content:space-between;gap:8px"><span>📂 <b>${esc(CARPETA.handle.name)}</b> ${ne||nf||nv?'':'<span class="muted">· sin novedades</span>'}</span>
       <button class="btn sm ghost" title="Dejar de vigilar" onclick="desconectarCarpeta()">✕</button></div>
-    ${ne?`<button class="btn sm block" style="margin-top:8px" onclick="procesarEtiquetasCarpeta()">🏷️ ${ne} etiqueta${ne===1?'':'s'} nueva${ne===1?'':'s'} → Revisar</button>`:''}
-    ${nf?`<button class="btn sm block green" style="margin-top:6px" onclick="procesarFotosCarpeta()">📷 ${nf} foto${nf===1?'':'s'} nueva${nf===1?'':'s'} → Asignar</button>`:''}`;
+    ${ne?`<button class="btn sm block" style="margin-top:8px" onclick="procesarEtiquetasCarpeta()">🏷️ ${ne} etiqueta${ne===1?'':'s'} nueva${ne===1?'':'s'} de hoy → Revisar</button>`:''}
+    ${nf?`<button class="btn sm block green" style="margin-top:6px" onclick="procesarFotosCarpeta()">📷 ${nf} foto${nf===1?'':'s'} nueva${nf===1?'':'s'} de hoy → Asignar</button>`:''}
+    ${nv?`<div style="margin-top:8px;padding:8px 10px;background:var(--amber-weak);border-radius:9px">
+      <div style="font-size:12.5px;font-weight:700;color:var(--amber)">⚠️ ${nv} archivo${nv===1?'':'s'} de OTRO DÍA en la carpeta</div>
+      <div class="muted" style="font-size:11.5px;margin:3px 0 6px">${CARPETA.viejos.slice(0,4).map(v=>esc(v.nombre)+" · "+new Date(v.fecha).toLocaleDateString("es-AR")).join("<br>")}${nv>4?`<br>…y ${nv-4} más`:''}</div>
+      <button class="btn sm block amber" onclick="procesarViejosCarpeta()">Traerlos igual</button>
+    </div>`:''}`;
+}
+function procesarViejosCarpeta(){
+  const lote=CARPETA.viejos.splice(0);
+  lote.forEach(it=>(/\.pdf$/i.test(it.nombre)?CARPETA.etiquetas:CARPETA.fotos).push(it));
+  pintarAvisoCarpeta();
 }
 async function moverAProcesadas(item){
   try{
@@ -1604,7 +1647,7 @@ async function despFotoPara(id,file){
     DESP.foto=foto; DESP.guardada=true; toast("📷 Foto guardada en el pedido de "+(p.cliente||""));
     telegramPedido(p, foto, "📷 PEDIDO CON FOTO", p.fotoPrep?["Reemplazó una foto anterior"]:[]);
     vistaDespachar();
-  }catch(e){ alert("No pude guardar la foto: "+(e.message||e)); }
+  }catch(e){ notify("No pude guardar la foto: "+(e.message||e)); }
 }
 function despCardHTML(p){
   const its=(()=>{ try{ return itemsPedido(p); }catch(e){ return []; } })();
@@ -1640,7 +1683,7 @@ async function despFoto(file){
   toast("Leyendo la etiqueta…");
   let codigos=[], foto="";
   try{ [codigos,foto]=await Promise.all([leerCodigosDeFoto(file), comprimirFoto(file)]); }
-  catch(e){ alert("No pude leer la foto: "+(e.message||e)); return; }
+  catch(e){ notify("No pude leer la foto: "+(e.message||e)); return; }
   let p=codigos.length?await buscarPedidoPorCodigos(codigos):null;
   if(!p){
     // no se leyó o no está cargado: dejo elegir el pedido a mano y queda el aviso
@@ -1667,15 +1710,15 @@ async function despFoto(file){
   // la foto queda guardada en ESE pedido apenas se encuentra (aunque después no toquen nada)
   try{ await guardarFotoPedido(p.id, foto); DESP.guardada=true; toast("📷 Foto guardada en el pedido de "+(p.cliente||""));
     telegramPedido(p, foto, DESP.avisos.length?"⚠ PEDIDO CON FOTO — REVISAR":"📷 PEDIDO CON FOTO", DESP.avisos); }
-  catch(e){ alert("No pude guardar la foto: "+(e.message||e)); }
+  catch(e){ notify("No pude guardar la foto: "+(e.message||e)); }
   OPVIEW="despachar"; vistaDespachar();
 }
 async function despConfirmar(){
   const p=PEDIDOS.find(x=>x.id===DESP.id); if(!p) return;
   const its=(()=>{ try{ return itemsPedido(p); }catch(e){ return []; } })();
   const faltan=its.filter((x,i)=>!DESP.check[i]);
-  if(faltan.length && !confirm("¿Está todo lo del pedido en la foto?\n\n"+its.map(x=>"• "+x.cant+"× "+x.prodNombre).join("\n")+"\n\nSi falta algo, tocá Cancelar y después \"Algo no coincide\".")) return;
-  if(!DESP.foto && !confirm("Este pedido no tiene foto. ¿Marcarlo igual?")) return;
+  if(faltan.length && !await askConfirm("¿Está todo lo del pedido en la foto?\n\n"+its.map(x=>"• "+x.cant+"× "+x.prodNombre).join("\n")+"\n\nSi falta algo, tocá Cancelar y después \"Algo no coincide\".")) return;
+  if(!DESP.foto && !await askConfirm("Este pedido no tiene foto. ¿Marcarlo igual?")) return;
   if(DESP.foto&&!DESP.guardada){ try{ await guardarFotoPedido(p.id, DESP.foto); DESP.guardada=true; }catch(e){ console.warn(e); } }
   const patch={};
   if(DESP.avisos.length){ Object.assign(patch,{despachoAviso:true, despachoAvisoVisto:false, despachoAvisoTs:Date.now(), despachoAvisoTxt:DESP.avisos.slice()}); }
@@ -1734,8 +1777,8 @@ async function agregarIgnorados(refs){
 }
 /* Vaciar TODO el stock para empezar de cero (los pedidos no se tocan; conserva precios/config) */
 async function vaciarStock(){
-  if(!confirm("¿Vaciar TODO el stock?\n\nSe borran todos los movimientos (cargas y salidas). Los pedidos y los precios NO se tocan.")) return;
-  if(!confirm("¿Seguro? Esto no se puede deshacer.\n\nDespués cargás el remito UNA sola vez y queda limpio.")) return;
+  if(!await askConfirm("¿Vaciar TODO el stock?\n\nSe borran todos los movimientos (cargas y salidas). Los pedidos y los precios NO se tocan.",{yes:"Vaciar todo",danger:true})) return;
+  if(!await askConfirm("¿Seguro? Esto no se puede deshacer.\n\nDespués cargás el remito UNA sola vez y queda limpio.",{yes:"Sí, vaciar",danger:true})) return;
   try{
     const docs=PEDIDOS.filter(p=>p.tipo==="stock");
     if(!docs.length){ toast("No hay stock que vaciar"); return; }
@@ -1745,8 +1788,8 @@ async function vaciarStock(){
     for(let i=0;i<tareas.length;i+=15){                       // tandas de 15 en paralelo
       await Promise.all(tareas.slice(i,i+15).map(t=>DB.update(t.id,t.patch)));
     }
-    alert("✅ STOCK EN CERO\n\nSe limpiaron "+docs.length+" registros. Ahora cargá el remito UNA sola vez (Cargar stock).");
-  }catch(e){ alert("⚠️ No pude vaciar el stock: "+(e&&e.message||e)); }
+    notify("✅ STOCK EN CERO\n\nSe limpiaron "+docs.length+" registros. Ahora cargá el remito UNA sola vez (Cargar stock).");
+  }catch(e){ notify("⚠️ No pude vaciar el stock: "+(e&&e.message||e)); }
   setTimeout(()=>vistaOperador(),700);
 }
 /* Diagnóstico: prueba conexión, lectura y escritura, y muestra el resultado claro */
@@ -1773,7 +1816,7 @@ async function diagnosticoStock(){
       r+="Usuario gestor: "+(g.exists?("rol "+(g.data().rol||"—")+" ✅"):"⚠️ NO EXISTE en usuarios (por eso no ve nada)")+"\n";
     }
   }catch(e){ r+="Usuario gestor: (no pude verificar: "+(e&&e.message||e)+")\n"; }
-  alert(r+"\nSacale captura a este cartel y pasásela a Claude si algo está en ⚠️/❌.");
+  notify(r+"\nSacale captura a este cartel y pasásela a Claude si algo está en ⚠️/❌.");
 }
 /* Fusiona todos los registros de stock duplicados en uno solo (los extra quedan anulados) */
 async function repararStock(){
@@ -1896,7 +1939,7 @@ async function cobrarSeleccion(emp){
   if(!peds.length){ toast("Elegí al menos una orden"); return; }
   const total=peds.reduce((s,p)=>s+costoEnvio(p),0);
   const quien=nombreEmp(emp);
-  if(!confirm("¿Registrar el cobro de "+fmtAr(total)+" a "+quien+"?\n\n"+peds.length+" órdenes.\nSe emite el recibo y salen de la lista de pendientes.")) return;
+  if(!await askConfirm("¿Registrar el cobro de "+fmtAr(total)+" a "+quien+"?\n\n"+peds.length+" órdenes.\nSe emite el recibo y salen de la lista de pendientes.")) return;
   const nro=nuevoNro("cobro");
   await cajaAgregar({nro, clase:"cobro", quien, monto:total, cant:peds.length,
     periodo:periodoTxt(), ts:Date.now(),
@@ -1942,7 +1985,7 @@ function periodoTxt(){
 async function registrarMovCaja(clase,quien,monto,cant){
   const m=Math.round(+monto||0); if(!m){ toast("El importe es 0"); return; }
   const txt=clase==="cobro"?("¿Registrar el COBRO de "+fmtAr(m)+" a "+quien+"?"):("¿Registrar el PAGO de "+fmtAr(m)+" a "+quien+"?");
-  if(!confirm(txt+"\n\nPeríodo: "+periodoTxt()+"\nEnvíos: "+cant+"\n\nQueda guardado en el resumen de cuenta.")) return;
+  if(!await askConfirm(txt+"\n\nPeríodo: "+periodoTxt()+"\nEnvíos: "+cant+"\n\nQueda guardado en el resumen de cuenta.")) return;
   const nro=nuevoNro(clase);
   await cajaAgregar({nro,clase,quien,monto:m,cant:+cant||0,periodo:periodoTxt(),ts:Date.now()});
   toast((clase==="cobro"?"Cobro":"Pago")+" "+nro+" registrado ✓");
@@ -2052,13 +2095,13 @@ async function cerrarDesdeFecha(){
   const aCerrar=PEDIDOS.filter(p=>p.tipo==="pedido" && !p.cerradoEn && p.estado!=="anulado" && (p.creado||0)<corte);
   const quedan=PEDIDOS.filter(p=>p.tipo==="pedido" && !p.cerradoEn && p.estado!=="anulado" && (p.creado||0)>=corte);
   const fC=new Date(corte).toLocaleDateString("es-AR");
-  if(!confirm("Corte: "+fC+"\n\nQuedan A LA VISTA: "+quedan.length+" pedidos (desde "+fC+" en adelante).\nSe ARCHIVAN: "+aCerrar.length+" pedidos anteriores.\n\n¿Confirmás?")) return;
+  if(!await askConfirm("Corte: "+fC+"\n\nQuedan A LA VISTA: "+quedan.length+" pedidos (desde "+fC+" en adelante).\nSe ARCHIVAN: "+aCerrar.length+" pedidos anteriores.\n\n¿Confirmás?")) return;
   const sello=corte; let ok=0;
   for(const p of aCerrar){ try{ await DB.update(p.id,{cerradoEn:sello, estado:(p.estado==="entregado"?"confirmado":p.estado)}); ok++; }catch(e){} }
   const r=cierresRecord();
   const lista=((r&&r.lista)||[]).concat([{ts:sello, fecha:fC, nota:"Corte manual "+fC}]);
   if(r) await DB.update(r.id,{lista}); else await DB.create({tipo:"cierres",lista});
-  alert("✅ Listo.\n\nA la vista: "+quedan.length+" · Archivados: "+ok);
+  notify("✅ Listo.\n\nA la vista: "+quedan.length+" · Archivados: "+ok);
   OPVIEW="pedidos"; FILTRO="todos"; render();
 }
 async function cerrarAnterioresAEstaSemana(){
@@ -2070,7 +2113,7 @@ async function cerrarAnterioresAEstaSemana(){
   const quedan=PEDIDOS.filter(p=>p.tipo==="pedido" && !p.cerradoEn && p.estado!=="anulado" && (p.creado||0)>=lunes);
   if(!aCerrar.length){ toast("No hay pedidos anteriores a esta semana para archivar"); return; }
   const fLunes=new Date(lunes).toLocaleDateString("es-AR");
-  if(!confirm("Voy a dejar A LA VISTA solo los pedidos de ESTA SEMANA (desde el lunes "+fLunes+"): "+quedan.length+" pedidos.\n\nY voy a ARCHIVAR "+aCerrar.length+" pedidos anteriores.\n\nNo se borran, quedan archivados y recuperables. ¿Confirmás?")) return;
+  if(!await askConfirm("Voy a dejar A LA VISTA solo los pedidos de ESTA SEMANA (desde el lunes "+fLunes+"): "+quedan.length+" pedidos.\n\nY voy a ARCHIVAR "+aCerrar.length+" pedidos anteriores.\n\nNo se borran, quedan archivados y recuperables. ¿Confirmás?")) return;
   const sello=lunes;
   let ok=0;
   for(const p of aCerrar){ try{ await DB.update(p.id,{cerradoEn:sello, estado:(p.estado==="entregado"?"confirmado":p.estado)}); ok++; }catch(e){} }
@@ -2078,7 +2121,7 @@ async function cerrarAnterioresAEstaSemana(){
   const nuevo={ts:sello, fecha:fLunes, nota:"Archivó anteriores a esta semana"};
   const lista=((r&&r.lista)||[]).concat([nuevo]);
   if(r) await DB.update(r.id,{lista}); else await DB.create({tipo:"cierres",lista});
-  alert("✅ Listo.\n\nQuedaron A LA VISTA: "+quedan.length+" pedidos (esta semana).\nSe archivaron: "+ok+" pedidos anteriores.");
+  notify("✅ Listo.\n\nQuedaron A LA VISTA: "+quedan.length+" pedidos (esta semana).\nSe archivaron: "+ok+" pedidos anteriores.");
   OPVIEW="pedidos"; FILTRO="todos"; render();
 }
 async function cerrarHastaAnteayer(){
@@ -2090,7 +2133,7 @@ async function cerrarHastaAnteayer(){
   const quedan=PEDIDOS.filter(p=>p.tipo==="pedido" && !p.cerradoEn && p.estado!=="anulado" && (p.creado||0)>=ayer0);
   if(!aCerrar.length){ toast("No hay pedidos anteriores a ayer para cerrar"); return; }
   const fAyer=new Date(ayer0).toLocaleDateString("es-AR");
-  if(!confirm("Voy a dejar A COBRAR solo los pedidos de AYER y HOY ("+quedan.length+" pedidos).\n\nY voy a CERRAR (archivar) "+aCerrar.length+" pedidos anteriores al "+fAyer+".\n\nLos cerrados no se borran, quedan archivados. ¿Confirmás?")) return;
+  if(!await askConfirm("Voy a dejar A COBRAR solo los pedidos de AYER y HOY ("+quedan.length+" pedidos).\n\nY voy a CERRAR (archivar) "+aCerrar.length+" pedidos anteriores al "+fAyer+".\n\nLos cerrados no se borran, quedan archivados. ¿Confirmás?")) return;
   const sello=ayer0;   // el cierre queda marcado a las 00:00 de ayer
   let ok=0;
   for(const p of aCerrar){ try{ await DB.update(p.id,{cerradoEn:sello, estado:(p.estado==="entregado"?"confirmado":p.estado)}); ok++; }catch(e){} }
@@ -2099,20 +2142,20 @@ async function cerrarHastaAnteayer(){
   const nuevo={ts:sello, fecha:fAyer, nota:"Cierre hasta anteayer (dejó ayer y hoy)"};
   const lista=((r&&r.lista)||[]).concat([nuevo]);
   if(r) await DB.update(r.id,{lista}); else await DB.create({tipo:"cierres",lista});
-  alert("✅ Listo.\n\nQuedaron A COBRAR: "+quedan.length+" pedidos (ayer y hoy).\nSe archivaron: "+ok+" pedidos anteriores.\n\nEntrá a la cuenta a cobrar y fijate que estén los de ayer y hoy.");
+  notify("✅ Listo.\n\nQuedaron A COBRAR: "+quedan.length+" pedidos (ayer y hoy).\nSe archivaron: "+ok+" pedidos anteriores.\n\nEntrá a la cuenta a cobrar y fijate que estén los de ayer y hoy.");
   OPVIEW="listados"; render();
 }
 async function recuperarTodo(){
   // trae de vuelta TODOS los pedidos archivados y borra TODOS los cierres → vuelve al punto cero
   const archivados=PEDIDOS.filter(p=>p.tipo==="pedido" && p.cerradoEn);
   if(!archivados.length){ toast("No hay pedidos archivados, ya está todo a la vista"); return; }
-  if(!confirm("Voy a traer de vuelta TODOS los pedidos archivados ("+archivados.length+") y borrar todos los cierres.\n\nAsí volvés a ver TODO junto, sin ningún cierre. Después decidís con calma.\n\n¿Dale?")) return;
+  if(!await askConfirm("Voy a traer de vuelta TODOS los pedidos archivados ("+archivados.length+") y borrar todos los cierres.\n\nAsí volvés a ver TODO junto, sin ningún cierre. Después decidís con calma.\n\n¿Dale?")) return;
   let ok=0;
   for(const p of archivados){ try{ await DB.update(p.id,{cerradoEn:null}); ok++; }catch(e){} }
   // borro todos los cierres
   const r=cierresRecord();
   if(r){ try{ await DB.update(r.id,{lista:[]}); }catch(e){} }
-  alert("✅ Recuperé "+ok+" pedidos.\n\nAhora tenés TODO a la vista, sin cierres. Andá a Pedidos y fijate que estén todos.");
+  notify("✅ Recuperé "+ok+" pedidos.\n\nAhora tenés TODO a la vista, sin cierres. Andá a Pedidos y fijate que estén todos.");
   OPVIEW="pedidos"; FILTRO="todos"; render();
 }
 async function revertirUltimoCierre(){
@@ -2122,13 +2165,13 @@ async function revertirUltimoCierre(){
   // busco todos los pedidos sellados con ESE cierre
   const sellados=PEDIDOS.filter(p=>p.tipo==="pedido" && p.cerradoEn===ultimo.ts);
   const fecha=new Date(ultimo.ts).toLocaleString("es-AR");
-  if(!confirm("¿Revertir el cierre del "+fecha+"?\n\nEsto devuelve "+sellados.length+" pedidos a la lista (les saca el sello de cierre) y borra ese cierre.\n\nTus pedidos NO se perdieron, solo estaban ocultos.")) return;
+  if(!await askConfirm("¿Revertir el cierre del "+fecha+"?\n\nEsto devuelve "+sellados.length+" pedidos a la lista (les saca el sello de cierre) y borra ese cierre.\n\nTus pedidos NO se perdieron, solo estaban ocultos.")) return;
   let ok=0;
   for(const p of sellados){ try{ await DB.update(p.id,{cerradoEn:null}); ok++; }catch(e){} }
   // borro el registro del cierre
   const r=cierresRecord();
   if(r){ const lista=(r.lista||[]).filter(c=>c.ts!==ultimo.ts); await DB.update(r.id,{lista}); }
-  alert("✅ Cierre revertido.\n\n"+ok+" pedidos volvieron a la lista.\nSi te faltan algunos, avisá que revisamos.");
+  notify("✅ Cierre revertido.\n\n"+ok+" pedidos volvieron a la lista.\nSi te faltan algunos, avisá que revisamos.");
   OPVIEW="pedidos"; FILTRO="todos"; render();
 }
 /* Muestra TODOS los pedidos archivados (cerrados), por si hay que recuperarlos */
@@ -2193,28 +2236,28 @@ function pantallaCierre(){
 async function archivarConfirmadas(){
   const conf=soloPedidos().filter(p=>p.estado==="confirmado" && !p.cerradoEn);
   if(!conf.length){ toast("No hay confirmadas sin archivar"); return; }
-  if(!confirm("¿Archivar "+conf.length+" pedidos ya confirmados?\n\nDesaparecen de la lista y quedan en el filtro 📁 Archivados.\nNo se borra nada.")) return;
+  if(!await askConfirm("¿Archivar "+conf.length+" pedidos ya confirmados?\n\nDesaparecen de la lista y quedan en el filtro 📁 Archivados.\nNo se borra nada.")) return;
   const sello=ultimoCierreTs()||Date.now();
   toast("Archivando "+conf.length+"…");
   let ok=0; for(const p of conf){ try{ await DB.update(p.id,{cerradoEn:sello}); ok++; }catch(e){} }
-  alert("✅ "+ok+" pedidos archivados.");
+  notify("✅ "+ok+" pedidos archivados.");
   render();
 }
 async function confirmarEntregados(){
   const ent=soloPedidos().filter(p=>p.estado==="entregado");
   if(!ent.length){ toast("No hay entregados sin cerrar"); return; }
-  if(!confirm("¿Cerrar "+ent.length+" pedidos entregados?\n\nPasan a CONFIRMADOS: salen de 'activos' y dejan de sumar en 'a facturar'.\nSiguen guardados y los podés ver con el filtro Confirmados.")) return;
+  if(!await askConfirm("¿Cerrar "+ent.length+" pedidos entregados?\n\nPasan a CONFIRMADOS: salen de 'activos' y dejan de sumar en 'a facturar'.\nSiguen guardados y los podés ver con el filtro Confirmados.")) return;
   toast("Cerrando "+ent.length+" pedidos…");
   const sello=Date.now();
   let ok=0; for(const p of ent){ try{ await DB.update(p.id,{estado:"confirmado",cerradoEn:sello}); ok++; }catch(e){} }
-  alert("✅ "+ok+" pedidos cerrados.\n\nEl panel ya arranca de cero.");
+  notify("✅ "+ok+" pedidos cerrados.\n\nEl panel ya arranca de cero.");
   render();
 }
 async function ejecutarCierre(){
   const desde=ultimoCierreTs();
   const d=datosPeriodo(desde);
   const entregados=soloPedidos().filter(p=>p.estado==="entregado");
-  if(!confirm("¿Cerrar el período?\n\n· Se guarda el resumen y el saldo de stock\n· "+entregados.length+" pedidos entregados pasan a CONFIRMADOS (salen de activos)\n· El stock físico NO se toca\n· 'Lo que salió' arranca de cero\n\nAntes de cerrar, imprimí los estados de cuenta.")) return;
+  if(!await askConfirm("¿Cerrar el período?\n\n· Se guarda el resumen y el saldo de stock\n· "+entregados.length+" pedidos entregados pasan a CONFIRMADOS (salen de activos)\n· El stock físico NO se toca\n· 'Lo que salió' arranca de cero\n\nAntes de cerrar, imprimí los estados de cuenta.")) return;
   const cajaP=cajaMovs().filter(m=>(m.ts||0)>=desde);
   const c={ts:Date.now(), desde:desde?fDia(desde):"", hasta:fDia(Date.now()),
     peds:d.peds, movs:d.movs, saldos:d.saldos,
@@ -2231,7 +2274,7 @@ async function ejecutarCierre(){
     for(const p of entregados){ try{ await DB.update(p.id,{estado:"confirmado",cerradoEn:c.ts}); }catch(e){} }
   }
   SAL_MIN=null; SAL_DESDE=""; SAL_HASTA="";
-  alert("✅ PERÍODO CERRADO\n\n"+entregados.length+" pedidos confirmados.\nQuedó guardado el resumen y el saldo de stock.\nDesde ahora se cuenta de cero.");
+  notify("✅ PERÍODO CERRADO\n\n"+entregados.length+" pedidos confirmados.\nQuedó guardado el resumen y el saldo de stock.\nDesde ahora se cuenta de cero.");
   pantallaCierre();
 }
 function imprimirFacturaMarca(empId){
@@ -2500,7 +2543,7 @@ function pantallaCuenta(){
         <div class="muted" style="font-size:12.5px;margin-top:2px">${new Date(m.ts).toLocaleDateString("es-AR")} · ${esc(m.periodo||'')} · ${m.cant||0} envíos</div>
         <div class="row" style="margin-top:8px">
           <button class="btn sm ghost" onclick="imprimirComprobanteCaja('${esc(m.nro)}')">${icon('printer')} Imprimir</button>
-          <button class="btn sm ghost" style="color:var(--red)" onclick="if(confirm('¿Borrar el comprobante ${esc(m.nro)}?'))cajaBorrar('${esc(m.nro)}').then(()=>{toast('Borrado');pantallaCuenta()})">Borrar</button>
+          <button class="btn sm ghost" style="color:var(--red)" onclick="askConfirm('¿Borrar el comprobante ${esc(m.nro)}?',{yes:'Borrar',danger:true}).then(ok=>{if(ok)cajaBorrar('${esc(m.nro)}').then(()=>{toast('Borrado');pantallaCuenta()})})">Borrar</button>
         </div>
       </div>`).join(""):empty('box','No hay cobros ni pagos en este período. Usá los botones en las otras solapas, o mirá todo el historial.')}`;
     })():CTA_TAB==='pagar'?(()=>{ const tr=cuentaTransportistas(peds);
@@ -2591,11 +2634,11 @@ function peds_todos(v){ const peds=soloPedidos().filter(p=>p.estado!=="anulado"&
 async function ejecutarRepickeo(){
   const peds=soloPedidos().filter(p=>p.estado!=="anulado"&&enRango(p.creado,REP_DESDE,REP_HASTA)&&REP_SEL[p.id]);
   if(!peds.length){ toast("Marcá al menos una orden"); return; }
-  if(!confirm("¿Descontar el stock de "+peds.length+" órdenes?\n\nSe registra cada salida con su cliente, zona y marca.\nHacelo DESPUÉS de cargar el remito.")) return;
+  if(!await askConfirm("¿Descontar el stock de "+peds.length+" órdenes?\n\nSe registra cada salida con su cliente, zona y marca.\nHacelo DESPUÉS de cargar el remito.")) return;
   let ok=0;
   toast("Descontando… no cierres la página");
   for(const p of peds){ try{ await descontarStockPedido(p.id,null,true); ok++; }catch(e){ console.warn("Falló",p.ref,e); } }
-  alert("✅ LISTO\n\nSe descontaron "+ok+" de "+peds.length+" órdenes.\nMirá el stock y 'Lo que salió' para verificar.");
+  notify("✅ LISTO\n\nSe descontaron "+ok+" de "+peds.length+" órdenes.\nMirá el stock y 'Lo que salió' para verificar.");
   REP_SEL={}; OPVIEW='stock'; vistaOperador();
 }
 function pantallaSalidas(){
@@ -2733,7 +2776,7 @@ async function finalizarPedido(id){
 async function finalizarPagados(){
   const pagos=soloPedidos().filter(p=>facturable(p) && p.pagado);
   if(!pagos.length){ toast("No hay pagados para finalizar"); return; }
-  if(!confirm("¿Finalizar "+pagos.length+" pedidos pagados?\n\nQuedan cerrados y archivados (los ves con el filtro Finalizados).")) return;
+  if(!await askConfirm("¿Finalizar "+pagos.length+" pedidos pagados?\n\nQuedan cerrados y archivados (los ves con el filtro Finalizados).")) return;
   for(const p of pagos){ await DB.update(p.id,{estado:"finalizado",eventos:[...(p.eventos||[]),{estado:"finalizado",ts:Date.now(),nota:"Cerrado"}]}); }
   toast(pagos.length+" pedidos finalizados ✔"); pantallaCobro();
 }
@@ -2793,7 +2836,7 @@ async function exportarCSVMensajeria(){
   const hoy=new Date().toISOString().slice(0,10);
   descargarArchivo("mensajeria-"+hoy+".csv", csv);
   for(const p of peds){ if(!p.tracking) await DB.update(p.id,{tracking:codigoOrden(p)}); }   // guardo el tracking en cada pedido
-  alert("✅ CSV GENERADO: "+peds.length+" envío"+(peds.length===1?"":"s")+"\n\nSe descargó \"mensajeria-"+hoy+".csv\".\nImportalo en el sistema de la mensajería.\n\nEl tracking de cada pedido es su código (LABS#… / NUTRI#… / SC#…), ya quedó guardado en cada uno.");
+  notify("✅ CSV GENERADO: "+peds.length+" envío"+(peds.length===1?"":"s")+"\n\nSe descargó \"mensajeria-"+hoy+".csv\".\nImportalo en el sistema de la mensajería.\n\nEl tracking de cada pedido es su código (LABS#… / NUTRI#… / SC#…), ya quedó guardado en cada uno.");
 }
 async function recalcularRutas(){
   let n=0;
@@ -3323,8 +3366,69 @@ function imprimirStock(){
     '<scr'+'ipt>window.onload=function(){setTimeout(function(){window.print()},300)}<\/scr'+'ipt></body></html>');
   w.document.close();
 }
-function toast(m){ const t=$("#toast"); t.textContent=m; t.classList.add("show");
+function toast(m){ const t=$("#toast"); t.textContent=m; t.className="";
+  t.classList.add(/^✅/.test(m)?"ok":/^(⚠|❌)/.test(m)?"warn":"");
+  t.classList.add("show");
   clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove("show"),2600); }
+
+/* ---- Diálogo propio: reemplaza notify()/confirm() nativos, mismo estilo que el resto de la app ---- */
+function dlgIcono(m){
+  if(/^✅/.test(m)) return {c:"ok",e:"✅"};
+  if(/^(⚠|❌)/.test(m)) return {c:"warn",e:"⚠️"};
+  if(/^(❓|¿)/.test(m)) return {c:"q",e:"❓"};
+  return {c:"q",e:"ℹ️"};
+}
+function dlgPartes(m){
+  const s=String(m==null?"":m).replace(/^(✅|⚠️|⚠|❌|❓)\s*/,"");
+  const i=s.indexOf("\n\n"); const i2=i<0?s.indexOf("\n"):i;
+  if(i2<0) return s.length>90 ? {t:"",b:s} : {t:s,b:""};
+  if(i2>90) return {t:"",b:s};
+  return {t:s.slice(0,i2), b:s.slice(i2).replace(/^\n+/,"")};
+}
+function dlgCerrar(ov,val){ ov.classList.remove("show");
+  setTimeout(()=>ov.remove(),180); if(ov._resolve) ov._resolve(val); }
+document.addEventListener("keydown",ev=>{
+  if(ev.key!=="Escape") return;
+  const ov=document.querySelector(".dlg-ov.show"); if(!ov) return;
+  dlgCerrar(ov,false);
+});
+function notify(msg){
+  const ov=document.createElement("div"); ov.className="dlg-ov";
+  const {c,e}=dlgIcono(msg), {t,b}=dlgPartes(msg);
+  ov.innerHTML=`<div class="dlg-card">
+    <div class="dlg-ico ${c}">${e}</div>
+    ${t?`<div class="dlg-title">${esc(t)}</div>`:""}
+    ${b?`<div class="dlg-body">${esc(b)}</div>`:""}
+    <div class="dlg-acts"><button class="btn block" data-ok>Entendido</button></div>
+  </div>`;
+  document.body.appendChild(ov);
+  requestAnimationFrame(()=>ov.classList.add("show"));
+  ov.addEventListener("click",ev=>{ if(ev.target===ov) dlgCerrar(ov); });
+  ov.querySelector("[data-ok]").addEventListener("click",()=>dlgCerrar(ov));
+  ov.querySelector("[data-ok]").focus();
+}
+function askConfirm(msg,opts){
+  opts=opts||{};
+  return new Promise(resolve=>{
+    const ov=document.createElement("div"); ov.className="dlg-ov"; ov._resolve=resolve;
+    const {c,e}=dlgIcono(msg), {t,b}=dlgPartes(msg);
+    ov.innerHTML=`<div class="dlg-card">
+      <div class="dlg-ico ${c}">${e}</div>
+      ${t?`<div class="dlg-title">${esc(t)}</div>`:""}
+      ${b?`<div class="dlg-body">${esc(b)}</div>`:""}
+      <div class="dlg-acts">
+        <button class="btn block ghost" data-no>${esc(opts.no||"Cancelar")}</button>
+        <button class="btn block ${opts.danger?"red":""}" data-yes>${esc(opts.yes||"Confirmar")}</button>
+      </div>
+    </div>`;
+    document.body.appendChild(ov);
+    requestAnimationFrame(()=>ov.classList.add("show"));
+    ov.addEventListener("click",ev=>{ if(ev.target===ov) dlgCerrar(ov,false); });
+    ov.querySelector("[data-no]").addEventListener("click",()=>dlgCerrar(ov,false));
+    ov.querySelector("[data-yes]").addEventListener("click",()=>dlgCerrar(ov,true));
+    ov.querySelector("[data-yes]").focus();
+  });
+}
 const linkCliente=id=>location.origin+location.pathname+"?p="+id;
 function copiarAcceso(rol){ const u=location.origin+location.pathname+"?rol="+rol;
   navigator.clipboard?.writeText(u).then(()=>toast("Link de "+rol+" copiado"),()=>prompt("Link:",u)); }
@@ -3444,7 +3548,10 @@ function copiarLinkApp(){ const u=location.origin+location.pathname;
   try{ navigator.clipboard.writeText(u); }catch(e){}
   toast("Link de la app copiado"); }
 function vistaCargando(){ $("#roleBtn").style.display="none";
-  app().innerHTML=`<div class="center" style="margin-top:80px"><div class="subtitle">Cargando…</div></div>`; }
+  app().innerHTML=`<div class="center" style="margin-top:120px">
+    <div class="spin"></div>
+    <div class="subtitle" style="margin-top:16px">Cargando…</div>
+  </div>`; }
 function vistaLogin(){
   $("#roleBtn").style.display="none";
   app().innerHTML=`
@@ -3497,7 +3604,7 @@ function vistaInicio(){
         <span class="rc-ico">${icon('truck')}</span>
         <span><h3>Reparto</h3><p>Ve sus entregas del día y confirma con el escaneo.</p></span>
         <span class="rc-go">${icon('arrow')}</span></button>
-      <button class="role-card" onclick="alert('La vista del cliente se abre desde el link de seguimiento de cada pedido.')">
+      <button class="role-card" onclick="notify('La vista del cliente se abre desde el link de seguimiento de cada pedido.')">
         <span class="rc-ico">${icon('pin')}</span>
         <span><h3>Cliente</h3><p>Recibe un link, ve el estado en vivo y confirma la recepción.</p></span>
         <span class="rc-go">${icon('arrow')}</span></button>
@@ -3550,7 +3657,7 @@ function cadetesRaros(){
 async function reasignarCadete(viejo,nuevo){
   const peds=soloPedidos().filter(p=>p.cadete===viejo);
   if(!peds.length){ toast("No hay pedidos con "+viejo); return; }
-  if(!confirm("¿Pasar los "+peds.length+" pedidos de \""+viejo+"\" a \""+nuevo+"\"?")) return;
+  if(!await askConfirm("¿Pasar los "+peds.length+" pedidos de \""+viejo+"\" a \""+nuevo+"\"?")) return;
   toast("Actualizando "+peds.length+" pedidos…");
   for(const p of peds){ try{ await DB.update(p.id,{cadete:nuevo}); }catch(e){} }
   toast("Listo ✓"); render();
@@ -4471,9 +4578,9 @@ function vistaOperador(){
     </div>`:""}`;
 }
 function setFiltro(f){ FILTRO=f; vistaOperador(); }
-function resetDatos(blank){
+async function resetDatos(blank){
   if(!DB.reset) return;
-  if(!confirm(blank?"¿Vaciar todos los pedidos y empezar de cero?":"¿Recargar los 35 pedidos de ejemplo? Se borran los actuales.")) return;
+  if(!await askConfirm(blank?"¿Vaciar todos los pedidos y empezar de cero?":"¿Recargar los 35 pedidos de ejemplo? Se borran los actuales.", blank?{yes:"Vaciar todo",danger:true}:{yes:"Recargar"})) return;
   FILTRO="todos"; OPVIEW="pedidos"; DB.reset(blank);
   toast(blank?"Listo, sin pedidos":"Datos de ejemplo recargados");
 }
@@ -4603,7 +4710,7 @@ function accionPrincipal(p){   // el botón del paso siguiente, a la derecha de 
 }
 async function deshacerDescuento(id){
   const p=PEDIDOS.find(x=>x.id===id)||await DB.get(id); if(!p){ toast("No encontré el pedido"); return; }
-  if(!confirm("¿Deshacer el descuento de esta orden?\n\n"+(p.cliente||"")+" · "+numOrden(p)+"\n\nVuelve el stock como estaba y se borran sus salidas. Después podés corregir y descontar de nuevo.")) return;
+  if(!await askConfirm("¿Deshacer el descuento de esta orden?\n\n"+(p.cliente||"")+" · "+numOrden(p)+"\n\nVuelve el stock como estaba y se borran sus salidas. Después podés corregir y descontar de nuevo.",{yes:"Deshacer"})) return;
   await devolverStockPedido(id);
   await DB.update(id,{stockBajado:false});
   toast("Descuento deshecho ✓");
@@ -4615,7 +4722,7 @@ async function descontarAhora(id){
   if(!items.length){ toast("Este pedido no tiene productos reconocidos"); return; }
   const det=items.map(i=>"· "+i.cant+"x "+i.prodNombre).join("\n");
   const yaBajo=p.stockBajado?"\n\n⚠️ Este pedido YA se descontó antes. Si seguís, se descuenta de nuevo (queda doble).":"";
-  if(!confirm("Se va a descontar del stock:\n\n"+det+yaBajo)) return;
+  if(!await askConfirm("Se va a descontar del stock:\n\n"+det+yaBajo)) return;
   await descontarStockPedido(id,null,true);
   toast("Descontado ✓");
   render();
@@ -4815,11 +4922,17 @@ async function traerTiendaNube(){
         const prods=[]; let todos=true;
         f.prodsTN.forEach(x=>{
           const pk=packDef(x.sku, x.nombre);
-          let prod=null;
-          if(pk && pk.comps && pk.comps.length){ prods.push({nombre:x.nombre, cant:x.cant, sku:x.sku, reconocido:true}); return; }   // itemsPedido lo expande
+          let prod=null, conflicto=false;
+          if(pk && pk.comps && pk.comps.length){
+            // mismo cuidado que en etiquetas ML: si es un vínculo simple, que no contradiga el nombre de esta venta
+            const esAliasSimple = pk.comps.length===1 && (pk.comps[0].cant||1)===1;
+            const sugerido = esAliasSimple && x.nombre ? mejorProducto(packDeNombre(x.nombre).nombre) : null;
+            conflicto = !!(sugerido && sugerido.nombre!==pk.comps[0].prod);
+            if(!conflicto){ prods.push({nombre:x.nombre, cant:x.cant, sku:x.sku, reconocido:true}); return; }   // itemsPedido lo expande
+          }
           for(const c of [x.barcode,x.sku]){ if(!prod && nb(c).length>=8) prod=prodPorBarcode(c); }
           const pn=packDeNombre(x.nombre); x.cant=x.cant*pn.n;   // "Pack x3 ..." → multiplica
-          if(!prod) prod=mejorProducto(pn.nombre);
+          if(!prod && !conflicto) prod=mejorProducto(pn.nombre);   // en conflicto no adivino de nuevo: que lo confirme una persona
           if(prod) prods.push({nombre:prod.nombre, cant:x.cant, sku:x.sku, reconocido:true});
           else { todos=false; prods.push({nombre:x.nombre, nomML:x.nombre, cant:x.cant, sku:x.sku, reconocido:false}); }
         });
@@ -4844,7 +4957,7 @@ async function traerTiendaNube(){
 async function marcarReenvio(id){
   const p=PEDIDOS.find(x=>x.id===id); if(!p) return;
   if(p.esReenvio){
-    if(!confirm("¿Quitar la marca de reenvío de este pedido?")) return;
+    if(!await askConfirm("¿Quitar la marca de reenvío de este pedido?")) return;
     await DB.update(id,{esReenvio:false, motivoReenvio:""});
     toast("Marca de reenvío quitada");
   } else {
@@ -5016,7 +5129,7 @@ async function guardarEnseniado(){
   if(!comps.length){ toast("Elegí al menos un producto"); return; }
   // valido que existan en el catálogo (o los agrego)
   for(const cm of comps){ if(!PRODUCTOS.some(p=>p.nombre===cm.prod)){
-    if(confirm('"'+cm.prod+'" no está en el catálogo. ¿Lo agrego como producto nuevo?')){
+    if(await askConfirm('"'+cm.prod+'" no está en el catálogo. ¿Lo agrego como producto nuevo?')){
       PRODUCTOS.push({nombre:cm.prod,barcode:""}); const r=PEDIDOS.find(p=>p.tipo==="prodsExtra");
       const lista=((r&&r.map)||(r&&r.lista)||[]).concat([{nombre:cm.prod,barcode:""}]);
       if(r) await DB.update(r.id,{lista}); else await DB.create({tipo:"prodsExtra",lista});
@@ -5037,6 +5150,43 @@ async function guardarEnseniado(){
 /* Corregir a mano UN producto de UNA etiqueta importada (o agregar uno que faltó): la etiqueta
    se leyó mal, es otro SKU, o el producto quedó pegado al pedido de otro cliente. pi=-1 = agregar nuevo. */
 let EDITPROD_CTX=null;
+/* Muestra la hoja de picking/detalle del pedido (cantidades y productos tal como los imprime ML)
+   sin tener que descargar y abrir el PDF completo. Si el archivo no se dividió (pedido único), busca
+   la 2da página del mismo etiquetaPdf; si se dividió (varios pedidos en un mismo PDF), usa la hoja
+   de detalle que se guardó aparte al importar. */
+async function verHojaDetalle(i){
+  const f=IMP_FILAS[i]; if(!f) return;
+  let b64=f.hojaDetalle, pagina=1;
+  if(!b64 && f.etiquetaPdf){ b64=f.etiquetaPdf; pagina=2; }
+  if(!b64){ toast("No tengo el PDF de este pedido para mostrar la hoja 2"); return; }
+  if(typeof pdfjsLib==="undefined"){ toast("El lector de PDF no cargó, probá de nuevo"); return; }
+  try{
+    pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+    const bin=atob(b64); const raw=new Uint8Array(bin.length); for(let k=0;k<bin.length;k++) raw[k]=bin.charCodeAt(k);
+    const doc=await pdfjsLib.getDocument({data:raw}).promise;
+    if(pagina>doc.numPages){ toast("Esta etiqueta no tiene una segunda hoja"); return; }
+    const page=await doc.getPage(pagina);
+    const vp=page.getViewport({scale:2});
+    const canvas=document.createElement("canvas"); canvas.width=vp.width; canvas.height=vp.height;
+    await page.render({canvasContext:canvas.getContext("2d"), viewport:vp}).promise;
+    let ov=document.getElementById("hojaOverlay");
+    if(!ov){ ov=document.createElement("div"); ov.id="hojaOverlay"; document.body.appendChild(ov); }
+    ov.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px";
+    canvas.style.cssText="width:100%;height:auto;display:block;border-radius:6px";
+    ov.innerHTML="";
+    const wrap=document.createElement("div");
+    wrap.style.cssText="background:#fff;border-radius:14px;padding:10px;max-width:96vw;max-height:92vh;display:flex;flex-direction:column;gap:8px;box-shadow:0 20px 60px rgba(0,0,0,.5)";
+    const cerrar=document.createElement("button"); cerrar.className="btn block ghost"; cerrar.style.flex="0 0 auto"; cerrar.textContent="Cerrar";
+    cerrar.onclick=()=>ov.remove();
+    const scroller=document.createElement("div"); scroller.style.cssText="overflow:auto;min-height:0";
+    scroller.appendChild(canvas);
+    wrap.appendChild(cerrar); wrap.appendChild(scroller);
+    ov.appendChild(wrap);
+    ov.onclick=e=>{ if(e.target===ov) ov.remove(); };
+    ov.tabIndex=-1; ov.focus();
+    ov.onkeydown=e=>{ if(e.key==="Escape") ov.remove(); };
+  }catch(e){ console.warn("hoja detalle:",e); toast("No pude mostrar la hoja 2"); }
+}
 function editarProdImport(fi,pi){
   const f=IMP_FILAS[fi]; if(!f) return;
   const x=(pi>=0 && f.prods && f.prods[pi]) ? f.prods[pi] : null;
@@ -5131,18 +5281,30 @@ function mostrarPreviewImport(){
         <button class="btn sm ghost" onclick="selImp(false)">Ninguno</button>
       </div>
       ${IMP_FILAS.map((f,i)=>{ const an=anilloDe(f); const elegis=(an.n===9)||((f.correo||"")==="Punto de retiro"); const esCorreo=f.metodo==="correo";
-        return `<div style="padding:10px 0;border-top:.5px solid var(--border);display:flex;gap:10px;align-items:flex-start;${IMP_SEL[i]?'':'opacity:.45'}">
-          <input type="checkbox" ${IMP_SEL[i]?'checked':''} onchange="toggleImp(${i})" style="width:22px;height:22px;margin-top:2px;flex:0 0 auto;accent-color:var(--accent)">
-          <div style="min-width:0;flex:1">
-            <b>${esc(f.cliente)}</b> ${f.ref?('· '+esc(f.ref.startsWith('#')?f.ref:('#'+f.ref))):''} · <b style="letter-spacing:.02em">${esc((f.ciudad||'').toUpperCase())}</b>
-            <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${anilloColor(an.n)};margin:0 3px 0 6px;vertical-align:-1px"></span><span class="muted" style="font-size:13px">${esc(an.label)}</span>
-            ${elegis?`<span class="chip" style="margin-left:6px;background:#fff3cd;color:#7a5a00">elegís vos</span>`:''}
-            ${(f.marcaDetectada&&marcasEnLote.length>1)?`<span class="chip" style="margin-left:6px;background:#e8e6ff;color:#4b3fa8;font-weight:700">${esc(empresaObj(f.empresa).nombre)} ✓ detectada</span>`:''}
-            ${f.etiquetaPdf?`<span class="chip" style="margin-left:6px;background:#d9f2e5;color:#0f6b40;font-weight:700">📎 ETIQUETA CORREO</span>`:''}
-            <div class="muted" style="font-size:14px">${esc(f.dir)} — ${esc(f.ciudad)}, ${esc(f.provincia)}</div>
-            ${(()=>{ const agregar=`<div style="margin-top:4px"><button class="btn sm ghost" style="padding:2px 8px;font-size:11px" onclick="editarProdImport(${i},-1)">+ Agregar producto</button></div>`;
-              if(!f.prods||!f.prods.length) return `<div class="muted" style="font-size:14px">${esc(f.items||'—')}</div>${agregar}`;
-              return f.prods.map((x,pi)=>{
+        const envioChip = f.pickit ? {t:"📦 Pickit · "+fmtAr(pickitPrecio()),bg:"var(--amber-weak)",c:"var(--amber)"}
+          : impVal(f)==="cadete" ? {t:"🛵 Flex / Cadete (Cardinal)",bg:"var(--green-weak)",c:"var(--green)"}
+          : {t:"✉️ Correo"+(impVal(f)==="sucursal"?" a sucursal":""),bg:"var(--violet-weak)",c:"var(--violet)"};
+        return `<div class="order" style="${IMP_SEL[i]?'':'opacity:.45'}">
+          <div class="ord-head" style="cursor:default">
+            <input type="checkbox" ${IMP_SEL[i]?'checked':''} onchange="toggleImp(${i})" style="width:22px;height:22px;flex:0 0 auto;accent-color:var(--accent)">
+            <div style="min-width:0;flex:1">
+              <div class="ord-name">
+                <span class="ord-cli">${esc(f.cliente)}</span>
+                <span class="chip" style="background:${envioChip.bg};color:${envioChip.c};font-weight:700">${envioChip.t}</span>
+                ${elegis?`<span class="chip" style="background:#fff3cd;color:#7a5a00">elegís vos</span>`:''}
+                ${(f.marcaDetectada&&marcasEnLote.length>1)?`<span class="chip" style="background:#e8e6ff;color:#4b3fa8">${esc(empresaObj(f.empresa).nombre)} ✓</span>`:''}
+                ${f.etiquetaPdf?`<span class="chip" style="background:#d9f2e5;color:#0f6b40">📎 CORREO</span>`:''}
+              </div>
+              <div class="ord-sub"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${anilloColor(an.n)};margin-right:5px;vertical-align:-1px"></span>${f.ref?('N° '+esc(f.ref.startsWith('#')?f.ref:('#'+f.ref))+' · '):''}${esc((f.ciudad||'').toUpperCase())} · ${esc(an.label)}</div>
+            </div>
+          </div>
+          <div class="ord-body">
+            <div class="addr">${esc(f.dir)} — ${esc(f.ciudad)}, ${esc(f.provincia)}</div>
+            ${(f.hojaDetalle||f.etiquetaPdf)?`<button class="btn sm ghost" style="margin-bottom:8px" onclick="verHojaDetalle(${i})">🔍 Ver hoja 2 (cantidades, sin abrir el PDF)</button>`:''}
+            <span class="tag">Items</span>
+            ${(()=>{ const agregar=`<div style="margin-top:6px"><button class="btn sm ghost" onclick="editarProdImport(${i},-1)">+ Agregar producto</button></div>`;
+              if(!f.prods||!f.prods.length) return `<div class="muted" style="font-size:14px;margin-top:4px">${esc(f.items||'—')}</div>${agregar}`;
+              return `<div style="margin-top:4px">`+f.prods.map((x,pi)=>{
                 const comps=packComponentes(x.nombre,x.sku);
                 // un "pack" de UN solo componente a razón de 1x1 no es un pack de verdad — es simplemente el
                 // vínculo SKU→producto que ya enseñaste alguna vez (por "Vincular a mi producto"). En ese caso
@@ -5155,14 +5317,18 @@ function mostrarPreviewImport(){
                   <button class="btn sm ghost" style="padding:2px 8px;font-size:11px" onclick="enseniarPack(${i},${pi})">editar pack</button> ${corregir}</div>`; }
                 if(esPackND){ return `<div style="font-size:13.5px;margin-top:3px;padding:6px 8px;background:#fff3cd;border-radius:7px">⚠ <b>${esc(x.nomML||x.nombre)}</b> parece un pack. <button class="btn sm" style="padding:3px 10px;font-size:12px" onclick="enseniarPack(${i},${pi})">Enseñar qué descuenta</button> ${corregir}</div>`; }
                 if(!x.reconocido && !esAliasSimple){ return `<div style="font-size:13.5px;margin-top:3px;padding:8px 10px;background:#ffe8e8;border-radius:7px">⚠ <b>${esc(x.nomML||("SKU "+x.sku))}</b>${x.sku?` <span class="muted">(SKU ${esc(x.sku)})</span>`:''} — no lo reconozco. <button class="btn sm" style="padding:3px 10px;font-size:12px" onclick="enseniarPack(${i},${pi})">Vincular a mi producto</button> ${corregir}<div class="muted" style="font-size:11px;margin-top:3px">"Vincular" lo enseña para siempre por este SKU. "✎ corregir" cambia solo este pedido (si la etiqueta mezcló el producto de otro cliente).</div></div>`; }
-                const nombreFinal = esAliasSimple ? comps[0].nombre : x.nombre;
-                return `<div class="muted" style="font-size:13.5px;margin-top:2px">${x.cant}× ${esc(nombreFinal)}${stockChipImport(nombreFinal)} ${corregir}</div>`;
-              }).join("")+agregar; })()}
-            ${(f.prods&&f.prods.length>=1)?`<label style="display:flex;gap:8px;align-items:center;margin-top:8px;padding:8px 10px;border-radius:8px;cursor:pointer;background:${IMP_REV[i]?'#d9f2e5':'#ffe8e8'}">
+                // mismo cuidado que en itemsPedido: si ya quedó guardado un nombre de catálogo válido y
+                // DISTINTO al del alias por SKU, confío en ese (el mismo SKU corto puede significar otra
+                // cosa en otro pedido — pasó con "CURC") en vez de pisarlo con el vínculo aprendido
+                const yaResuelto = esAliasSimple && x.nombre!==comps[0].nombre && PRODUCTOS.some(pp=>pp.nombre===x.nombre);
+                const nombreFinal = (esAliasSimple && !yaResuelto) ? comps[0].nombre : x.nombre;
+                return `<div style="font-size:13.5px;margin-top:2px">${x.cant}× ${esc(nombreFinal)}${stockChipImport(nombreFinal)} ${corregir}</div>`;
+              }).join("")+`</div>`+agregar; })()}
+            ${(f.prods&&f.prods.length>=1)?`<label style="display:flex;gap:8px;align-items:center;margin-top:10px;padding:8px 10px;border-radius:8px;cursor:pointer;background:${IMP_REV[i]?'#d9f2e5':'#ffe8e8'}">
               <input type="checkbox" ${IMP_REV[i]?'checked':''} onchange="toggleRev(${i})" style="width:19px;height:19px;flex:0 0 auto">
               <span style="font-size:13px;font-weight:700;color:${IMP_REV[i]?'#0f6b40':'#c62828'}">${IMP_REV[i]?('✓ Revisé '+(f.prods.length===1?'este producto':'estos '+f.prods.length+' productos')):('Revisá '+(f.prods.length===1?'este producto':'estos '+f.prods.length+' productos')+' antes de guardar')}</span>
             </label>`:''}
-            <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px">
+            <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px">
               <select onchange="setImpMetodo(${i},this.value)" style="${selStyle}">
                 <option value="cadete" ${impVal(f)==='cadete'?'selected':''}>🚴 Cadete (Cardinal)</option>
                 <option value="correo" ${impVal(f)==='correo'?'selected':''}>📮 Correo a domicilio</option>
@@ -5184,7 +5350,7 @@ async function confirmarImport(){
   for(let fi=0; fi<IMP_FILAS.length; fi++){ if(!IMP_SEL[fi]) continue;
     const pi=(IMP_FILAS[fi].prods||[]).findIndex(x=>x && x.reconocido===false);
     if(pi>=0){ const x=IMP_FILAS[fi].prods[pi];
-      alert("❓ No reconozco un producto del pedido de "+(IMP_FILAS[fi].cliente||"—")+":\n\n\""+(x.nomML||x.nombre)+"\""+(x.sku?("  (SKU "+x.sku+")"):"")+"\n\nDecime qué producto es. Queda guardado y no te vuelvo a preguntar.");
+      notify("❓ No reconozco un producto del pedido de "+(IMP_FILAS[fi].cliente||"—")+":\n\n\""+(x.nomML||x.nombre)+"\""+(x.sku?("  (SKU "+x.sku+")"):"")+"\n\nDecime qué producto es. Queda guardado y no te vuelvo a preguntar.");
       enseniarPack(fi,pi); if(ENS_CTX) ENS_CTX.seguirImport=true; return; } }
   // Última barrera anti-duplicados, justo antes de crear: por más que ya se filtró al leer la etiqueta,
   // puede pasar que 1) la misma venta haya quedado dos veces en la selección, o 2) el pedido ya se haya
@@ -5204,16 +5370,16 @@ async function confirmarImport(){
   if(duplicados.length){
     const pl=duplicados.length===1;
     const detalle=duplicados.map(f=>"• "+(f.cliente||"—")+(f.ref?(" · "+f.ref):"")).join("\n");
-    if(!aCrear.length){ alert("⚠ Ya "+(pl?"está":"están")+" cargado"+(pl?"":"s")+" (mismo N° de venta), no lo"+(pl?"":"s")+" vuelvo a crear:\n\n"+detalle); return; }
-    if(!confirm("⚠ "+duplicados.length+" pedido"+(pl?"":"s")+" de estos ya "+(pl?"está":"están")+" cargado"+(pl?"":"s")+" (mismo N° de venta) — no lo"+(pl?"":"s")+" voy a duplicar:\n\n"+detalle+"\n\n¿Guardo los otros "+aCrear.length+" igual?")) return;
+    if(!aCrear.length){ notify("⚠ Ya "+(pl?"está":"están")+" cargado"+(pl?"":"s")+" (mismo N° de venta), no lo"+(pl?"":"s")+" vuelvo a crear:\n\n"+detalle); return; }
+    if(!await askConfirm("⚠ "+duplicados.length+" pedido"+(pl?"":"s")+" de estos ya "+(pl?"está":"están")+" cargado"+(pl?"":"s")+" (mismo N° de venta) — no lo"+(pl?"":"s")+" voy a duplicar:\n\n"+detalle+"\n\n¿Guardo los otros "+aCrear.length+" igual?")) return;
   }
   const descartados=IMP_FILAS.filter((f,i)=>!IMP_SEL[i]).map(f=>f.ref).filter(Boolean);   // los que destildaste
   let creados=0;
   try{
     for(const f of aCrear){ f.canal=f.canal||IMP_CANAL; await crearPedido(f); creados++; }
-  }catch(e){ alert("⚠️ IMPORTÉ "+creados+" DE "+aCrear.length+" Y FALLÓ\n\nError: "+(e&&e.message||e)+"\nVersión: "+APP_VERSION+"\n\nSacale captura y pasásela a Claude."); }
+  }catch(e){ notify("⚠️ IMPORTÉ "+creados+" DE "+aCrear.length+" Y FALLÓ\n\nError: "+(e&&e.message||e)+"\nVersión: "+APP_VERSION+"\n\nSacale captura y pasásela a Claude."); }
   try{ await agregarIgnorados(descartados); }catch(e){}   // que no vuelvan a aparecer
-  if(creados===aCrear.length) alert("✅ "+creados+" PEDIDOS IMPORTADOS Y GUARDADOS"+(duplicados.length?(" (se salteó "+duplicados.length+" duplicado"+(duplicados.length===1?"":"s")+")"):"")+"\nVersión: "+APP_VERSION);
+  if(creados===aCrear.length) notify("✅ "+creados+" PEDIDOS IMPORTADOS Y GUARDADOS"+(duplicados.length?(" (se salteó "+duplicados.length+" duplicado"+(duplicados.length===1?"":"s")+")"):"")+"\nVersión: "+APP_VERSION);
   IMP_FILAS=[]; IMP_SEL={}; IMP_REV={}; OPVIEW="pedidos"; vistaOperador();
 }
 /* ---- Importar PDF de preparación de Tienda Nube (separa columnas por posición) ---- */
@@ -5388,7 +5554,7 @@ function formNuevo(edit){
   if(!EDIT_PRODS.length && (p.items||"").trim()){
     const r=prodsDesdeTexto(p.items); EDIT_PRODS=r.ok.map(x=>({nombre:x.nombre,cant:x.cant}));
     if(EDIT_PRODS.length) setTimeout(()=>toast("Cargué "+EDIT_PRODS.length+" producto"+(EDIT_PRODS.length===1?"":"s")+" desde la referencia · revisalos y guardá"),50);
-    if(r.dudosos.length) setTimeout(()=>alert("❓ No encontré en el catálogo:\n\n"+r.dudosos.join("\n")+"\n\nAgregalo a mano con el buscador."),300);
+    if(r.dudosos.length) setTimeout(()=>notify("❓ No encontré en el catálogo:\n\n"+r.dudosos.join("\n")+"\n\nAgregalo a mano con el buscador."),300);
   }
   pintarProdsEdit();
 }
@@ -5402,7 +5568,7 @@ async function guardarNuevo(){
   const refFinal=refN?("#"+refN):"";
   if(refFinal){   // anti-duplicados: si ya existe un pedido con ese mismo N°, aviso antes de crear otro
     const existente=PEDIDOS.filter(p=>p.tipo===undefined || p.cliente!==undefined).find(p=>p.ref===refFinal);
-    if(existente && !confirm("⚠ Ya existe un pedido con el N° "+refFinal+":\n\n"+(existente.cliente||"—")+"\n\n¿Creás este de todos modos?")) return;
+    if(existente && !await askConfirm("⚠ Ya existe un pedido con el N° "+refFinal+":\n\n"+(existente.cliente||"—")+"\n\n¿Creás este de todos modos?")) return;
   }
   try{
     await crearPedido({ empresa:$("#f_emp").value, canal:$("#f_canal").value, cliente, ref:refFinal, nota:($("#f_nota")?$("#f_nota").value:"").trim(), zonaFija:($("#f_zona")?$("#f_zona").value:""), tel:$("#f_tel").value.trim(),
@@ -5410,7 +5576,7 @@ async function guardarNuevo(){
       items:$("#f_items").value.trim(), prods:EDIT_PRODS.slice(), origen:$("#f_origen").value, metodo,
       correo: metodo==="correo"?$("#f_correo").value:"", tracking: metodo==="correo"?$("#f_track").value.trim():"" });
     toast("Pedido creado ✅");
-  }catch(e){ alert("⚠️ NO SE PUDO CREAR EL PEDIDO\n\nError: "+(e&&e.message||e)+"\nVersión: "+APP_VERSION+"\n\nSacale captura y pasásela a Claude."); return; }
+  }catch(e){ notify("⚠️ NO SE PUDO CREAR EL PEDIDO\n\nError: "+(e&&e.message||e)+"\nVersión: "+APP_VERSION+"\n\nSacale captura y pasásela a Claude."); return; }
   vistaOperador();
 }
 async function guardarEdicion(id){
@@ -5426,7 +5592,7 @@ async function guardarEdicion(id){
   const p=PEDIDOS.find(x=>x.id===id)||await DB.get(id);
   if(p && p.stockBajado && descuentoActivo()){
     let det=""; try{ det=itemsPedido(p).map(i=>"· "+i.cant+"x "+i.prodNombre).join("\n"); }catch(e){}
-    if(confirm("Este pedido ya estaba descontado del stock.\n\n¿Rehago el descuento con lo que quedó ahora?\n\n"+det+"\n\n(Devuelve lo anterior y descuenta esto. Si decís que no, el stock queda como estaba.)")){
+    if(await askConfirm("Este pedido ya estaba descontado del stock.\n\n¿Rehago el descuento con lo que quedó ahora?\n\n"+det+"\n\n(Devuelve lo anterior y descuenta esto. Si decís que no, el stock queda como estaba.)")){
       await devolverStockPedido(id);
       await DB.update(id,{stockBajado:false});
       await descontarStockPedido(id,null,true);
@@ -5445,18 +5611,18 @@ async function devolverStockPedido(id){
 /* Eliminar DEFINITIVO (solo admin): borra el pedido de la base */
 async function eliminarPedido(id){
   const p=PEDIDOS.find(x=>x.id===id); if(!p) return;
-  if(!confirm("¿ELIMINAR este pedido para siempre?\n\n"+(p.cliente||"")+" · "+numOrden(p)+"\n\nNo se puede recuperar. (Si solo querés sacarlo de la lista, usá Anular)")) return;
-  if(!confirm("¿Seguro? Se borra definitivamente.")) return;
+  if(!await askConfirm("¿ELIMINAR este pedido para siempre?\n\n"+(p.cliente||"")+" · "+numOrden(p)+"\n\nNo se puede recuperar. (Si solo querés sacarlo de la lista, usá Anular)",{yes:"Eliminar",danger:true})) return;
+  if(!await askConfirm("¿Seguro? Se borra definitivamente.",{yes:"Sí, borrar",danger:true})) return;
   try{
     if(p.stockBajado) await devolverStockPedido(id);   // devuelve el stock si estaba descontado
     await DB.delete(id);
     toast("Pedido eliminado 🗑️");
-  }catch(e){ alert("⚠️ No pude eliminar: "+(e&&e.message||e)); }
+  }catch(e){ notify("⚠️ No pude eliminar: "+(e&&e.message||e)); }
   vistaOperador();
 }
 async function anularPedido(id){
   const p=PEDIDOS.find(x=>x.id===id); if(!p) return;
-  if(!confirm("¿Anular este pedido? Sale de la lista y no se despacha. (Después lo podés reactivar)")) return;
+  if(!await askConfirm("¿Anular este pedido? Sale de la lista y no se despacha. (Después lo podés reactivar)",{yes:"Anular"})) return;
   if(p.stockBajado) await devolverStockPedido(id);   // si se había descontado, se devuelve al stock
   await DB.update(id,{ estado:"anulado", stockBajado:false,
     eventos:[...(p.eventos||[]),{estado:"anulado",ts:Date.now(),nota:"Pedido anulado"}] });
@@ -5605,7 +5771,7 @@ function cargarProdsExtra(){
 function prodsExtra(){ const r=PEDIDOS.find(p=>p.tipo==="prodsExtra"); return (r&&r.lista)||[]; }
 /* ===== DATOS DE PRUEBA: 3 compras realistas para probar el circuito ===== */
 async function crearComprasPrueba(){
-  if(!confirm("Voy a crear 3 pedidos de PRUEBA:\n\n• Tienda Nube (CABA, cadete) — 2 productos\n• ML Flex (CABA, cadete) — 1 producto\n• ML Correo (interior) — 1 pack x3\n\nSon para que pruebes preparar/escanear/despachar. Después los borrás con un botón. ¿Dale?")) return;
+  if(!await askConfirm("Voy a crear 3 pedidos de PRUEBA:\n\n• Tienda Nube (CABA, cadete) — 2 productos\n• ML Flex (CABA, cadete) — 1 producto\n• ML Correo (interior) — 1 pack x3\n\nSon para que pruebes preparar/escanear/despachar. Después los borrás con un botón. ¿Dale?")) return;
   const base={tipo:"pedido", estado:"pendiente", creado:Date.now(), esPrueba:true, tel:"1122334455",
     eventos:[{estado:"pendiente",ts:Date.now(),nota:"Pedido de PRUEBA"}]};
   // 1) Tienda Nube - CABA - 2 productos simples
@@ -5629,7 +5795,7 @@ async function crearComprasPrueba(){
 async function borrarComprasPrueba(){
   const pruebas=PEDIDOS.filter(p=>p.esPrueba);
   if(!pruebas.length){ toast("No hay compras de prueba"); return; }
-  if(!confirm("Borrar las "+pruebas.length+" compras de prueba? (no afecta tus pedidos reales)")) return;
+  if(!await askConfirm("Borrar las "+pruebas.length+" compras de prueba? (no afecta tus pedidos reales)",{yes:"Borrar"})) return;
   for(const p of pruebas){ try{ await DB.delete(p.id); }catch(e){} }
   toast("✓ Compras de prueba borradas");
   OPVIEW="hoy"; vistaOperador();
@@ -5658,7 +5824,7 @@ function verPacksAprendidos(){
 }
 async function borrarPackAprendido(encKey){
   const k=decodeURIComponent(encKey);
-  if(!confirm("¿Borrar este pack aprendido? La próxima vez que importes una venta con ese SKU te va a preguntar de nuevo qué descuenta.")) return;
+  if(!await askConfirm("¿Borrar este pack aprendido? La próxima vez que importes una venta con ese SKU te va a preguntar de nuevo qué descuenta.",{yes:"Borrar"})) return;
   await olvidarPack(k);
   toast("Pack borrado ✓ Se va a re-preguntar al importar");
   verPacksAprendidos();
@@ -5750,7 +5916,7 @@ async function marcarCuponUsado(id, deshacer){
   vistaCupones();
 }
 async function borrarCupon(id){
-  if(!confirm("¿Borrar este registro de cupón?")) return;
+  if(!await askConfirm("¿Borrar este registro de cupón?",{yes:"Borrar",danger:true})) return;
   await cuponBorrar(id); toast("Borrado"); vistaCupones();
 }
 /* Sugiere mínimos según el promedio de ventas: cubre 15 días, sobre todo el historial */
@@ -5808,7 +5974,7 @@ function vistaMinimos(){
 async function aplicarMinimosSugeridos(){
   const lista=REP_MIN();
   if(!lista.length) return;
-  if(!confirm("¿Aplicar los "+lista.length+" mínimos sugeridos?\n\nSe van a guardar como el mínimo de cada producto. Podés cambiarlos después a mano.")) return;
+  if(!await askConfirm("¿Aplicar los "+lista.length+" mínimos sugeridos?\n\nSe van a guardar como el mínimo de cada producto. Podés cambiarlos después a mano.")) return;
   const st=stockState(); const min={...(st.min||{})};
   lista.forEach(r=>{ min[r.prod]=r.sugerido; });
   st.min=min; await persistStock(st);
@@ -6166,12 +6332,22 @@ function parseEtiquetaML(texto){
     // ¿lo conozco? 1) diccionario de packs  2) código de barras exacto (tolerante a 0 inicial)  3) nombre
     // 1º lo que ya aprendiste por SKU (packs/vínculos), 2º código de barras exacto, 3º por nombre
     const packDefinido = packDef(sku, nomML);
-    let prodCat=null, esAprendido=false;
+    let prodCat=null, esAprendido=false, conflictoSku=false;
     if(packDefinido && packDefinido.comps && packDefinido.comps.length){
-      esAprendido=true;   // es un SKU ya enseñado (simple o pack)
-      prodCat = PRODUCTOS.find(pp=>pp.nombre===packDefinido.comps[0].prod) || null;
-    } else {
-      prodCat = (sku && PRODUCTOS.find(pp=>normBarcode(pp.barcode)===normBarcode(sku))) || (nomML?mejorProducto(packDeNombre(nomML).nombre):null);
+      // si es un simple vínculo SKU→producto (no un pack real de varios), reviso que lo que dice ESTA
+      // etiqueta no contradiga lo aprendido: Mercado Libre reutiliza el mismo SKU corto para productos
+      // distintos (pasó con "CURC" → Cúrcuma orgánica Y Cúrcuma con Jengibre), y confiar ciego pisa mal el producto
+      const esAliasSimple = packDefinido.comps.length===1 && (packDefinido.comps[0].cant||1)===1;
+      const sugerido = esAliasSimple && nomML ? mejorProducto(packDeNombre(nomML).nombre) : null;
+      conflictoSku = !!(sugerido && sugerido.nombre!==packDefinido.comps[0].prod);
+      if(!conflictoSku){
+        esAprendido=true;   // es un SKU ya enseñado (simple o pack), y coincide con lo que dice la etiqueta
+        prodCat = PRODUCTOS.find(pp=>pp.nombre===packDefinido.comps[0].prod) || null;
+      }
+    }
+    if(!esAprendido){
+      prodCat = (sku && PRODUCTOS.find(pp=>normBarcode(pp.barcode)===normBarcode(sku)))
+        || (conflictoSku ? null : (nomML?mejorProducto(packDeNombre(nomML).nombre):null));   // en conflicto no adivino: que lo confirme una persona
     }
     // "Pack X 3 - Malato De Magnesio" con Cantidad: 1 → son 3 frascos (salvo que ese pack ya esté enseñado)
     const pn = esAprendido ? {n:1} : packDeNombre(nomML);
@@ -6220,29 +6396,33 @@ async function procesarEtiquetaMLArchivo(file){
   }
   if(!filas.length) return {filas:[], sinReconocer:true};
   // guardo el PDF completo (para 1 etiqueta) y también parto por página (para varias)
-  let adj=null, paginasPorVenta={};
+  let adj=null, paginasPorVenta={}, paginasDetalle={};
   try{
     const b64=await leerArchivoBase64(file);
     if(file.size<=700*1024) adj={etiquetaPdf:b64, etiquetaPdfNombre:file.name||"etiqueta-ml.pdf"};
-    // parto el PDF: una página de envío por cada venta (las hojas de picking se descartan)
+    // parto el PDF: una página de envío por cada venta, y guardo aparte la hoja de picking/detalle
+    // (antes se descartaba) para poder mostrarla como preview sin abrir el PDF completo
     if(filas.length>1 && typeof PDFLib!=="undefined"){
       const { PDFDocument }=PDFLib;
       const bin=atob(b64); const raw=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) raw[i]=bin.charCodeAt(i);
       const src=await PDFDocument.load(raw);
+      const copiarPagina=async pn=>{ const nuevo=await PDFDocument.create();
+        const [pg]=await nuevo.copyPages(src,[pn-1]); nuevo.addPage(pg);
+        const bytes=await nuevo.save();
+        let s=""; const u=new Uint8Array(bytes); for(let i=0;i<u.length;i++) s+=String.fromCharCode(u[i]);
+        return btoa(s); };
       // busco en qué página está cada N° de venta leyendo el texto por página
       pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
       const pdfjs=await pdfjsLib.getDocument({data:raw.slice(0)}).promise;
       for(let pn=1; pn<=pdfjs.numPages; pn++){
         const tc=await (await pdfjs.getPage(pn)).getTextContent();
-        const txt=tc.items.map(it=>it.str).join(" ").replace(/\s/g,"");
-        for(const f of filas){ const num=(f.ref||"").replace(/\D/g,"");
-          if(num && txt.includes(num) && /CP|Destinatario|Domicilio/i.test(tc.items.map(it=>it.str).join(" ")) && !paginasPorVenta[f.ref]){
-            // esta es la hoja de envío de esa venta (tiene el QR)
-            const nuevo=await PDFDocument.create();
-            const [pg]=await nuevo.copyPages(src,[pn-1]); nuevo.addPage(pg);
-            const bytes=await nuevo.save();
-            let s=""; const u=new Uint8Array(bytes); for(let i=0;i<u.length;i++) s+=String.fromCharCode(u[i]);
-            paginasPorVenta[f.ref]=btoa(s);
+        const txtPlano=tc.items.map(it=>it.str).join(" ");
+        const txt=txtPlano.replace(/\s/g,"");
+        for(const f of filas){ const num=(f.ref||"").replace(/\D/g,""); if(!num || !txt.includes(num)) continue;
+          if(/CP|Destinatario|Domicilio/i.test(txtPlano)){
+            if(!paginasPorVenta[f.ref]) paginasPorVenta[f.ref]=await copiarPagina(pn);   // hoja de envío (tiene el QR)
+          } else if(!paginasDetalle[f.ref]){
+            paginasDetalle[f.ref]=await copiarPagina(pn);   // hoja de picking/detalle (cantidades y productos)
           }
         }
       }
@@ -6258,6 +6438,7 @@ async function procesarEtiquetaMLArchivo(file){
   const armar=f=>{ f.empresa=f.empresaML||IMP_EMPRESA; f.marcaDetectada=!!f.empresaML; f.canal="ml_flex";
     if(paginasPorVenta[f.ref]){ f.etiquetaPdf=paginasPorVenta[f.ref]; f.etiquetaPdfNombre="etiqueta-"+(f.ref||"").replace(/\D/g,"")+".pdf"; }
     else if(adj && filas.length===1){ f.etiquetaPdf=adj.etiquetaPdf; f.etiquetaPdfNombre=adj.etiquetaPdfNombre; }
+    if(paginasDetalle[f.ref]) f.hojaDetalle=paginasDetalle[f.ref];   // hoja de picking, para previsualizar sin abrir el PDF
     const rr=sugerirRuta(f.provincia,f.ciudad); f.origen=(rr&&rr.origen)||"bsas";
     if(llegaCadete(f)){ f.metodo="cadete"; f.correo=""; } else { f.metodo="correo"; f.correo="Correo Argentino"; }
     return f; };
@@ -6266,7 +6447,7 @@ async function procesarEtiquetaMLArchivo(file){
     // estaba cargada: pregunto si la quiere de nuevo (con -b) en vez de solo bloquearla
     const info=yaEnSistema[0];
     if(info){ const est=info.p.cerradoEn?"archivada (cierre anterior)":(estObj(info.p.estado).label||info.p.estado);
-      if(confirm("Esta venta ya figura en el sistema"+(file.name?(" ("+file.name+")"):"")+":\n\n"+(info.p.cliente||"")+" · N° "+info.p.ref+"\nEstado: "+est+"\n\n¿Querés cargarla igual como pedido nuevo?\n(Aceptar = crear de nuevo · Cancelar = no hacer nada)")){
+      if(await askConfirm("Esta venta ya figura en el sistema"+(file.name?(" ("+file.name+")"):"")+":\n\n"+(info.p.cliente||"")+" · N° "+info.p.ref+"\nEstado: "+est+"\n\n¿Querés cargarla igual como pedido nuevo?\n(Aceptar = crear de nuevo · Cancelar = no hacer nada)")){
         resultado=filas.map(f=>{ f.ref=(f.ref||"")+"-b"; return armar(f); });
       } else { return {filas:[], yaCargada:true}; }
     } else { return {filas:[], yaCargada:true}; }
@@ -6399,10 +6580,10 @@ async function confirmarCarga(){
     if(main && DB.get){
       const srv=await DB.get(main.id);
       const n=(srv && srv.movs && srv.movs.length)||0;
-      if(n>=items.length){ alert("✅ CARGA CONFIRMADA POR EL SERVIDOR\n\nEl registro de stock tiene "+n+" movimientos guardados en Firebase.\nVersión de la app: "+APP_VERSION); }
-      else { alert("⚠️ El servidor devolvió "+n+" movimientos (esperaba al menos "+items.length+").\nVersión: "+APP_VERSION+"\nSacá captura y pasásela a Claude."); return; }
+      if(n>=items.length){ notify("✅ CARGA CONFIRMADA POR EL SERVIDOR\n\nEl registro de stock tiene "+n+" movimientos guardados en Firebase.\nVersión de la app: "+APP_VERSION); }
+      else { notify("⚠️ El servidor devolvió "+n+" movimientos (esperaba al menos "+items.length+").\nVersión: "+APP_VERSION+"\nSacá captura y pasásela a Claude."); return; }
     } else { toast(items.length+" productos cargados ✅"); }
-  }catch(e){ alert("⚠️ No pude guardar el stock en la base: "+(e&&e.message||e)+"\nVersión: "+APP_VERSION+"\n\nSacale captura a este mensaje."); return; }
+  }catch(e){ notify("⚠️ No pude guardar el stock en la base: "+(e&&e.message||e)+"\nVersión: "+APP_VERSION+"\n\nSacale captura a este mensaje."); return; }
   window.__carga=null; OPVIEW="stock"; setTimeout(()=>vistaOperador(),600);
 }
 function ordenCompra(){ imprimirReposicion(); }
@@ -6514,7 +6695,7 @@ async function prepararDirecto(id){
   const p=PEDIDOS.find(x=>x.id===id)||await DB.get(id);
   if(!p){ toast("No encontré el pedido"); return; }
   const desc=descuentoActivo();
-  if(!confirm("¿Marcar este pedido como PREPARADO?"+(desc?"\n\nSe descuenta del stock (los kits se abren en sus productos).":""))) return;
+  if(!await askConfirm("¿Marcar este pedido como PREPARADO?"+(desc?"\n\nSe descuenta del stock (los kits se abren en sus productos).":""))) return;
   await avanzar(id,"preparado");   // avanzar descuenta el stock nominal (kits expandidos) si el descuento está activo
   toast("Pedido preparado ✓");
 }
@@ -6578,7 +6759,14 @@ function itemsPedido(p){
       // sin la etiqueta "(pack)" que solo tiene sentido para kits de verdad.
       const esAliasSimple = comps && comps.length===1 && (comps[0].cant||1)===1;
       if(comps && !esAliasSimple){ comps.forEach(c=>out.push({nombre:c.nombre+"  (pack)", cant:(+x.cant||1)*c.cant, prodNombre:c.nombre, kit:true})); }
-      else if(esAliasSimple){ out.push({nombre:comps[0].nombre, cant:+x.cant||1, prodNombre:comps[0].nombre}); }
+      else if(esAliasSimple){
+        // ojo: el mismo SKU corto de ML puede haber quedado enseñado para OTRO producto en otro pedido
+        // (pasó con "CURC"). Si este pedido ya tiene guardado un nombre de catálogo válido y DISTINTO
+        // al del alias, confío en lo que ya quedó resuelto acá — no lo piso con un vínculo viejo/ajeno.
+        const yaResuelto = x.nombre!==comps[0].nombre && PRODUCTOS.some(pp=>pp.nombre===x.nombre);
+        const nombreFinal = yaResuelto ? x.nombre : comps[0].nombre;
+        out.push({nombre:nombreFinal, cant:+x.cant||1, prodNombre:nombreFinal});
+      }
       else out.push({nombre:x.nombre, cant:+x.cant||1, prodNombre:x.nombre});
     });
     return out;
@@ -6612,7 +6800,7 @@ async function repararProdsPedidos(){
   }
   let msg="✅ "+reparados+" pedidos reparados (ahora descuentan bien).";
   if(dudosos.length) msg+="\n\n⚠ "+dudosos.length+" productos no se reconocieron y quedaron sin cargar:\n"+dudosos.slice(0,10).join("\n");
-  alert(msg); render();
+  notify(msg); render();
 }
 /* Tipo de envío para agrupar la preparación */
 const ENVIOS_PREP=[{id:"cadete",nombre:"🛵 Cadete / Flex"},{id:"pickit",nombre:"📦 Pickit"},{id:"correo",nombre:"✉️ Correo"}];
@@ -6751,7 +6939,7 @@ function siguientePedidoPrep(){
 }
 /* clave para autorizar cierres con inconsistencias (cambiala por la que quieras) */
 const CLAVE_AUTORIZA="1234";
-function intentarCerrar(id){
+async function intentarCerrar(id){
   const p=PEDIDOS.find(x=>x.id===id); if(!p) return;
   const its=itemsPedido(p);
   const problemas=[...PREP_ALERTAS.map(a=>a.texto)];
@@ -6762,13 +6950,13 @@ function intentarCerrar(id){
   if(!problemas.length){ marcarListo(id); return; }   // todo escaneado y correcto → cierra directo
   const lista=problemas.map(t=>"• "+t).join("\n");
   if(ROL==="operador" || EMPLEADO){
-    alert("⚠ ESTE PEDIDO TIENE INCONSISTENCIAS:\n\n"+lista+"\n\nPara cerrarlo hace falta la autorización del encargado.");
+    notify("⚠ ESTE PEDIDO TIENE INCONSISTENCIAS:\n\n"+lista+"\n\nPara cerrarlo hace falta la autorización del encargado.");
     const clave=prompt("Ingresá la clave de autorización para cerrar este pedido con avisos:");
     if(clave===null) return;
     if(clave!==CLAVE_AUTORIZA){ toast("🚫 Clave incorrecta — el pedido no se cerró"); return; }
     p._prepAlertas=problemas.slice(); marcarListo(id, problemas);
   } else {
-    if(confirm("⚠ ESTE PEDIDO TIENE INCONSISTENCIAS:\n\n"+lista+"\n\n¿Autorizás cerrarlo igual?\n(Aceptar = lo cierro y queda registrado · Cancelar = reviso)")){
+    if(await askConfirm("⚠ ESTE PEDIDO TIENE INCONSISTENCIAS:\n\n"+lista+"\n\n¿Autorizás cerrarlo igual?\n(Aceptar = lo cierro y queda registrado · Cancelar = reviso)")){
       p._prepAlertas=problemas.slice(); marcarListo(id, problemas);
     }
   }
@@ -6777,7 +6965,7 @@ function avisarFaltantes(id){
   const p=PEDIDOS.find(x=>x.id===id); if(!p) return;
   const faltan=itemsPedido(p).map(i=>({n:i.nombre.replace(/\s*\(kit\)$/,''), f:i.cant-Math.min(PREP_SCAN[i.prodNombre]||0,i.cant)})).filter(x=>x.f>0);
   if(!faltan.length){ toast("Está completo ✅"); return; }
-  alert("FALTA ESCANEAR:\n\n"+faltan.map(x=>"• "+x.f+" x "+x.n).join("\n"));
+  notify("FALTA ESCANEAR:\n\n"+faltan.map(x=>"• "+x.f+" x "+x.n).join("\n"));
 }
 function escanearParaPedido(){ abrirEscaner(scanPrep,{continuo:true,hint:"Escaneá los productos del pedido"}); }
 let PREP_ALERTAS=[];   // inconsistencias detectadas en esta preparación
@@ -6793,7 +6981,7 @@ async function scanPrep(code){
     const faltantes=itemsPedido(p).filter(i=>(PREP_SCAN[i.prodNombre]||0)<i.cant);
     if(faltantes.length===1){
       // si falta uno solo, pregunto si este frasco es ese
-      if(confirm("Código "+c+" no está registrado.\n\n¿Este frasco es \""+faltantes[0].prodNombre+"\"?\n\n(Aceptar = lo aprendo y lo cuento · Cancelar = no)")){
+      if(await askConfirm("Código "+c+" no está registrado.\n\n¿Este frasco es \""+faltantes[0].prodNombre+"\"?\n\n(Aceptar = lo aprendo y lo cuento · Cancelar = no)")){
         await aprenderBarcode(c, faltantes[0].prodNombre);
         toast("Aprendido ✓ La próxima lo reconoce solo");
         return scanPrep(code);   // reintento: ahora sí lo encuentra
@@ -7128,7 +7316,7 @@ function imprimirEtiqueta(id){
   const p=PEDIDOS.find(x=>x.id===id) || ((SIM&&SIM.id===id)?SIM:null);
   if(!p){ toast("No encontré el pedido"); return; }
   if(p.etiquetaPdf){ abrirEtiquetaPDF(p); return; }   // usa la etiqueta del correo (Tienda Nube)
-  if((p.correo||"")==="Punto de retiro"){ alert("Este pedido es CORREO A SUCURSAL: va con la etiqueta del correo, no la nuestra.\n\nAdjuntale el PDF de Tienda Nube (botón 📎 Adjuntar) y volvé a imprimir."); return; }
+  if((p.correo||"")==="Punto de retiro"){ notify("Este pedido es CORREO A SUCURSAL: va con la etiqueta del correo, no la nuestra.\n\nAdjuntale el PDF de Tienda Nube (botón 📎 Adjuntar) y volvé a imprimir."); return; }
   printLabels([p]);
 }
 /* Genera el PDF 10x15 de la última etiqueta preparada */
@@ -7302,10 +7490,10 @@ async function imprimirEtiquetaML(id, soloPDF){
 }
 function imprimirLote(){ pantallaEtiquetas(); }
 /* Abre las etiquetas de Mercado Libre de los pedidos pendientes (una pestaña por etiqueta) */
-function etiquetasML(){
+async function etiquetasML(){
   const arr=soloPedidos().filter(p=>p.etiquetaPdf && ["pendiente","preparado","asignado"].includes(p.estado));
   if(!arr.length){ toast("No hay etiquetas de ML pendientes"); return; }
-  if(arr.length>6 && !confirm("Se van a abrir "+arr.length+" pestañas (una por etiqueta). ¿Seguimos?")) return;
+  if(arr.length>6 && !await askConfirm("Se van a abrir "+arr.length+" pestañas (una por etiqueta). ¿Seguimos?")) return;
   arr.forEach((p,i)=>setTimeout(()=>imprimirEtiquetaML(p.id), i*900));
   toast("Abriendo "+arr.length+" etiqueta"+(arr.length===1?"":"s"));
 }
@@ -7398,7 +7586,7 @@ function imprimirSeleccionadas(){ const arr=soloPedidos().filter(p=>SEL_ETQ[p.id
   if(sinPdf.length) printLabels(sinPdf);                       // nuestras etiquetas
   conPdf.forEach(p=>abrirEtiquetaPDF(p));                      // las del correo (PDF de Tienda Nube)
   if(conPdf.length) toast(conPdf.length+" con etiqueta del correo (se abren aparte)");
-  if(sucSinPdf.length) alert(sucSinPdf.length+" pedido(s) de CORREO A SUCURSAL sin PDF adjunto:\n\n"+sucSinPdf.map(p=>"• "+(p.cliente||"")+" ("+numOrden(p)+")").join("\n")+"\n\nA esos no les imprimo nuestra etiqueta: adjuntales el PDF del correo (📎) y volvé a imprimir."); }
+  if(sucSinPdf.length) notify(sucSinPdf.length+" pedido(s) de CORREO A SUCURSAL sin PDF adjunto:\n\n"+sucSinPdf.map(p=>"• "+(p.cliente||"")+" ("+numOrden(p)+")").join("\n")+"\n\nA esos no les imprimo nuestra etiqueta: adjuntales el PDF del correo (📎) y volvé a imprimir."); }
 
 /* =========================================================================
    9) SIMULACIÓN DEL CICLO COMPLETO (modo demostración, no toca tus datos)
