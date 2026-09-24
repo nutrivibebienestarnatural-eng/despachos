@@ -1124,28 +1124,33 @@ async function buscarPedidoPorCodigos(codigos){
 }
 /* Devuelve true si la foto quedó asignada y guardada, false si no (para que quien la llama
    sepa si tiene que darla por resuelta o dejarla marcada como pendiente de revisar). */
-async function fotoDetectarPedido(file){
-  if(!file) return false;
-  toast("Buscando la etiqueta en la foto…");
+/* opts.silencioso=true (usado al procesar en lote desde la carpeta): no abre modales por cada foto
+   (si hay 15 fotos fallidas, no tiene sentido apilar 15 carteles) — el motivo del fallo queda en el
+   resultado para mostrarlo en la lista de errores. Devuelve {ok, motivo}. */
+async function fotoDetectarPedido(file, opts){
+  opts=opts||{};
+  const aviso = opts.silencioso ? (()=>{}) : notify;
+  if(!file) return {ok:false, motivo:"Sin archivo"};
+  if(!opts.silencioso) toast("Buscando la etiqueta en la foto…");
   let codigos=[];
-  try{ codigos=await leerCodigosDeFoto(file); }catch(e){ notify(e.message||e); return false; }
-  if(!codigos.length){ comprimirFoto(file).then(f=>enviarTelegram("❌ FOTO SIN ASIGNAR\n\nNo se pudo leer la etiqueta en la foto",f)).catch(()=>{}); notify("No encontré ningún código QR ni de barras en la foto.\n\nProbá de nuevo con la etiqueta más cerca, derecha y con buena luz."); return false; }
+  try{ codigos=await leerCodigosDeFoto(file); }catch(e){ aviso(e.message||e); return {ok:false, motivo:"Error leyendo la foto: "+(e.message||e)}; }
+  if(!codigos.length){ comprimirFoto(file).then(f=>enviarTelegram("❌ FOTO SIN ASIGNAR\n\nNo se pudo leer la etiqueta en la foto",f)).catch(()=>{}); aviso("No encontré ningún código QR ni de barras en la foto.\n\nProbá de nuevo con la etiqueta más cerca, derecha y con buena luz."); return {ok:false, motivo:"No se encontró ningún código QR/barras en la foto (probable compresión de WhatsApp: mandala como Documento, no como Foto)"}; }
   const p=await buscarPedidoPorCodigos(codigos);
-  if(!p){ comprimirFoto(file).then(f=>enviarTelegram("❌ FOTO SIN ASIGNAR\n\nLa etiqueta no corresponde a ningún pedido cargado\nCódigo leído: "+codigos.join(" | ").slice(0,200),f)).catch(()=>{}); notify("Leí la etiqueta pero no encontré ese pedido cargado en la app.\n\nCódigo leído: "+codigos.join(" | ").slice(0,160)+"\n\nImportá primero la etiqueta y volvé a intentar."); return false; }
+  if(!p){ comprimirFoto(file).then(f=>enviarTelegram("❌ FOTO SIN ASIGNAR\n\nLa etiqueta no corresponde a ningún pedido cargado\nCódigo leído: "+codigos.join(" | ").slice(0,200),f)).catch(()=>{}); aviso("Leí la etiqueta pero no encontré ese pedido cargado en la app.\n\nCódigo leído: "+codigos.join(" | ").slice(0,160)+"\n\nImportá primero la etiqueta y volvé a intentar."); return {ok:false, motivo:"Código leído ("+codigos.join(" | ").slice(0,60)+") pero no coincide con ningún pedido cargado"}; }
   const its=(()=>{ try{ return itemsPedido(p); }catch(e){ return []; } })();
   const lista=its.map(x=>"  • "+x.cant+"× "+x.prodNombre).join("\n")||"  (sin productos cargados)";
   const foto=await comprimirFoto(file);
   if(p.estado!=="pendiente"){
-    if(!await askConfirm("Pedido de "+(p.cliente||"—")+" · N° "+numOrden(p)+"\nYa está en estado: "+estObj(p.estado).label+"\n\n¿Guardar igual la foto en este pedido?")) return false;
-    await guardarFotoPedido(p.id, foto); telegramPedido(p,foto,"📷 PEDIDO CON FOTO",["Ya estaba en estado "+estObj(p.estado).label]); toast("Foto guardada en el pedido de "+(p.cliente||"")); render(); return true;
+    if(!await askConfirm("Pedido de "+(p.cliente||"—")+" · N° "+numOrden(p)+"\nYa está en estado: "+estObj(p.estado).label+"\n\n¿Guardar igual la foto en este pedido?")) return {ok:false, motivo:"Cancelado: pedido "+(p.cliente||"")+" ya estaba en "+estObj(p.estado).label};
+    await guardarFotoPedido(p.id, foto); telegramPedido(p,foto,"📷 PEDIDO CON FOTO",["Ya estaba en estado "+estObj(p.estado).label]); toast("Foto guardada en el pedido de "+(p.cliente||"")); render(); return {ok:true};
   }
-  if(!await askConfirm("✅ Es el pedido de "+(p.cliente||"—")+"\nN° "+numOrden(p)+" · "+nombreEmp(p.empresa)+"\n\nTiene que llevar:\n"+lista+"\n\nRevisá que la foto coincida.\n¿Marcarlo como PREPARADO y guardar la foto?")) return false;
+  if(!await askConfirm("✅ Es el pedido de "+(p.cliente||"—")+"\nN° "+numOrden(p)+" · "+nombreEmp(p.empresa)+"\n\nTiene que llevar:\n"+lista+"\n\nRevisá que la foto coincida.\n¿Marcarlo como PREPARADO y guardar la foto?")) return {ok:false, motivo:"Cancelado al revisar el pedido de "+(p.cliente||"")};
   await guardarFotoPedido(p.id, foto);
   await avanzar(p.id,"preparado","Preparado por foto de etiqueta");
   telegramPedido(p,foto,"✅ PEDIDO PREPARADO CON FOTO",[]);
   toast("✓ "+(p.cliente||"Pedido")+" preparado con foto 📷");
   render();
-  return true;
+  return {ok:true};
 }
 /* ===== Carpeta "Ventas" vigilada (Chrome/Edge en PC) =====
    Ventas\            ← se puede tirar todo acá, o separado en:
@@ -1236,9 +1241,10 @@ function pintarAvisoCarpeta(){
     </div>`:''}
     ${nerr?`<div style="margin-top:8px;padding:8px 10px;background:var(--red-weak);border-radius:9px">
       <div style="font-size:12.5px;font-weight:700;color:var(--red)">❌ ${nerr} foto${nerr===1?'':'s'} SIN ASIGNAR — no la${nerr===1?'':'s'} pude vincular a ningún pedido</div>
-      ${CARPETA.errores.map((it,idx)=>`<div class="row" style="justify-content:space-between;align-items:center;gap:6px;margin-top:6px">
-        <span class="muted" style="font-size:11.5px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(it.nombre)}</span>
-        <span style="display:flex;gap:4px;flex:0 0 auto">
+      ${CARPETA.errores.map((it,idx)=>`<div style="margin-top:8px;padding-top:8px;border-top:.5px solid rgba(255,59,48,.2)">
+        <div style="font-size:11.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(it.nombre)}</div>
+        ${it.motivo?`<div class="muted" style="font-size:11px;margin-top:2px">${esc(it.motivo)}</div>`:''}
+        <span style="display:flex;gap:4px;margin-top:4px">
           <button class="btn sm ghost" style="padding:4px 8px;font-size:11px" onclick="reintentarFotoError(${idx})">Reintentar</button>
           <button class="btn sm ghost" style="padding:4px 8px;font-size:11px;color:var(--red)" onclick="descartarFotoError(${idx})">Descartar</button>
         </span>
@@ -1285,12 +1291,12 @@ async function procesarEtiquetasCarpeta(){
 async function procesarFotosCarpeta(){
   const lote=CARPETA.fotos.splice(0); pintarAvisoCarpeta();
   for(const it of lote){
-    let ok=false;
-    try{ const f=await it.h.getFile(); ok=await fotoDetectarPedido(f); }catch(e){ console.warn(e); }
-    if(ok) await moverAProcesadas(it);
+    let r={ok:false, motivo:"Error inesperado"};
+    try{ const f=await it.h.getFile(); r=await fotoDetectarPedido(f,{silencioso:true}); }catch(e){ console.warn(e); r={ok:false,motivo:String(e&&e.message||e)}; }
+    if(r.ok) await moverAProcesadas(it);
     // si no se pudo asignar, NO la muevo a Procesadas: queda marcada como error para que no se pierda
     // (antes se archivaba igual y la foto quedaba "perdida" sin que nadie se enterara)
-    else CARPETA.errores.push(it);
+    else{ it.motivo=r.motivo; CARPETA.errores.push(it); }
   }
   pintarAvisoCarpeta();
 }
@@ -1299,9 +1305,9 @@ async function procesarFotosCarpeta(){
 async function reintentarFotoError(idx){
   const it=CARPETA.errores[idx]; if(!it) return;
   CARPETA.errores.splice(idx,1); pintarAvisoCarpeta();
-  let ok=false;
-  try{ const f=await it.h.getFile(); ok=await fotoDetectarPedido(f); }catch(e){ console.warn(e); }
-  if(ok) await moverAProcesadas(it); else CARPETA.errores.push(it);
+  let r={ok:false, motivo:"Error inesperado"};
+  try{ const f=await it.h.getFile(); r=await fotoDetectarPedido(f); }catch(e){ console.warn(e); r={ok:false,motivo:String(e&&e.message||e)}; }
+  if(r.ok) await moverAProcesadas(it); else { it.motivo=r.motivo; CARPETA.errores.push(it); }
   pintarAvisoCarpeta();
 }
 async function descartarFotoError(idx){
