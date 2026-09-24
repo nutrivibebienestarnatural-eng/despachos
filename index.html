@@ -3406,7 +3406,8 @@ function imprimirStock(){
   w.document.close();
 }
 function toast(m){ const t=$("#toast"); t.textContent=m; t.className="";
-  t.classList.add(/^✅/.test(m)?"ok":/^(⚠|❌)/.test(m)?"warn":"");
+  const cls=/^✅/.test(m)?"ok":/^(⚠|❌)/.test(m)?"warn":"";
+  if(cls) t.classList.add(cls);
   t.classList.add("show");
   clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove("show"),2600); }
 
