@@ -1153,7 +1153,7 @@ async function fotoDetectarPedido(file){
      Fotos\           ← fotos de los pedidos armados
      Procesadas\      ← la app mueve acá lo que ya tomó (la crea sola)
    Mientras la app está abierta revisa cada 5 s y muestra un aviso con lo nuevo. */
-const CARPETA={handle:null, activa:false, etiquetas:[], fotos:[], viejos:[], errores:[], vistos:new Set(), timer:null, ocupado:false};
+const CARPETA={handle:null, activa:false, etiquetas:[], fotos:[], viejos:[], errores:[], vistos:new Set(), timer:null, ocupado:false, ultimoError:null, ultimoScan:null};
 const esHoy=ts=>{ const d=new Date(ts), h=new Date();
   return d.getFullYear()===h.getFullYear() && d.getMonth()===h.getMonth() && d.getDate()===h.getDate(); };
 function idbCarpeta(modo,valor){ return new Promise((res)=>{ try{
@@ -1188,23 +1188,30 @@ function iniciarVigilancia(){ clearInterval(CARPETA.timer); CARPETA.activa=true;
 async function revisarCarpeta(){
   if(!CARPETA.activa||!CARPETA.handle||CARPETA.ocupado) return;
   CARPETA.ocupado=true;
+  let vistosEnEsta=0;
+  CARPETA.ultimoError=null;
   try{
     const dirs=[CARPETA.handle];
     for await (const [nombre,h] of CARPETA.handle.entries()){ if(h.kind==="directory" && /^(etiquetas|fotos)$/i.test(nombre)) dirs.push(h); }
     for(const d of dirs){
       for await (const [nombre,h] of d.entries()){
         if(h.kind!=="file") continue;
+        vistosEnEsta++;
         const clave=d.name+"/"+nombre; if(CARPETA.vistos.has(clave)) continue;
         const esEtiqueta=/\.pdf$/i.test(nombre), esFoto=/\.(jpe?g|png|webp|heic)$/i.test(nombre);
         if(!esEtiqueta && !esFoto) continue;
         CARPETA.vistos.add(clave);
-        let fecha=null; try{ fecha=(await h.getFile()).lastModified; }catch(e){}
+        let fecha=null; try{ fecha=(await h.getFile()).lastModified; }catch(e){ CARPETA.ultimoError="No pude leer \""+nombre+"\": "+(e&&e.message||e); }
         const item={dir:d,nombre,h,fecha};
         if(fecha && !esHoy(fecha)){ CARPETA.viejos.push(item); continue; }   // no es de hoy: aviso aparte, no lo mezclo con lo nuevo
         (esEtiqueta?CARPETA.etiquetas:CARPETA.fotos).push(item);
       }
     }
-  }catch(e){ console.warn("Carpeta:",e); if(e&&e.name==="NotAllowedError"){ CARPETA.activa=false; clearInterval(CARPETA.timer); } }
+  }catch(e){ console.warn("Carpeta:",e); CARPETA.ultimoError=(e&&e.name==="NotAllowedError")
+      ? "Se venció el permiso de la carpeta. Tocá \"Reactivar\"."
+      : "No pude revisar la carpeta: "+(e&&e.message||e);
+    if(e&&e.name==="NotAllowedError"){ CARPETA.activa=false; clearInterval(CARPETA.timer); } }
+  CARPETA.ultimoScan={ts:Date.now(), archivos:vistosEnEsta};
   CARPETA.ocupado=false; pintarAvisoCarpeta();
 }
 function pintarAvisoCarpeta(){
@@ -1218,6 +1225,8 @@ function pintarAvisoCarpeta(){
   const ne=CARPETA.etiquetas.length, nf=CARPETA.fotos.length, nv=CARPETA.viejos.length, nerr=CARPETA.errores.length;
   el.innerHTML=`<div class="row" style="justify-content:space-between;gap:8px"><span>📂 <b>${esc(CARPETA.handle.name)}</b> ${ne||nf||nv||nerr?'':'<span class="muted">· sin novedades</span>'}</span>
       <button class="btn sm ghost" title="Dejar de vigilar" onclick="desconectarCarpeta()">✕</button></div>
+    ${CARPETA.ultimoError?`<div class="muted" style="font-size:11px;color:var(--red);margin-top:4px">⚠ ${esc(CARPETA.ultimoError)}</div>`:''}
+    ${CARPETA.ultimoScan?`<div class="muted" style="font-size:10.5px;margin-top:3px">Última revisión ${new Date(CARPETA.ultimoScan.ts).toLocaleTimeString("es-AR")} · ${CARPETA.ultimoScan.archivos} archivo${CARPETA.ultimoScan.archivos===1?'':'s'} en la carpeta</div>`:''}
     ${ne?`<button class="btn sm block" style="margin-top:8px" onclick="procesarEtiquetasCarpeta()">🏷️ ${ne} etiqueta${ne===1?'':'s'} nueva${ne===1?'':'s'} de hoy → Revisar</button>`:''}
     ${nf?`<button class="btn sm block green" style="margin-top:6px" onclick="procesarFotosCarpeta()">📷 ${nf} foto${nf===1?'':'s'} nueva${nf===1?'':'s'} de hoy → Asignar</button>`:''}
     ${nv?`<div style="margin-top:8px;padding:8px 10px;background:var(--amber-weak);border-radius:9px">
