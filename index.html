@@ -908,7 +908,7 @@ function sembrarDemo(write,read){
 /* =========================================================================
    5) ESTADO EN MEMORIA + UTILIDADES
    ========================================================================= */
-let PEDIDOS=[], ROL=null, CADETE_ACTIVO=null, FILTRO="todos", OPVIEW="hoy", EMPLEADO=false, PED_Q="";
+let PEDIDOS=[], ROL=null, CADETE_ACTIVO=null, FILTRO="todos", OPVIEW="hoy", EMPLEADO=false, PED_Q="", SOLO_FOTO=false;
 let USER=null, USERROL=null, AUTH_READY=false, SUBSCRITO=false, PREVIEW=null;
 let STOCK_DESDE="", STOCK_HASTA="", STOCK_Q="", STOCK_TODOS=false, DEPOSITO_ACTIVO="";
 let ENT_DESDE="", ENT_HASTA="";
@@ -1008,7 +1008,8 @@ async function leerFotoGrande(docId){
 async function guardarFotoPedido(id, dataUrl){
   const mini=await fotoChica(dataUrl, 600, 0.55, 90);          // ~60-90 KB: entra siempre
   const docId=await guardarFotoGrande(id, dataUrl);
-  await DB.update(id, {fotoPrep:mini, fotoPrepTs:Date.now(), fotoDoc:docId||""});
+  // cada foto nueva (o reemplazada) queda "sin revisar" hasta que el admin la mire en Control
+  await DB.update(id, {fotoPrep:mini, fotoPrepTs:Date.now(), fotoDoc:docId||"", fotoRevisada:false});
   return mini;
 }
 async function adjuntarFotoPedido(id,file){
@@ -1023,6 +1024,24 @@ async function adjuntarFotoPedido(id,file){
 async function borrarFotoPedido(id){
   if(!await askConfirm("¿Borrar la foto de este pedido?")) return;
   await DB.update(id,{fotoPrep:"", fotoPrepTs:null, fotoDoc:""}); toast("Foto borrada"); refrescarFoto(id,{fotoPrep:"", fotoPrepTs:null});
+}
+/* El admin revisa la foto que subió la empleada y la da por buena — no frena el despacho
+   (el pedido ya avanzó solo), es un chequeo aparte para detectar errores a tiempo. */
+async function marcarFotoRevisada(id){
+  await DB.update(id,{fotoRevisada:true});
+  toast("Foto revisada ✓");
+  vistaControl();
+}
+/* Para el primer día de esta función: todo pedido con foto ya cargada aparece "sin revisar" porque
+   el campo es nuevo. Este botón limpia de una el pendiente acumulado (solo dentro del filtro actual
+   de fecha/empresa) para arrancar al día. */
+async function marcarTodasRevisadas(){
+  const peds=ctlPedidos().filter(p=>p.fotoPrep && !p.fotoRevisada);
+  if(!peds.length) return;
+  if(!await askConfirm("¿Marcar como revisadas las "+peds.length+" fotos de esta lista?")) return;
+  for(const p of peds) await DB.update(p.id,{fotoRevisada:true});
+  toast(peds.length+" fotos marcadas ✓");
+  vistaControl();
 }
 // actualiza solo el bloque de la foto (sin redibujar la pantalla, así no se pierde lo que se está editando)
 function refrescarFoto(id,patch){
@@ -1410,7 +1429,7 @@ function vistaDespachar(){
   const p=DESP&&PEDIDOS.find(x=>x.id===DESP.id);
   app().innerHTML=`
     ${segOp('despachar')}
-    ${operador?`<div class="seg" style="margin-bottom:12px"><button onclick="OPVIEW='prepararhoy';render()">Preparar</button><button class="on">📷 Despacho</button></div>`:''}
+    ${operador&&!SOLO_FOTO?`<div class="seg" style="margin-bottom:12px"><button onclick="OPVIEW='prepararhoy';render()">Preparar</button><button class="on">📷 Despacho</button></div>`:''}
     <div class="title">Despacho con foto</div>
     <div class="subtitle">Sacale foto al pedido armado con la etiqueta a la vista. Te digo de quién es y qué tiene que llevar.</div>
     ${DESP&&DESP.id&&p ? despCardHTML(p) : `
@@ -1499,8 +1518,21 @@ function vistaControl(){
     bien:{t:"📷 Bien, con foto", arr:by(p=>p.fotoPrep && ctlEstado(p)!=="mal")},
     sinfoto:{t:"📷 Salieron / listos SIN foto", arr:sinFotoSalida},
     sinprod:{t:"❓ Productos sin cargar o sin reconocer", arr:sinProd},
+    revisar:{t:"📷 Fotos sin revisar", arr:by(p=>p.fotoPrep && !p.fotoRevisada)},
   };
   const L=listas[CTL_LISTA]||listas.faltan;
+  const filaRevisar=p=>{ const its=(()=>{ try{ return itemsPedido(p); }catch(_){ return []; } })();
+    return `<div class="row" style="gap:12px;padding:12px 0;border-top:.5px solid var(--border);align-items:flex-start">
+      <img src="${p.fotoPrep}" style="width:76px;height:76px;object-fit:cover;border-radius:10px;flex:0 0 auto;cursor:pointer" onclick="window.open('${p.fotoPrep}','_blank')">
+      <div style="min-width:0;flex:1">
+        <div style="font-weight:650">${esc(p.cliente||'—')} <span class="muted" style="font-weight:400;font-size:12px">· ${esc(numOrden(p))} · ${esc(nombreEmp(p.empresa))}</span></div>
+        <div style="font-size:12.5px;color:var(--text-2);margin-top:2px">${its.map(x=>x.cant+"× "+esc(x.prodNombre)).join(" · ")||'<span style="color:var(--red)">sin productos</span>'}</div>
+        <div class="row" style="gap:6px;margin-top:8px">
+          <button class="btn sm green" onclick="marcarFotoRevisada('${p.id}')">✓ OK</button>
+          <label class="btn sm ghost" style="cursor:pointer">🔄 Cambiar foto<input type="file" accept="image/*" capture="environment" style="display:none" onchange="adjuntarFotoPedido('${p.id}',this.files[0]).then(()=>vistaControl());this.value=''"></label>
+        </div>
+      </div>
+    </div>`; };
   const fila=p=>{ const its=(()=>{ try{ return itemsPedido(p); }catch(_){ return []; } })();
     const est=ctlEstado(p), col={faltan:'var(--amber)',listos:'var(--green)',camino:'var(--accent)',entregados:'var(--text-3)',mal:'var(--red)'}[est];
     return `<div class="row" style="gap:10px;padding:9px 0;border-top:.5px solid var(--border);flex-wrap:nowrap;align-items:center;cursor:pointer" onclick="DESP=null;despElegir('${p.id}');OPVIEW='despachar'">
@@ -1531,6 +1563,7 @@ function vistaControl(){
       ${kpi(cnt.mal,"⚠ Con problema","var(--red)","mal")}
     </div>
     <div class="kpis">
+      ${kpi(listas.revisar.arr.length,"📷 Fotos sin revisar",listas.revisar.arr.length?"var(--amber)":"var(--text-3)","revisar")}
       ${kpi(conFoto,"📷 Bien con foto","var(--green)","bien")}
       ${kpi(sinFotoSalida.length,"Sin foto al salir",sinFotoSalida.length?"var(--amber)":"var(--text-3)","sinfoto")}
       ${kpi(sinProd.length,"❓ Productos a revisar",sinProd.length?"var(--red)":"var(--text-3)","sinprod")}
@@ -1539,8 +1572,9 @@ function vistaControl(){
 
     <div class="card" style="margin-bottom:12px">
       <div class="row" style="justify-content:space-between"><span class="label" style="margin:0">${L.t} · ${L.arr.length}</span>
-        ${CTL_LISTA==="mal"&&L.arr.length?`<button class="btn sm ghost" onclick="OPVIEW='despachar';vistaOperador()">Ver avisos →</button>`:''}</div>
-      ${L.arr.length?L.arr.slice(0,60).map(fila).join(""):`<div class="muted" style="padding:14px 0;text-align:center">Nada acá 👍</div>`}
+        ${CTL_LISTA==="mal"&&L.arr.length?`<button class="btn sm ghost" onclick="OPVIEW='despachar';vistaOperador()">Ver avisos →</button>`:''}
+        ${CTL_LISTA==="revisar"&&L.arr.length?`<button class="btn sm ghost" onclick="marcarTodasRevisadas()">✓ Marcar todas OK</button>`:''}</div>
+      ${L.arr.length?L.arr.slice(0,60).map(CTL_LISTA==="revisar"?filaRevisar:fila).join(""):`<div class="muted" style="padding:14px 0;text-align:center">Nada acá 👍</div>`}
     </div>
 
     <div class="card" style="margin-bottom:12px">
@@ -3647,7 +3681,7 @@ function render(){
   // el link ?rol=operador fuerza el modo preparar (para el celu de la empleada), aunque haya login
   const rolLink=q.get("rol");
   if(rolLink==="operador"||rolLink==="empleado"){ ROL="operador"; EMPLEADO=true; if(OPVIEW!=="despachar") OPVIEW="prepararhoy"; }
-  else if(rolLink==="despacho"){ ROL="operador"; EMPLEADO=true; if(!["despachar","prepararhoy","preparar"].includes(OPVIEW)) OPVIEW="despachar"; }   // link para quien despacha y saca las fotos
+  else if(rolLink==="despacho"){ ROL="operador"; EMPLEADO=true; SOLO_FOTO=true; OPVIEW="despachar"; }   // link para quien solo saca fotos, sin pestañas ni navegación
   else if(DB.modo==="firebase"){
     if(!AUTH_READY) return vistaCargando();
     if(!USER)       return vistaLogin();
@@ -6959,7 +6993,7 @@ function vistaPrepararHoy(){
   app().innerHTML=`
     ${segOp('hoy')}
     <button class="btn sm ghost" onclick="OPVIEW='hoy';vistaOperador()">← Volver a Hoy</button>
-    ${ROL!=="admin"?`<div class="seg" style="margin-top:12px"><button class="on">Preparar</button><button onclick="OPVIEW='despachar';render()">📷 Despacho</button></div>`:''}
+    ${ROL!=="admin"&&!SOLO_FOTO?`<div class="seg" style="margin-top:12px"><button class="on">Preparar</button><button onclick="OPVIEW='despachar';render()">📷 Despacho</button></div>`:''}
     <div class="title" style="margin-top:14px">Preparar pedidos</div>
     <div class="subtitle">Elegí empresa y tipo de envío. Entrá a uno, escaneá sus productos, y cerralo.</div>
     <label class="btn block green" style="cursor:pointer;margin-top:10px">📷 Foto del pedido armado (detecta el cliente por la etiqueta)
