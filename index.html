@@ -4952,7 +4952,7 @@ async function asignarZonaFija(id,val){
 }
 async function asignarReparto(id,tipo){
   const p=PEDIDOS.find(x=>x.id===id)||await DB.get(id); if(!p) return;
-  if(tipo==="__correo"){ await DB.update(id,{metodo:"correo",cadete:"",correo:p.correo||"Correo Argentino"}); toast("Asignado a Correo"); }
+  if(tipo==="__correo"){ await DB.update(id,{metodo:"correo",cadete:"",correo:p.correo||(p.canal==="ml_flex"?"Punto de Despacho":"Correo Argentino")}); toast("Asignado a Correo"); }
   else { await DB.update(id,{metodo:"cadete",cadete:tipo,correo:""}); toast("Asignado a "+tipo); }
   render();
 }
@@ -5199,7 +5199,7 @@ function faltaRevisarImport(){ return IMP_FILAS.some((f,i)=>IMP_SEL[i] && (f.pro
 function setImpMetodo(i,val){ const f=IMP_FILAS[i]; if(!f) return;
   if(val==="cadete"){ f.metodo="cadete"; f.correo=""; f.etiquetaPdf=""; f.etiquetaPdfNombre=""; }
   else if(val==="sucursal"){ f.metodo="correo"; f.correo="Punto de retiro"; }
-  else { f.metodo="correo"; f.correo="Correo Argentino"; }
+  else { f.metodo="correo"; f.correo=f.etiquetaML?"Punto de Despacho":"Correo Argentino"; }
   mostrarPreviewImport(); }
 function impVal(f){ return f.metodo==="cadete"?"cadete":((f.correo||"")==="Punto de retiro"?"sucursal":"correo"); }
 async function adjuntarEtiquetaImport(i,file){
@@ -5418,7 +5418,8 @@ function mostrarPreviewImport(){
       ${IMP_FILAS.map((f,i)=>{ const an=anilloDe(f); const elegis=(an.n===9)||((f.correo||"")==="Punto de retiro"); const esCorreo=f.metodo==="correo";
         const envioChip = f.pickit ? {t:"📦 Pickit · "+fmtAr(pickitPrecio()),bg:"var(--amber-weak)",c:"var(--amber)"}
           : impVal(f)==="cadete" ? {t:"🛵 Flex / Cadete (Cardinal)",bg:"var(--green-weak)",c:"var(--green)"}
-          : {t:"✉️ Correo"+(impVal(f)==="sucursal"?" a sucursal":""),bg:"var(--violet-weak)",c:"var(--violet)"};
+          : impVal(f)==="sucursal" ? {t:"✉️ Correo a sucursal",bg:"var(--violet-weak)",c:"var(--violet)"}
+          : {t:"📮 "+(f.correo||"Correo"),bg:"var(--violet-weak)",c:"var(--violet)"};
         return `<div class="order" style="${IMP_SEL[i]?'':'opacity:.45'}">
           <div class="ord-head" style="cursor:default">
             <input type="checkbox" ${IMP_SEL[i]?'checked':''} onchange="toggleImp(${i})" style="width:22px;height:22px;flex:0 0 auto;accent-color:var(--accent)">
@@ -6575,7 +6576,9 @@ async function procesarEtiquetaMLArchivo(file){
     else if(adj && filas.length===1){ f.etiquetaPdf=adj.etiquetaPdf; f.etiquetaPdfNombre=adj.etiquetaPdfNombre; }
     if(paginasDetalle[f.ref]) f.hojaDetalle=paginasDetalle[f.ref];   // hoja de picking, para previsualizar sin abrir el PDF
     const rr=sugerirRuta(f.provincia,f.ciudad); f.origen=(rr&&rr.origen)||"bsas";
-    if(llegaCadete(f)){ f.metodo="cadete"; f.correo=""; } else { f.metodo="correo"; f.correo="Correo Argentino"; }
+    // en Mercado Libre, lo que no es Flex ni Pickit lo entregás vos en un Punto de Despacho de ML
+    // (no es "Correo Argentino" propiamente — el usuario lo aclaró 2026-09-24)
+    if(llegaCadete(f)){ f.metodo="cadete"; f.correo=""; } else { f.metodo="correo"; f.correo="Punto de Despacho"; }
     return f; };
   let resultado=filas.filter(f=>!f.ref||!refsActivas.has(f.ref)).map(armar);
   if(!resultado.length){
