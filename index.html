@@ -330,6 +330,8 @@ hr{border:none;border-top:.5px solid var(--border);margin:20px 0}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
 <!-- ZXing: lector de códigos de barras por cámara (funciona en Android y iPhone) -->
 <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.20.0/umd/index.min.js"></script>
+<!-- jsQR: lector de QR en fotos ya sacadas (más confiable que ZXing para esto, probado con etiquetas reales) -->
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 
 
 <script>
@@ -1057,16 +1059,27 @@ async function leerCodigosDeFoto(file){
   const canvasDe=(r,max)=>{ const sw=W*r[2], sh=H*r[3], k=Math.min(1,max/Math.max(sw,sh));
     const c=document.createElement("canvas"); c.width=Math.round(sw*k); c.height=Math.round(sh*k);
     c.getContext("2d").drawImage(img,W*r[0],H*r[1],sw,sh,0,0,c.width,c.height); return c; };
+  // agranda un canvas SIN suavizado (para no emborronar los bordes de los módulos) — ayuda mucho
+  // cuando el código sale chico dentro de la foto
+  const agrandado=(c,escala)=>{ const c2=document.createElement("canvas"); c2.width=c.width*escala; c2.height=c.height*escala;
+    const ctx2=c2.getContext("2d"); ctx2.imageSmoothingEnabled=false; ctx2.drawImage(c,0,0,c2.width,c2.height); return c2; };
   for(const r of recortes){
     const c=canvasDe(r,1600);
-    if("BarcodeDetector" in window){
+    // jsQR primero: en fotos reales (no escaneos limpios) encuentra el QR mucho más seguido que
+    // ZXing o el BarcodeDetector nativo (probado contra etiquetas reales de despacho)
+    if(typeof jsQR!=="undefined"){
+      for(const cc of [c, agrandado(c,2)]){
+        const ctx=cc.getContext("2d"); const id=ctx.getImageData(0,0,cc.width,cc.height);
+        const res=jsQR(id.data,id.width,id.height,{inversionAttempts:"attemptBoth"});
+        if(res && res.data){ out.add(res.data); break; }
+      }
+    }
+    if(!out.size && "BarcodeDetector" in window){
       try{ const det=new BarcodeDetector(); (await det.detect(c)).forEach(x=>x.rawValue&&out.add(x.rawValue)); }catch(e){}
     }
     if(!out.size && typeof ZXing!=="undefined"){
       const hints=new Map(); hints.set(ZXing.DecodeHintType.TRY_HARDER,true);
       const intentar=async dataUrl=>{
-        // el lector específico de QR encuentra códigos en fotos reales que el multi-formato genérico
-        // se pierde (probado con etiquetas reales: el genérico solo, sin esto, fallaba siempre)
         try{ const rd=new ZXing.BrowserQRCodeReader(hints); const res=await rd.decodeFromImageUrl(dataUrl); if(res) out.add(res.getText()); }catch(e){}
         if(!out.size){
           try{ const rd=new ZXing.BrowserMultiFormatReader(hints);
@@ -1074,13 +1087,7 @@ async function leerCodigosDeFoto(file){
         }
       };
       await intentar(c.toDataURL("image/png"));
-      // si el código sale chico dentro de la foto (pocos píxeles por cuadradito), agrandar SIN
-      // suavizado (para no emborronar los bordes) ayuda mucho a que el lector lo reconozca
-      if(!out.size){
-        const c2=document.createElement("canvas"); c2.width=c.width*2; c2.height=c.height*2;
-        const ctx2=c2.getContext("2d"); ctx2.imageSmoothingEnabled=false; ctx2.drawImage(c,0,0,c2.width,c2.height);
-        await intentar(c2.toDataURL("image/png"));
-      }
+      if(!out.size) await intentar(agrandado(c,2).toDataURL("image/png"));
     }
     if(out.size) break;
   }
