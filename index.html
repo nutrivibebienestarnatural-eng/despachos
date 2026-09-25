@@ -1032,6 +1032,37 @@ async function marcarFotoRevisada(id){
   toast("Foto revisada ✓");
   vistaControl();
 }
+/* Si al revisar la foto ves que el contenido de la caja está mal (no la foto en sí), esto lo manda
+   a "Con problema" — mismo mecanismo que "Algo no coincide" durante el despacho. */
+async function reportarProblemaFoto(id){
+  const p=PEDIDOS.find(x=>x.id===id); if(!p) return;
+  const nota=prompt("¿Qué está mal? (ej: faltó 1 Hierro Bisglicinato, la foto no corresponde)","");
+  if(nota===null || !nota.trim()) return;
+  await DB.update(id,{despachoAviso:true, despachoAvisoVisto:false, despachoAvisoTs:Date.now(), despachoAvisoTxt:[nota.trim()], fotoRevisada:true});
+  telegramPedido(p, p.fotoPrep, "🚨 PROBLEMA DETECTADO AL REVISAR LA FOTO", [nota.trim()]);
+  toast("⚠ Reportado — aparece en Con problema");
+  vistaControl();
+}
+/* Canal de envío editable directo desde la revisión: Pickit / Cadete (Cardinal-Claudia) / Correo.
+   Así se chequea junto con la foto en el mismo lugar, sin ir a otra pantalla. */
+function envioActual(p){ return p.pickit?"pickit":(p.metodo==="cadete"?(p.cadete==="Claudia"?"claudia":"cardinal"):"correo"); }
+async function corregirCanalEnvio(id,val){
+  const p=PEDIDOS.find(x=>x.id===id)||await DB.get(id); if(!p) return;
+  if(val==="pickit") await DB.update(id,{pickit:true});
+  else if(val==="cardinal"||val==="claudia") await DB.update(id,{pickit:false, metodo:"cadete", cadete:val==="claudia"?"Claudia":"Cardinal", correo:""});
+  else await DB.update(id,{pickit:false, metodo:"correo", cadete:"", correo:p.canal==="ml_flex"?"Punto de Despacho":(p.correo||"Correo Argentino")});
+  toast("Canal de envío actualizado");
+  vistaControl();
+}
+function selectCanalEnvio(p){
+  const v=envioActual(p);
+  return `<select onchange="corregirCanalEnvio('${p.id}',this.value)" style="max-width:190px;font-size:12.5px">
+    <option value="pickit" ${v==="pickit"?'selected':''}>📦 Pickit</option>
+    <option value="cardinal" ${v==="cardinal"?'selected':''}>🚴 Cardinal</option>
+    <option value="claudia" ${v==="claudia"?'selected':''}>🚴 Claudia</option>
+    <option value="correo" ${v==="correo"?'selected':''}>📮 Correo</option>
+  </select>`;
+}
 /* Para el primer día de esta función: todo pedido con foto ya cargada aparece "sin revisar" porque
    el campo es nuevo. Este botón limpia de una el pendiente acumulado (solo dentro del filtro actual
    de fecha/empresa) para arrancar al día. */
@@ -1527,9 +1558,11 @@ function vistaControl(){
       <div style="min-width:0;flex:1">
         <div style="font-weight:650">${esc(p.cliente||'—')} <span class="muted" style="font-weight:400;font-size:12px">· ${esc(numOrden(p))} · ${esc(nombreEmp(p.empresa))}</span></div>
         <div style="font-size:12.5px;color:var(--text-2);margin-top:2px">${its.map(x=>x.cant+"× "+esc(x.prodNombre)).join(" · ")||'<span style="color:var(--red)">sin productos</span>'}</div>
+        <div style="margin-top:6px">${selectCanalEnvio(p)}</div>
         <div class="row" style="gap:6px;margin-top:8px">
           <button class="btn sm green" onclick="marcarFotoRevisada('${p.id}')">✓ OK</button>
           <label class="btn sm ghost" style="cursor:pointer">🔄 Cambiar foto<input type="file" accept="image/*" capture="environment" style="display:none" onchange="adjuntarFotoPedido('${p.id}',this.files[0]).then(()=>vistaControl());this.value=''"></label>
+          <button class="btn sm ghost" style="color:var(--red)" onclick="reportarProblemaFoto('${p.id}')">⚠ Reportar problema</button>
         </div>
       </div>
     </div>`; };
