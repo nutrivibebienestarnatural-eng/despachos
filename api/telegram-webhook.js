@@ -92,6 +92,24 @@ async function quitarDePendientes(pedidoId) {
   } catch (e) { console.error("quitarDePendientes:", e); }
 }
 
+// /hoy — resumen consolidado de todo lo que hay que juntar hoy, sumando todos los pedidos
+// pendientes (mismo criterio que la "Lista de pickeo" de la app), en tono bien relajado.
+async function mostrarResumenHoy(chatId) {
+  const pend = await pedidosPendientes();
+  if (!pend.length) {
+    await enviarTexto(chatId, "🎉 Posta que no hay nada pendiente ahora, Claudia — tranqui, no hay nada para buscar.");
+    return;
+  }
+  const totales = {};
+  pend.forEach(p => (p.items || []).forEach(i => { totales[i.nombre] = (totales[i.nombre] || 0) + (i.cant || 0); }));
+  const lista = Object.entries(totales).map(([nombre, cant]) => `• ${cant}x ${esc(nombre)}`).join("\n");
+  const totalUnidades = Object.values(totales).reduce((s, n) => s + n, 0);
+  await enviarTexto(chatId,
+    `👋 Hasta ahora tenés que buscar esto (entre los ${pend.length} pedido${pend.length === 1 ? "" : "s"} pendientes, ${totalUnidades} unidades en total):\n\n${lista}\n\n` +
+    `Cuando lo tengas todo, armamos pedido por pedido — tocá /pedidos.`,
+    [[{ text: "📦 Ver pedidos", callback_data: "lista" }]]);
+}
+
 async function mostrarLista(chatId) {
   const pend = await pedidosPendientes();
   if (!pend.length) return enviarTexto(chatId, "🎉 No hay pedidos pendientes de preparar en este momento.");
@@ -192,7 +210,7 @@ function formatearVeredicto(v, cliente) {
   if (!v) return "⚠ No pude leer bien la foto — probá con otra (que se vean todos los frascos, con buena luz).";
   cliente = esc(cliente);
   if (v.completo && !v.faltantes.length && !v.sobrantes.length) {
-    return `✅ Pedido de <b>${cliente}</b> completo. ${esc(v.comentario) || ""}`.trim();
+    return `✅ Por ahora está todo bien con el pedido de <b>${cliente}</b>. ${esc(v.comentario) || ""}`.trim();
   }
   let out = `⚠ Revisá el pedido de <b>${cliente}</b>:\n`;
   v.faltantes.forEach(f => { out += `• Falta ${f.esperado - f.detectado}x ${esc(f.producto)} (contás ${f.detectado} de ${f.esperado})\n`; });
@@ -295,8 +313,10 @@ module.exports = async (req, res) => {
     const texto = String(msg.text || "").trim().toLowerCase();
     if (texto === "/start" || texto === "/pedidos" || texto === "pedidos") {
       await mostrarLista(chatId);
+    } else if (texto === "/hoy" || texto === "hoy") {
+      await mostrarResumenHoy(chatId);
     } else {
-      await enviarTexto(chatId, "Mandá /pedidos para ver los pedidos pendientes y elegir uno.");
+      await enviarTexto(chatId, "Escribime /hoy para ver todo lo que hay que buscar, o /pedidos para elegir un pedido puntual 🙂");
     }
     return res.status(200).json({ ok: true });
   } catch (e) {
