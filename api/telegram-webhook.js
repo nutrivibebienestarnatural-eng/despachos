@@ -43,6 +43,22 @@ const Veredicto = z.object({
   comentario: z.string().describe("una frase corta y clara en español rioplatense para la persona que armó el pedido"),
 });
 
+const VeredictoAuto = z.object({
+  pedido_id: z.string().nullable().describe("el id EXACTO (tal cual aparece en la lista) del pedido que más corresponde a esta foto, según el nombre en la etiqueta de envío visible y/o los productos — null si ninguno coincide con una confianza razonable"),
+  cliente_detectado: z.string().describe("el nombre de cliente que se lee en la etiqueta de envío de la foto, tal cual aparece impreso (vacío si no se alcanza a leer ninguna etiqueta)"),
+  completo: z.boolean().describe("true si lo que se ve en la foto coincide con lo que ese pedido debía llevar (solo tiene sentido si pedido_id no es null)"),
+  faltantes: z.array(z.object({
+    producto: z.string(),
+    esperado: z.number(),
+    detectado: z.number(),
+  })),
+  sobrantes: z.array(z.object({
+    producto: z.string(),
+    detectado: z.number(),
+  })),
+  comentario: z.string().describe("una frase corta y clara en español rioplatense para la persona que armó el pedido"),
+});
+
 function chatsAutorizados() {
   return String(process.env.TELEGRAM_PICKEO_CHAT_IDS || "").split(",").map(s => s.trim()).filter(Boolean);
 }
@@ -109,6 +125,33 @@ async function verificarConIA(pedido, fotoBase64, mediaType) {
       ],
     }],
     output_config: { format: zodOutputFormat(Veredicto) },
+  });
+  return response.parsed_output;
+}
+
+async function detectarYVerificarConIA(pendientes, fotoBase64, mediaType) {
+  const client = new Anthropic();
+  const lista = pendientes.map(p =>
+    `id: ${p.id} | cliente: ${p.cliente || "—"} | productos: ${(p.items || []).map(i => `${i.cant}x ${i.nombre}`).join(", ") || "(sin productos cargados)"}`
+  ).join("\n");
+  const response = await client.messages.parse({
+    model: MODEL,
+    max_tokens: 1024,
+    messages: [{
+      role: "user",
+      content: [
+        { type: "image", source: { type: "base64", media_type: mediaType, data: fotoBase64 } },
+        {
+          type: "text", text:
+            `Esta es una foto de un pedido de suplementos ya armado, listo para despachar. Puede tener una etiqueta de envío visible con el nombre del cliente.\n\n` +
+            `Pedidos pendientes de preparar hoy (elegí cuál de estos corresponde a la foto, por el nombre de la etiqueta y/o los productos visibles):\n${lista}\n\n` +
+            `Devolvé el id EXACTO del pedido que corresponda (tal cual aparece arriba, después de "id: "), o null si ninguno coincide con confianza razonable. ` +
+            `Después, comparando contra lo que ESE pedido debía llevar, contá los frascos/cajas visibles. ` +
+            `Si algún producto no se ve con claridad, no lo des por sentado como faltante: decilo en el comentario en vez de marcarlo como faltante.`,
+        },
+      ],
+    }],
+    output_config: { format: zodOutputFormat(VeredictoAuto) },
   });
   return response.parsed_output;
 }
@@ -186,23 +229,38 @@ module.exports = async (req, res) => {
 
     // 2) Mandó una foto
     if (msg.photo && msg.photo.length) {
-      const espera = await kvGet("telegram_wait:" + chatId);
-      if (!espera) {
-        await enviarTexto(chatId, "Primero elegí un pedido con /pedidos, y después mandame la foto.");
-        return res.status(200).json({ ok: true });
-      }
       const pend = await pedidosPendientes();
-      const pedido = pend.find(p => p.id === espera.pedidoId);
-      if (!pedido) {
-        await enviarTexto(chatId, "Ese pedido ya no está pendiente. Mandá /pedidos de nuevo.");
+      if (!pend.length) {
+        await enviarTexto(chatId, "No hay pedidos pendientes cargados ahora — abrí la app un momento para que sincronice, y volvé a mandar la foto.");
         return res.status(200).json({ ok: true });
       }
-      await enviarTexto(chatId, "🔍 Revisando la foto…");
+      const espera = await kvGet("telegram_wait:" + chatId);
       const mejor = msg.photo[msg.photo.length - 1];   // la de mayor resolución
       const { base64, mediaType } = await descargarFotoBase64(mejor.file_id);
-      const veredicto = await verificarConIA(pedido, base64, mediaType);
-      await enviarTexto(chatId, formatearVeredicto(veredicto, pedido.cliente));
+
+      let pedido = espera && pend.find(p => p.id === espera.pedidoId);
+      let veredicto, aviso = "";
+
+      if (pedido) {
+        // ya había elegido el pedido con /pedidos: comparación directa, más rápida
+        await enviarTexto(chatId, "🔍 Revisando la foto…");
+        veredicto = await verificarConIA(pedido, base64, mediaType);
+      } else {
+        // no eligió nada antes: que la IA detecte solo de qué pedido es, por la etiqueta
+        await enviarTexto(chatId, "🔍 Buscando de qué pedido es esta foto…");
+        veredicto = await detectarYVerificarConIA(pend, base64, mediaType);
+        pedido = pend.find(p => p.id === veredicto.pedido_id);
+        if (!pedido) {
+          const leido = veredicto.cliente_detectado ? ` (leí algo como "${esc(veredicto.cliente_detectado)}" en la etiqueta, pero no coincide con ningún pendiente)` : "";
+          await enviarTexto(chatId, `🤔 No pude reconocer con seguridad de qué pedido es esta foto${leido}. Mandá /pedidos y elegí el pedido antes de mandar la foto.`);
+          return res.status(200).json({ ok: true });
+        }
+        aviso = `🔎 Detecté que es el pedido de <b>${esc(pedido.cliente || "—")}</b>.\n\n`;
+      }
+
+      await enviarTexto(chatId, aviso + formatearVeredicto(veredicto, pedido.cliente));
       await guardarFotoParaLaApp(pedido, base64, mediaType, veredicto);
+      await kvSet("telegram_wait:" + chatId, null);   // ya se usó (o ya se resolvió solo): no arrastrarlo a la próxima foto
       return res.status(200).json({ ok: true });
     }
 
