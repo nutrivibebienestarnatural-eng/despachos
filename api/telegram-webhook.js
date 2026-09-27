@@ -30,6 +30,8 @@ const MODEL = "claude-sonnet-5";
 const esc = s => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 const Veredicto = z.object({
+  etiqueta_coincide: z.boolean().describe("false SOLO si hay una etiqueta de envío visible y legible que dice claramente OTRO nombre de cliente (no este); true si coincide, o si no hay etiqueta visible, o no se alcanza a leer bien"),
+  cliente_en_etiqueta: z.string().describe("el nombre que se lee en la etiqueta de envío, tal cual impreso (vacío si no hay etiqueta visible o no se lee)"),
   completo: z.boolean().describe("true si lo que se ve en la foto coincide con lo que el pedido debía llevar"),
   faltantes: z.array(z.object({
     producto: z.string(),
@@ -144,8 +146,10 @@ async function verificarConIA(pedido, fotoBase64, mediaType) {
         { type: "image", source: { type: "base64", media_type: mediaType, data: fotoBase64 } },
         {
           type: "text", text:
-            `Esta es una foto de un pedido de suplementos ya armado, listo para despachar.\n\n` +
-            `Lo que ESTE pedido debía llevar:\n${listaEsperada}\n\n` +
+            `Esta foto debería ser el pedido de "${pedido.cliente || "—"}", ya armado, listo para despachar.\n\n` +
+            `Primero: si hay una etiqueta de envío visible y se lee el nombre del destinatario, fijate si coincide con "${pedido.cliente || "—"}" ` +
+            `— si dice claramente OTRO nombre, marcalo (puede ser que se mezcló con otro pedido). Si no hay etiqueta visible o no se lee bien, no lo marques como error.\n\n` +
+            `Después: lo que ESTE pedido debía llevar:\n${listaEsperada}\n\n` +
             `Mirá los frascos/cajas visibles en la foto y contralos contra esa lista. ` +
             `Si algún producto no se ve con claridad (tapado, de espaldas, etc.), no lo des por sentado como faltante: ` +
             `decilo en el comentario en vez de marcarlo como faltante. Respondé solo con el resultado de la comparación.`,
@@ -203,13 +207,17 @@ async function guardarFotoParaLaApp(pedido, base64, mediaType, veredicto) {
 }
 
 function esCompleto(v) {
-  return !!(v && v.completo && !v.faltantes.length && !v.sobrantes.length);
+  return !!(v && v.completo && !v.faltantes.length && !v.sobrantes.length && v.etiqueta_coincide !== false);
 }
 
 function formatearVeredicto(v, cliente) {
   if (!v) return "⚠ No pude leer bien la foto — probá con otra (que se vean todos los frascos, con buena luz).";
   cliente = esc(cliente);
-  if (v.completo && !v.faltantes.length && !v.sobrantes.length) {
+  if (v.etiqueta_coincide === false) {
+    return `🚨 Ojo — la etiqueta de esta foto dice <b>${esc(v.cliente_en_etiqueta) || "otro nombre"}</b>, no ${cliente}. ` +
+      `¿Se mezcló con otro pedido? Fijate bien antes de seguir.`;
+  }
+  if (esCompleto(v)) {
     return `✅ Por ahora está todo bien con el pedido de <b>${cliente}</b>. ${esc(v.comentario) || ""}`.trim();
   }
   let out = `⚠ Revisá el pedido de <b>${cliente}</b>:\n`;
