@@ -6062,10 +6062,17 @@ async function revisarFotosTelegram(){
     const r=await fetch("/api/telegram-fotos"); const data=await r.json().catch(()=>({}));
     const fotos=(data&&data.fotos)||[];
     for(const f of fotos){
-      if(!PEDIDOS.some(x=>x.id===f.pedidoId)) continue;   // el pedido ya no existe: lo salteo
+      const p=PEDIDOS.find(x=>x.id===f.pedidoId); if(!p) continue;   // el pedido ya no existe: lo salteo
       try{
         await guardarFotoPedido(f.pedidoId, f.foto);
-        await DB.update(f.pedidoId,{telegramVeredicto:f.veredicto||""});
+        if(f.completo && p.estado==="pendiente"){
+          // la IA dio todo OK: avanza sola a Preparado (descuenta stock) — sin esperar que alguien
+          // la confirme a mano en Control, así el circuito por Telegram queda de punta a punta.
+          await DB.update(f.pedidoId,{telegramVeredicto:f.veredicto||"", fotoRevisada:true});
+          await avanzar(f.pedidoId,"preparado","Preparado automático (verificado por foto + IA vía Telegram)");
+        } else {
+          await DB.update(f.pedidoId,{telegramVeredicto:f.veredicto||""});
+        }
       }catch(e){ console.warn("foto de Telegram no guardada:", f.pedidoId, e); }
     }
   }catch(e){ /* sync en segundo plano: si falla, no afecta el resto de la app */ }

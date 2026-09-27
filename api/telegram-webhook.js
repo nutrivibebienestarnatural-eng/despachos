@@ -161,11 +161,13 @@ async function detectarYVerificarConIA(pendientes, fotoBase64, mediaType) {
 // (aparece sola en Control, con el mismo botón "OK" / "Reportar problema" de siempre).
 async function guardarFotoParaLaApp(pedido, base64, mediaType, veredicto) {
   try {
+    const completo = !!(veredicto && veredicto.completo && !veredicto.faltantes.length && !veredicto.sobrantes.length);
     const cola = (await kvGet("telegram_fotos_pendientes")) || [];
     cola.push({
       pedidoId: pedido.id,
       foto: `data:${mediaType};base64,${base64}`,
       veredicto: veredicto ? formatearVeredicto(veredicto, pedido.cliente).replace(/<\/?b>/g, "") : "",
+      completo,   // si la IA dio todo OK, la app avanza el pedido solo a "Preparado" (y descuenta stock)
       ts: Date.now(),
     });
     await kvSet("telegram_fotos_pendientes", cola.slice(-30));   // tope de seguridad
@@ -192,12 +194,13 @@ module.exports = async (req, res) => {
     const update = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
     const autorizados = chatsAutorizados();
 
-    // 1) Tocó un botón: eligió un pedido
+    // 1) Tocó un botón: eligió un pedido, o pidió ver la lista de nuevo
     if (update.callback_query) {
       const cq = update.callback_query;
       const chatId = String(cq.message.chat.id);
       await tg("answerCallbackQuery", { callback_query_id: cq.id });
       if (!autorizados.includes(chatId)) return res.status(200).json({ ok: true });
+      if (cq.data === "lista") { await mostrarLista(chatId); return res.status(200).json({ ok: true }); }
       const m = /^p:(.+)$/.exec(cq.data || "");
       if (!m) return res.status(200).json({ ok: true });
       const pend = await pedidosPendientes();
@@ -258,7 +261,8 @@ module.exports = async (req, res) => {
         aviso = `🔎 Detecté que es el pedido de <b>${esc(pedido.cliente || "—")}</b>.\n\n`;
       }
 
-      await enviarTexto(chatId, aviso + formatearVeredicto(veredicto, pedido.cliente));
+      await enviarTexto(chatId, aviso + formatearVeredicto(veredicto, pedido.cliente),
+        [[{ text: "➡️ Siguiente pedido", callback_data: "lista" }]]);
       await guardarFotoParaLaApp(pedido, base64, mediaType, veredicto);
       await kvSet("telegram_wait:" + chatId, null);   // ya se usó (o ya se resolvió solo): no arrastrarlo a la próxima foto
       return res.status(200).json({ ok: true });
