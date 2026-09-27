@@ -161,7 +161,7 @@ async function detectarYVerificarConIA(pendientes, fotoBase64, mediaType) {
 // (aparece sola en Control, con el mismo botón "OK" / "Reportar problema" de siempre).
 async function guardarFotoParaLaApp(pedido, base64, mediaType, veredicto) {
   try {
-    const completo = !!(veredicto && veredicto.completo && !veredicto.faltantes.length && !veredicto.sobrantes.length);
+    const completo = esCompleto(veredicto);
     const cola = (await kvGet("telegram_fotos_pendientes")) || [];
     cola.push({
       pedidoId: pedido.id,
@@ -172,6 +172,10 @@ async function guardarFotoParaLaApp(pedido, base64, mediaType, veredicto) {
     });
     await kvSet("telegram_fotos_pendientes", cola.slice(-30));   // tope de seguridad
   } catch (e) { console.error("guardarFotoParaLaApp:", e); /* si falla, igual ya le contestamos a la persona */ }
+}
+
+function esCompleto(v) {
+  return !!(v && v.completo && !v.faltantes.length && !v.sobrantes.length);
 }
 
 function formatearVeredicto(v, cliente) {
@@ -261,10 +265,18 @@ module.exports = async (req, res) => {
         aviso = `🔎 Detecté que es el pedido de <b>${esc(pedido.cliente || "—")}</b>.\n\n`;
       }
 
-      await enviarTexto(chatId, aviso + formatearVeredicto(veredicto, pedido.cliente),
-        [[{ text: "➡️ Siguiente pedido", callback_data: "lista" }]]);
+      if (esCompleto(veredicto)) {
+        await enviarTexto(chatId, aviso + formatearVeredicto(veredicto, pedido.cliente),
+          [[{ text: "➡️ Siguiente pedido", callback_data: "lista" }]]);
+        await kvSet("telegram_wait:" + chatId, null);   // este pedido ya quedó resuelto: no lo arrastro a la próxima foto
+      } else {
+        // algo no coincide: NO se ofrece pasar a otro pedido — se re-arma el mismo, hasta que
+        // la foto corregida dé bien (o alguien lo revise a mano en Control).
+        await kvSet("telegram_wait:" + chatId, { pedidoId: pedido.id, ts: Date.now() });
+        await enviarTexto(chatId, aviso + formatearVeredicto(veredicto, pedido.cliente) +
+          `\n\n🔧 Corregí el pedido de <b>${esc(pedido.cliente || "—")}</b> y mandame la foto de nuevo antes de seguir con otro.`);
+      }
       await guardarFotoParaLaApp(pedido, base64, mediaType, veredicto);
-      await kvSet("telegram_wait:" + chatId, null);   // ya se usó (o ya se resolvió solo): no arrastrarlo a la próxima foto
       return res.status(200).json({ ok: true });
     }
 
