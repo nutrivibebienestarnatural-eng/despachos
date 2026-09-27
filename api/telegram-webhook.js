@@ -25,6 +25,10 @@ const { kvGet, kvSet } = require("./_lib/kv");
 
 const MODEL = "claude-sonnet-5";
 
+// Telegram con parse_mode HTML rechaza el mensaje entero si el texto tiene "<", ">" o "&" sueltos
+// (por ejemplo, un nombre de cliente con esos caracteres) — escapo lo que viene de datos.
+const esc = s => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
 const Veredicto = z.object({
   completo: z.boolean().describe("true si lo que se ve en la foto coincide con lo que el pedido debía llevar"),
   faltantes: z.array(z.object({
@@ -111,13 +115,14 @@ async function verificarConIA(pedido, fotoBase64, mediaType) {
 
 function formatearVeredicto(v, cliente) {
   if (!v) return "⚠ No pude leer bien la foto — probá con otra (que se vean todos los frascos, con buena luz).";
+  cliente = esc(cliente);
   if (v.completo && !v.faltantes.length && !v.sobrantes.length) {
-    return `✅ Pedido de <b>${cliente}</b> completo. ${v.comentario || ""}`.trim();
+    return `✅ Pedido de <b>${cliente}</b> completo. ${esc(v.comentario) || ""}`.trim();
   }
   let out = `⚠ Revisá el pedido de <b>${cliente}</b>:\n`;
-  v.faltantes.forEach(f => { out += `• Falta ${f.esperado - f.detectado}x ${f.producto} (contás ${f.detectado} de ${f.esperado})\n`; });
-  v.sobrantes.forEach(s => { out += `• De más: ${s.detectado}x ${s.producto} (no estaba en el pedido)\n`; });
-  if (v.comentario) out += `\n${v.comentario}`;
+  v.faltantes.forEach(f => { out += `• Falta ${f.esperado - f.detectado}x ${esc(f.producto)} (contás ${f.detectado} de ${f.esperado})\n`; });
+  v.sobrantes.forEach(s => { out += `• De más: ${s.detectado}x ${esc(s.producto)} (no estaba en el pedido)\n`; });
+  if (v.comentario) out += `\n${esc(v.comentario)}`;
   return out;
 }
 
@@ -143,7 +148,10 @@ module.exports = async (req, res) => {
         return res.status(200).json({ ok: true });
       }
       await kvSet("telegram_wait:" + chatId, { pedidoId: pedido.id, ts: Date.now() });
-      await enviarTexto(chatId, `📷 Mandame la foto del pedido de <b>${pedido.cliente || "—"}</b> ya armado.`);
+      const lista = (pedido.items || []).map(i => `• ${i.cant}x ${esc(i.nombre)}`).join("\n") || "(sin productos cargados)";
+      await enviarTexto(chatId,
+        `🧺 <b>Andá a buscar esto para ${esc(pedido.cliente || "—")}:</b>\n${lista}\n\n` +
+        `📷 Cuando lo armes, mandame la foto del pedido acá mismo.`);
       return res.status(200).json({ ok: true });
     }
 
