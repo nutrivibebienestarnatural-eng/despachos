@@ -5,6 +5,6 @@
 // rechaza igual /orders/search si el "seller" no es exactamente el dueño real de la cuenta.
 
 module.exports = {
-  nutrivibe: "153084590",
+  nutrivibe: "3177810946",
   suplemundo: "3660784748",
 };
