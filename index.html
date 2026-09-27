@@ -6095,6 +6095,29 @@ async function crearComprasPrueba(){
   toast("✓ 3 compras de prueba creadas");
   OPVIEW="hoy"; vistaOperador();
 }
+/* 5 pedidos de prueba combinando AKG / NMN / ZMA, para probar el bot de Telegram del pickeo
+   (detección de a quién corresponde la foto + comparación de productos). Quedan marcados
+   esPrueba:true, así los borra el mismo botón "Borrar compras de prueba". */
+async function crearPedidosPruebaTelegram(){
+  if(!await askConfirm("Voy a crear 5 pedidos de PRUEBA combinando AKG / NMN / ZMA, para probar el bot de Telegram. Después los borrás con \"Borrar compras de prueba\". ¿Dale?")) return;
+  const base={tipo:"pedido", empresa:"nutrivibe", canal:"ml_flex", estado:"pendiente", esPrueba:true,
+    dir:"Depósito de prueba", ciudad:"CABA", provincia:"CABA", tel:"", metodo:"cadete", origen:"bsas"};
+  const datos=[
+    {cliente:"🧪 PRUEBA - Ana Gómez",   prods:[{nombre:"AKG",cant:2},{nombre:"NMN",cant:1}]},
+    {cliente:"🧪 PRUEBA - Bruno Díaz",  prods:[{nombre:"ZMA",cant:1},{nombre:"NMN",cant:1}]},
+    {cliente:"🧪 PRUEBA - Carla Ruiz",  prods:[{nombre:"AKG",cant:3}]},
+    {cliente:"🧪 PRUEBA - Diego Paz",   prods:[{nombre:"AKG",cant:1},{nombre:"ZMA",cant:1},{nombre:"NMN",cant:1}]},
+    {cliente:"🧪 PRUEBA - Elena Sosa",  prods:[{nombre:"ZMA",cant:2}]},
+  ];
+  for(const d of datos){
+    const items=d.prods.map(p=>p.cant+"x "+p.nombre).join(" · ");
+    const ts=Date.now();
+    await DB.create(Object.assign({},base,{ cliente:d.cliente, items, prods:d.prods, creado:ts,
+      eventos:[{estado:"pendiente",ts,nota:"Pedido de PRUEBA (Telegram) creado"}] }));
+  }
+  toast("✓ 5 pedidos de prueba creados");
+  OPVIEW="hoy"; vistaOperador();
+}
 async function borrarComprasPrueba(){
   const pruebas=PEDIDOS.filter(p=>p.esPrueba);
   if(!pruebas.length){ toast("No hay compras de prueba"); return; }
@@ -6374,6 +6397,7 @@ function vistaStock(){
       <button class="btn ghost" onclick="OPVIEW='minimos';vistaOperador()">🎯 Calcular mínimos según ventas</button>
       <button class="btn ghost" onclick="OPVIEW='cupones';vistaOperador()">🎟️ Cupones de fidelización</button>
       <button class="btn ghost" onclick="crearComprasPrueba()">🧪 Crear 3 compras de prueba</button>
+      <button class="btn ghost" onclick="crearPedidosPruebaTelegram()">🧪 Crear 5 pedidos de prueba (AKG/NMN/ZMA, para el bot)</button>
       ${PEDIDOS.some(p=>p.esPrueba)?`<button class="btn ghost" style="color:var(--red)" onclick="borrarComprasPrueba()">🗑️ Borrar compras de prueba</button>`:''}
       <button class="btn ghost" onclick="repararProdsPedidos()">🔧 Reparar productos de pedidos</button>
       <button class="btn ghost" onclick="imprimirReposicion()">${icon('printer')} Planilla de reposición</button>
