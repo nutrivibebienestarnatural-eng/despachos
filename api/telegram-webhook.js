@@ -82,6 +82,16 @@ async function pedidosPendientes() {
   return Array.isArray(arr) ? arr : [];
 }
 
+// Lo saca YA de la lista de pendientes en cuanto la IA confirma que quedó completo — sin esto,
+// hasta que la app no sincroniza de vuelta (unos segundos), seguiría apareciendo en /pedidos.
+async function quitarDePendientes(pedidoId) {
+  try {
+    const pend = await pedidosPendientes();
+    const quedan = pend.filter(p => p.id !== pedidoId);
+    if (quedan.length !== pend.length) await kvSet("pending_orders", quedan);
+  } catch (e) { console.error("quitarDePendientes:", e); }
+}
+
 async function mostrarLista(chatId) {
   const pend = await pedidosPendientes();
   if (!pend.length) return enviarTexto(chatId, "🎉 No hay pedidos pendientes de preparar en este momento.");
@@ -269,6 +279,7 @@ module.exports = async (req, res) => {
         await enviarTexto(chatId, aviso + formatearVeredicto(veredicto, pedido.cliente),
           [[{ text: "➡️ Siguiente pedido", callback_data: "lista" }]]);
         await kvSet("telegram_wait:" + chatId, null);   // este pedido ya quedó resuelto: no lo arrastro a la próxima foto
+        await quitarDePendientes(pedido.id);
       } else {
         // algo no coincide: NO se ofrece pasar a otro pedido — se re-arma el mismo, hasta que
         // la foto corregida dé bien (o alguien lo revise a mano en Control).
