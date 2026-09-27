@@ -13,16 +13,8 @@
 // y conectar cada marca una vez desde /api/ml-connect?empresa=nombre).
 
 const { kvGet, kvSet } = require("./_lib/kv");
+const SELLER_ID = require("./_lib/sellerIds");
 const API_BASE = "https://api.mercadolibre.com";
-
-// ID de vendedor de ML de cada marca (el mismo que ya usa index.html en VENDEDOR_ML para
-// detectar la marca en las etiquetas). Se usa este ID fijo — y NO el "user_id" que devuelve
-// el login — porque si quien conecta la cuenta es un usuario COLABORADOR (no el dueño), ese
-// user_id es el del colaborador, no el de la marca, y las órdenes no aparecerían.
-const SELLER_ID = {
-  nutrivibe: "3177810946",
-  suplemundo: "3660784748",
-};
 
 async function tokenValido(empresa) {
   const key = "ml_tokens:" + empresa;

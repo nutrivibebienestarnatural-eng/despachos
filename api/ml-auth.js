@@ -9,6 +9,7 @@
 // Además hace falta tener un Vercel KV Store conectado a este proyecto (ver api/_lib/kv.js).
 
 const { kvSet } = require("./_lib/kv");
+const SELLER_ID = require("./_lib/sellerIds");
 const TOKEN_URL = "https://api.mercadolibre.com/oauth/token";
 
 function pagina(title, body) {
@@ -55,6 +56,16 @@ module.exports = async (req, res) => {
          <p>El código dura pocos minutos: volvé a tocar "Conectar con Mercado Libre" desde la app para generar uno nuevo.</p>`));
     }
 
+    const esperado = SELLER_ID[empresa];
+    if (esperado && String(data.user_id) !== String(esperado)) {
+      // NO lo guardo en KV: dejar el token viejo (si había uno bueno) intacto en vez de
+      // pisarlo con uno que sabemos que Mercado Libre va a rechazar.
+      return res.status(200).send(pagina("Cuenta equivocada",
+        `<h2>⚠️ Esta NO es la cuenta de ${empresa}</h2>
+         <p>Te conectaste como el usuario <b>#${data.user_id}</b>, pero la cuenta vendedora de <b>${empresa}</b> es la <b>#${esperado}</b> (la que aparece en sus etiquetas de Flex). Mercado Libre va a rechazar los pedidos con este login, así que no lo guardé.</p>
+         <p>Cerrá sesión de Mercado Libre en el navegador (o abrí una ventana de incógnito), entrá con la cuenta que realmente es dueña de la tienda de ${empresa}, y volvé a tocar "Conectar con Mercado Libre" desde la app.</p>`));
+    }
+
     await kvSet("ml_tokens:" + empresa, {
       access_token: data.access_token,
       refresh_token: data.refresh_token,
@@ -64,7 +75,7 @@ module.exports = async (req, res) => {
 
     return res.status(200).send(pagina("¡Conectado!",
       `<h2>✅ ${empresa} conectada con Mercado Libre</h2>
-       <p>Conectado como usuario #${data.user_id} (dueño de la cuenta o colaborador autorizado). Ya podés cerrar esta pestaña y volver a la app — en <b>Importar pedidos</b> vas a poder traer los pedidos de esta marca con un botón, sin subir etiquetas a mano.</p>`));
+       <p>Conectado como usuario #${data.user_id}${esperado ? " — coincide con la cuenta vendedora esperada" : ""}. Ya podés cerrar esta pestaña y volver a la app — en <b>Importar pedidos</b> vas a poder traer los pedidos de esta marca con un botón, sin subir etiquetas a mano.</p>`));
   } catch (e) {
     return res.status(500).send(pagina("Error",
       `<h2>Hubo un error</h2><div class="box"><code>${String(e && e.message || e)}</code></div>`));
