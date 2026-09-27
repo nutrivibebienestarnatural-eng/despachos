@@ -64,7 +64,7 @@ module.exports = async (req, res) => {
 
     return res.status(200).send(pagina("¡Conectado!",
       `<h2>✅ ${empresa} conectada con Mercado Libre</h2>
-       <p>Vendedor #${data.user_id}. Ya podés cerrar esta pestaña y volver a la app — en <b>Importar pedidos</b> vas a poder traer los pedidos de esta marca con un botón, sin subir etiquetas a mano.</p>`));
+       <p>Conectado como usuario #${data.user_id} (dueño de la cuenta o colaborador autorizado). Ya podés cerrar esta pestaña y volver a la app — en <b>Importar pedidos</b> vas a poder traer los pedidos de esta marca con un botón, sin subir etiquetas a mano.</p>`));
   } catch (e) {
     return res.status(500).send(pagina("Error",
       `<h2>Hubo un error</h2><div class="box"><code>${String(e && e.message || e)}</code></div>`));

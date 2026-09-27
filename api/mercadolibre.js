@@ -15,6 +15,15 @@
 const { kvGet, kvSet } = require("./_lib/kv");
 const API_BASE = "https://api.mercadolibre.com";
 
+// ID de vendedor de ML de cada marca (el mismo que ya usa index.html en VENDEDOR_ML para
+// detectar la marca en las etiquetas). Se usa este ID fijo — y NO el "user_id" que devuelve
+// el login — porque si quien conecta la cuenta es un usuario COLABORADOR (no el dueño), ese
+// user_id es el del colaborador, no el de la marca, y las órdenes no aparecerían.
+const SELLER_ID = {
+  nutrivibe: "3177810946",
+  suplemundo: "3660784748",
+};
+
 async function tokenValido(empresa) {
   const key = "ml_tokens:" + empresa;
   const t = await kvGet(key);
@@ -77,10 +86,12 @@ function mapearPedido(o, ship, empresa) {
 
 async function traerPedidos(empresa, desde) {
   const t = await tokenValido(empresa);
+  const sellerId = SELLER_ID[empresa];
+  if (!sellerId) throw new Error("No tengo el ID de vendedor de ML de '" + empresa + "'. Falta agregarlo en api/mercadolibre.js (SELLER_ID).");
   const filtroFecha = desde ? `&order.date_created.from=${encodeURIComponent(desde + "T00:00:00.000-03:00")}` : "";
   const out = [];
   for (let offset = 0; offset < 500; offset += 50) {
-    const url = `${API_BASE}/orders/search?seller=${t.user_id}&order.status=paid&sort=date_desc&limit=50&offset=${offset}${filtroFecha}`;
+    const url = `${API_BASE}/orders/search?seller=${sellerId}&order.status=paid&sort=date_desc&limit=50&offset=${offset}${filtroFecha}`;
     const r = await fetch(url, { headers: mlHeaders(t.access_token) });
     if (!r.ok) {
       const txt = await r.text();
