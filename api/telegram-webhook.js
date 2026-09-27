@@ -113,6 +113,22 @@ async function verificarConIA(pedido, fotoBase64, mediaType) {
   return response.parsed_output;
 }
 
+// Deja la foto + veredicto en una cola en KV para que la app (abierta en el navegador) la
+// levante y la guarde en el pedido — igual que si alguien hubiera subido esa foto a mano
+// (aparece sola en Control, con el mismo botón "OK" / "Reportar problema" de siempre).
+async function guardarFotoParaLaApp(pedido, base64, mediaType, veredicto) {
+  try {
+    const cola = (await kvGet("telegram_fotos_pendientes")) || [];
+    cola.push({
+      pedidoId: pedido.id,
+      foto: `data:${mediaType};base64,${base64}`,
+      veredicto: veredicto ? formatearVeredicto(veredicto, pedido.cliente).replace(/<\/?b>/g, "") : "",
+      ts: Date.now(),
+    });
+    await kvSet("telegram_fotos_pendientes", cola.slice(-30));   // tope de seguridad
+  } catch (e) { console.error("guardarFotoParaLaApp:", e); /* si falla, igual ya le contestamos a la persona */ }
+}
+
 function formatearVeredicto(v, cliente) {
   if (!v) return "⚠ No pude leer bien la foto — probá con otra (que se vean todos los frascos, con buena luz).";
   cliente = esc(cliente);
@@ -186,6 +202,7 @@ module.exports = async (req, res) => {
       const { base64, mediaType } = await descargarFotoBase64(mejor.file_id);
       const veredicto = await verificarConIA(pedido, base64, mediaType);
       await enviarTexto(chatId, formatearVeredicto(veredicto, pedido.cliente));
+      await guardarFotoParaLaApp(pedido, base64, mediaType, veredicto);
       return res.status(200).json({ ok: true });
     }
 

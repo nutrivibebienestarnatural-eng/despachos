@@ -1558,6 +1558,7 @@ function vistaControl(){
       <div style="min-width:0;flex:1">
         <div style="font-weight:650">${esc(p.cliente||'—')} <span class="muted" style="font-weight:400;font-size:12px">· ${esc(numOrden(p))} · ${esc(nombreEmp(p.empresa))}</span></div>
         <div style="font-size:12.5px;color:var(--text-2);margin-top:2px">${its.map(x=>x.cant+"× "+esc(x.prodNombre)).join(" · ")||'<span style="color:var(--red)">sin productos</span>'}</div>
+        ${p.telegramVeredicto?`<div style="font-size:12.5px;margin-top:5px;padding:6px 9px;border-radius:8px;background:${/falta|revisá|de más/i.test(p.telegramVeredicto)?'#ffe8e8':'#d9f2e5'};color:${/falta|revisá|de más/i.test(p.telegramVeredicto)?'#c62828':'#0f6b40'}">🤖 ${esc(p.telegramVeredicto)}</div>`:''}
         <div style="margin-top:6px">${selectCanalEnvio(p)}</div>
         <div class="row" style="gap:6px;margin-top:8px">
           <button class="btn sm green" onclick="marcarFotoRevisada('${p.id}')">✓ OK</button>
@@ -6053,6 +6054,22 @@ async function sincronizarPedidosTelegram(){
     await fetch("/api/telegram-sync",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({pedidos:datos})});
   }catch(e){ /* sync en segundo plano: si falla, no afecta el resto de la app */ }
 }
+/* Levanta las fotos que llegaron por el bot de Telegram (pickeo con IA) y las guarda en el
+   pedido correspondiente — quedan igual que si alguien las hubiera subido a mano, así aparecen
+   solas en Control con el veredicto de la IA como nota. */
+async function revisarFotosTelegram(){
+  try{
+    const r=await fetch("/api/telegram-fotos"); const data=await r.json().catch(()=>({}));
+    const fotos=(data&&data.fotos)||[];
+    for(const f of fotos){
+      if(!PEDIDOS.some(x=>x.id===f.pedidoId)) continue;   // el pedido ya no existe: lo salteo
+      try{
+        await guardarFotoPedido(f.pedidoId, f.foto);
+        await DB.update(f.pedidoId,{telegramVeredicto:f.veredicto||""});
+      }catch(e){ console.warn("foto de Telegram no guardada:", f.pedidoId, e); }
+    }
+  }catch(e){ /* sync en segundo plano: si falla, no afecta el resto de la app */ }
+}
 /* Agregar un producto nuevo al catálogo (se guarda en la nube) */
 function prodsExtra(){ const r=PEDIDOS.find(p=>p.tipo==="prodsExtra"); return (r&&r.lista)||[]; }
 /* ===== DATOS DE PRUEBA: 3 compras realistas para probar el circuito ===== */
@@ -7973,7 +7990,7 @@ function vistaSimulacion(){
   } else if((rolInit==="operador"||rolInit==="empleado"||rolInit==="despacho") && DB.modo==="firebase"){
     // empleada por link: sin login propio. Firestore igual pide sesión, así que entro como anónimo.
     AUTH_READY=true;
-    const arrancar=()=>{ if(!SUBSCRITO){ SUBSCRITO=true; DB.subscribe(d=>{ PEDIDOS=d; cargarProdsExtra(); sincronizarPedidosTelegram(); render(); }); } render(); };
+    const arrancar=()=>{ if(!SUBSCRITO){ SUBSCRITO=true; DB.subscribe(d=>{ PEDIDOS=d; cargarProdsExtra(); sincronizarPedidosTelegram(); revisarFotosTelegram(); render(); }); } render(); };
     firebase.auth().signInAnonymously()
       .then(arrancar)
       .catch(e=>{ console.warn("anonimo:", e);
@@ -7987,7 +8004,7 @@ function vistaSimulacion(){
           if(d.exists){ USERROL=d.data().rol||null;
             if(USERROL==="cadete") CADETE_ACTIVO=d.data().cadete||d.data().nombre||null; }
         }catch(e){ USERROL=null; }
-        if(USERROL && !SUBSCRITO){ SUBSCRITO=true; DB.subscribe(d=>{ PEDIDOS=d; cargarProdsExtra(); sincronizarPedidosTelegram(); render(); }); }
+        if(USERROL && !SUBSCRITO){ SUBSCRITO=true; DB.subscribe(d=>{ PEDIDOS=d; cargarProdsExtra(); sincronizarPedidosTelegram(); revisarFotosTelegram(); render(); }); }
       }
       AUTH_READY=true; render();
     });
