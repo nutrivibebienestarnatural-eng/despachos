@@ -6045,14 +6045,17 @@ function cargarProdsExtra(){
 let TG_SYNC_FIRMA="";
 async function sincronizarPedidosTelegram(){
   try{
-    const datos=soloPedidos().filter(p=>p.estado==="pendiente").map(p=>({
-      id:p.id, cliente:p.cliente||"",
-      items:(()=>{ try{ return itemsPedido(p).map(it=>({nombre:it.prodNombre||it.nombre, cant:it.cant})); }catch(e){ return []; } })(),
-    }));
-    const firma=JSON.stringify(datos);
+    const aItem=p=>({ id:p.id, cliente:p.cliente||"", estado:p.estado,
+      items:(()=>{ try{ return itemsPedido(p).map(it=>({nombre:it.prodNombre||it.nombre, cant:it.cant})); }catch(e){ return []; } })() });
+    const pendientes=soloPedidos().filter(p=>p.estado==="pendiente").map(aItem);
+    const haceUnDia=Date.now()-24*3600*1000;
+    // pedidos ya avanzados (preparado en adelante) de las últimas 24hs, para el modo "Chequear un
+    // pedido" del bot — permite releer una foto de algo ya armado y avisar si en realidad está mal.
+    const preparados=soloPedidos().filter(p=>p.estado!=="pendiente"&&p.estado!=="anulado"&&(p.creado||0)>=haceUnDia).map(aItem);
+    const firma=JSON.stringify([pendientes,preparados]);
     if(firma===TG_SYNC_FIRMA) return;   // sin cambios desde la última vez: no reenvío
     TG_SYNC_FIRMA=firma;
-    await fetch("/api/telegram-sync",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({pedidos:datos})});
+    await fetch("/api/telegram-sync",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({pedidos:pendientes,preparados})});
   }catch(e){ /* sync en segundo plano: si falla, no afecta el resto de la app */ }
 }
 /* Levanta las fotos que llegaron por el bot de Telegram (pickeo con IA) y las guarda en el

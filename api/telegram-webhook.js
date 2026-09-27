@@ -79,8 +79,27 @@ function enviarTexto(chatId, texto, teclado) {
   return tg("sendMessage", body);
 }
 
+// Menú fijo de botones, siempre visible abajo del chat — no hace falta escribir nada.
+// Un mensaje no puede tener a la vez teclado fijo (reply_markup keyboard) y botones inline
+// sobre el mensaje mismo; por eso se manda suelto, una vez, y Telegram lo deja puesto.
+function enviarMenuPrincipal(chatId) {
+  return tg("sendMessage", {
+    chat_id: chatId,
+    text: "Elegí una opción, o mandame directamente una foto 📷",
+    reply_markup: {
+      keyboard: [[{ text: "📅 Hoy" }, { text: "📦 A preparar" }], [{ text: "🔍 Chequear un pedido" }]],
+      resize_keyboard: true,
+    },
+  });
+}
+
 async function pedidosPendientes() {
   const arr = await kvGet("pending_orders");
+  return Array.isArray(arr) ? arr : [];
+}
+
+async function pedidosPreparadosRecientes() {
+  const arr = await kvGet("prepared_recent");
   return Array.isArray(arr) ? arr : [];
 }
 
@@ -272,6 +291,35 @@ module.exports = async (req, res) => {
 
     // 2) Mandó una foto
     if (msg.photo && msg.photo.length) {
+      // ¿Está en modo "Chequear un pedido"? Compara contra pendientes + ya preparados (últimas
+      // 24hs) — sirve para releer algo que YA se armó, por si en realidad tenía un error.
+      if (await kvGet("telegram_checkmode:" + chatId)) {
+        await kvSet("telegram_checkmode:" + chatId, null);
+        const combinados = (await pedidosPendientes()).concat(await pedidosPreparadosRecientes());
+        if (!combinados.length) {
+          await enviarTexto(chatId, "No tengo pedidos para comparar (ni pendientes ni preparados recientes) — abrí la app un momento y probá de nuevo.");
+          return res.status(200).json({ ok: true });
+        }
+        await enviarTexto(chatId, "🔍 Comparando la foto…");
+        const mejorChk = msg.photo[msg.photo.length - 1];
+        const { base64: b64chk, mediaType: mtchk } = await descargarFotoBase64(mejorChk.file_id);
+        const vChk = await detectarYVerificarConIA(combinados, b64chk, mtchk);
+        const pedChk = combinados.find(p => p.id === vChk.pedido_id);
+        if (!pedChk) {
+          const leido = vChk.cliente_detectado ? ` (leí algo como "${esc(vChk.cliente_detectado)}" en la etiqueta)` : "";
+          await enviarTexto(chatId, `🤔 No reconocí de qué pedido es esta foto${leido}. Probá con otra foto donde se vea bien la etiqueta.`);
+        } else if (esCompleto(vChk)) {
+          await enviarTexto(chatId, `✅ Repasé el pedido de <b>${esc(pedChk.cliente || "—")}</b> — está todo bien, tranqui.`);
+        } else {
+          const yaPreparado = pedChk.estado && pedChk.estado !== "pendiente";
+          const encabezado = yaPreparado
+            ? `😬 Fijate el pedido de <b>${esc(pedChk.cliente || "—")}</b>, parece que te equivocaste:\n\n`
+            : "";
+          await enviarTexto(chatId, encabezado + formatearVeredicto(vChk, pedChk.cliente));
+        }
+        return res.status(200).json({ ok: true });
+      }
+
       const pend = await pedidosPendientes();
       if (!pend.length) {
         await enviarTexto(chatId, "No hay pedidos pendientes cargados ahora — abrí la app un momento para que sincronice, y volvé a mandar la foto.");
@@ -317,12 +365,18 @@ module.exports = async (req, res) => {
       return res.status(200).json({ ok: true });
     }
 
-    // 3) Texto / comando
+    // 3) Texto / comando (incluye los botones del menú fijo, que mandan su propio texto)
     const texto = String(msg.text || "").trim().toLowerCase();
-    if (texto === "/start" || texto === "/pedidos" || texto === "pedidos") {
+    if (texto === "/start") {
+      await enviarMenuPrincipal(chatId);
       await mostrarLista(chatId);
-    } else if (texto === "/hoy" || texto === "hoy") {
+    } else if (texto === "/pedidos" || texto === "pedidos" || texto === "📦 a preparar") {
+      await mostrarLista(chatId);
+    } else if (texto === "/hoy" || texto === "hoy" || texto === "📅 hoy") {
       await mostrarResumenHoy(chatId);
+    } else if (texto === "/chequear" || texto === "🔍 chequear un pedido") {
+      await kvSet("telegram_checkmode:" + chatId, true);
+      await enviarTexto(chatId, "📷 Mandame la foto del pedido que querés chequear (puede ser uno que ya diste por armado).");
     } else {
       await enviarTexto(chatId, "Escribime /hoy para ver todo lo que hay que buscar, o /pedidos para elegir un pedido puntual 🙂");
     }
