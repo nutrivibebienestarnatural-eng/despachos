@@ -5134,9 +5134,12 @@ async function traerTiendaNube(){
           let prod=null, conflicto=false;
           if(pk && pk.comps && pk.comps.length){
             // mismo cuidado que en etiquetas ML: si es un vínculo simple, que no contradiga el nombre de esta venta
+            // NI la cantidad — el mismo SKU puede venderse suelto (x1) o en pack (x3): si el nombre de ESTE
+            // pedido dice "Pack x3" pero el SKU quedó vinculado como 1x1, no hay que confiar en lo viejo.
             const esAliasSimple = pk.comps.length===1 && (pk.comps[0].cant||1)===1;
-            const sugerido = esAliasSimple && x.nombre ? mejorProducto(packDeNombre(x.nombre).nombre) : null;
-            conflicto = !!(sugerido && sugerido.nombre!==pk.comps[0].prod);
+            const pn = esAliasSimple ? packDeNombre(x.nombre) : null;
+            const sugerido = esAliasSimple && x.nombre ? mejorProducto(pn.nombre) : null;
+            conflicto = !!(esAliasSimple && (pn.n>1 || (sugerido && sugerido.nombre!==pk.comps[0].prod)));
             if(!conflicto){ prods.push({nombre:x.nombre, cant:x.cant, sku:x.sku, reconocido:true}); return; }   // itemsPedido lo expande
           }
           for(const c of [x.barcode,x.sku]){ if(!prod && nb(c).length>=8) prod=prodPorBarcode(c); }
@@ -5189,9 +5192,12 @@ async function traerMercadoLibre(){
           const pk=packDef(x.sku, x.nombre);
           let prod=null, conflicto=false;
           if(pk && pk.comps && pk.comps.length){
+            // mismo SKU puede vender x1 o en pack x3: si ya está vinculado como 1x1 pero el nombre de
+            // ESTE pedido dice "Pack x3", no hay que confiar en lo viejo — se marca para revisar.
             const esAliasSimple = pk.comps.length===1 && (pk.comps[0].cant||1)===1;
-            const sugerido = esAliasSimple && x.nombre ? mejorProducto(packDeNombre(x.nombre).nombre) : null;
-            conflicto = !!(sugerido && sugerido.nombre!==pk.comps[0].prod);
+            const pn0 = esAliasSimple ? packDeNombre(x.nombre) : null;
+            const sugerido = esAliasSimple && x.nombre ? mejorProducto(pn0.nombre) : null;
+            conflicto = !!(esAliasSimple && (pn0.n>1 || (sugerido && sugerido.nombre!==pk.comps[0].prod)));
             if(!conflicto){ prods.push({nombre:x.nombre, cant:x.cant, sku:x.sku, reconocido:true}); return; }
           }
           if(!prod && nb(x.sku).length>=8) prod=prodPorBarcode(x.sku);
