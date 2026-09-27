@@ -6037,6 +6037,22 @@ function movsProdHTML(prod,st){
 function cargarProdsExtra(){
   try{ prodsExtra().forEach(x=>{ if(x&&x.nombre && !PRODUCTOS.some(p=>p.nombre===x.nombre)) PRODUCTOS.push({nombre:x.nombre, barcode:x.barcode||""}); }); }catch(e){}
 }
+/* Le pasa al bot de Telegram (api/telegram-sync) el listado de pedidos pendientes y qué debía
+   llevar cada uno, para que /api/telegram-webhook pueda mostrarlos y verificar fotos de pickeo
+   sin necesitar acceso directo a Firestore. Se llama solo, cada vez que cambian los pedidos. */
+let TG_SYNC_FIRMA="";
+async function sincronizarPedidosTelegram(){
+  try{
+    const datos=soloPedidos().filter(p=>p.estado==="pendiente").map(p=>({
+      id:p.id, cliente:p.cliente||"",
+      items:(()=>{ try{ return itemsPedido(p).map(it=>({nombre:it.prodNombre||it.nombre, cant:it.cant})); }catch(e){ return []; } })(),
+    }));
+    const firma=JSON.stringify(datos);
+    if(firma===TG_SYNC_FIRMA) return;   // sin cambios desde la última vez: no reenvío
+    TG_SYNC_FIRMA=firma;
+    await fetch("/api/telegram-sync",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({pedidos:datos})});
+  }catch(e){ /* sync en segundo plano: si falla, no afecta el resto de la app */ }
+}
 /* Agregar un producto nuevo al catálogo (se guarda en la nube) */
 function prodsExtra(){ const r=PEDIDOS.find(p=>p.tipo==="prodsExtra"); return (r&&r.lista)||[]; }
 /* ===== DATOS DE PRUEBA: 3 compras realistas para probar el circuito ===== */
@@ -7957,7 +7973,7 @@ function vistaSimulacion(){
   } else if((rolInit==="operador"||rolInit==="empleado"||rolInit==="despacho") && DB.modo==="firebase"){
     // empleada por link: sin login propio. Firestore igual pide sesión, así que entro como anónimo.
     AUTH_READY=true;
-    const arrancar=()=>{ if(!SUBSCRITO){ SUBSCRITO=true; DB.subscribe(d=>{ PEDIDOS=d; cargarProdsExtra(); render(); }); } render(); };
+    const arrancar=()=>{ if(!SUBSCRITO){ SUBSCRITO=true; DB.subscribe(d=>{ PEDIDOS=d; cargarProdsExtra(); sincronizarPedidosTelegram(); render(); }); } render(); };
     firebase.auth().signInAnonymously()
       .then(arrancar)
       .catch(e=>{ console.warn("anonimo:", e);
@@ -7971,7 +7987,7 @@ function vistaSimulacion(){
           if(d.exists){ USERROL=d.data().rol||null;
             if(USERROL==="cadete") CADETE_ACTIVO=d.data().cadete||d.data().nombre||null; }
         }catch(e){ USERROL=null; }
-        if(USERROL && !SUBSCRITO){ SUBSCRITO=true; DB.subscribe(d=>{ PEDIDOS=d; cargarProdsExtra(); render(); }); }
+        if(USERROL && !SUBSCRITO){ SUBSCRITO=true; DB.subscribe(d=>{ PEDIDOS=d; cargarProdsExtra(); sincronizarPedidosTelegram(); render(); }); }
       }
       AUTH_READY=true; render();
     });
