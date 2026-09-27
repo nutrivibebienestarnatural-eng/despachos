@@ -3676,7 +3676,7 @@ async function crearPedido(d){
     cliente:d.cliente,tel:d.tel||"",dir:d.dir||"",ciudad:d.ciudad||"",provincia:d.provincia||"",cp:d.cp||"",
     etiquetaPdf:d.etiquetaPdf||"",etiquetaPdfNombre:d.etiquetaPdfNombre||"",nota:d.nota||"",zonaFija:(d.zonaFija!=null?d.zonaFija:""),
     items:d.items||"",prods:(d.prods&&d.prods.length)?d.prods:prodsDesdeTexto(d.items||"").ok,origen:d.origen||r.origen,metodo:d.metodo||r.metodo,pickit:!!d.pickit,envio:d.envio||"",
-    correo:d.correo||"",tracking:d.tracking||"",tnId:d.tnId||"",cadete:"",estado:"pendiente",creado:Date.now(),
+    correo:d.correo||"",tracking:d.tracking||"",tnId:d.tnId||"",mlId:d.mlId||"",cadete:"",estado:"pendiente",creado:Date.now(),
     eventos:[{estado:"pendiente",ts:Date.now(),nota:"Pedido creado"}]});
   return id;
 }
@@ -5059,6 +5059,13 @@ function formImportar(){
         <button class="btn block" onclick="traerTiendaNube()">${icon('store')} Traer pedidos de Tienda Nube</button>
         <div class="hint" style="margin:8px 0 14px;text-align:center">Trae los pedidos pagados sin despachar, desde la fecha elegida. No trae los que ya importaste ni los que descartaste.</div>
         <div style="text-align:center;color:var(--text-3);font-size:13px;margin-bottom:14px">— o subí el archivo —</div>`:''}
+      ${IMP_CANAL==='ml_flex'?`
+        <label class="label" style="display:block;margin-bottom:6px">Traer pedidos desde (fecha)</label>
+        <input type="date" id="impDesde" value="${IMP_DESDE}" onchange="setImpDesde(this.value)" style="width:100%;padding:11px 12px;border:1px solid var(--border);border-radius:11px;font:inherit;background:var(--bg);margin-bottom:10px">
+        <button class="btn block" onclick="traerMercadoLibre()">${icon('store')} Traer pedidos de Mercado Libre</button>
+        <div class="hint" style="margin:8px 0 10px;text-align:center">Trae los pedidos pagados sin marcar como enviados de la cuenta de ML de ${esc(empNombre)}, desde la fecha elegida.</div>
+        <a class="btn ghost block sm" style="margin-bottom:14px" href="/api/ml-connect?empresa=${encodeURIComponent(IMP_EMPRESA)}" target="_blank">🔗 Conectar cuenta de Mercado Libre de ${esc(empNombre)} (una vez)</a>
+        <div style="text-align:center;color:var(--text-3);font-size:13px;margin-bottom:14px">— o subí la etiqueta —</div>`:''}
       <label class="btn ${IMP_CANAL==='ml_flex'?'':'ghost'} block" style="cursor:pointer;margin-bottom:8px">🏷️ Subir etiqueta(s) de Mercado Libre
         <input type="file" accept="application/pdf" multiple style="display:none" onchange="leerEtiquetaML(this.files)"></label>
       <div class="hint" style="margin:0 0 14px;text-align:center">Crea el pedido y carga los productos por código de barras. Podés elegir varios archivos juntos (un PDF con varias órdenes, o varias etiquetas individuales), y te va a pedir que revises los productos de cada una antes de guardar.</div>
@@ -5153,6 +5160,60 @@ async function traerTiendaNube(){
   if(!IMP_FILAS.length){ toast("No hay pedidos nuevos para importar"); return; }
   try{ mostrarPreviewImport(); }
   catch(err){ console.error("Error al mostrar el preview:", err); toast("Traje "+IMP_FILAS.length+" pedidos pero falló mostrarlos (mirá la consola)"); return; }
+  toast("Trajo "+IMP_FILAS.length+" pedidos"+(fallidos?(" · "+fallidos+" salteados"):""));
+}
+/* Trae los pedidos directo de Mercado Libre (cuenta propia de cada marca) vía /api/mercadolibre */
+async function traerMercadoLibre(){
+  toast("Buscando pedidos en Mercado Libre…");
+  let data;
+  try{
+    const q="/api/mercadolibre?action=pedidos&empresa="+encodeURIComponent(IMP_EMPRESA)+(IMP_DESDE?("&desde="+encodeURIComponent(IMP_DESDE)):"");
+    const r=await fetch(q);
+    data=await r.json().catch(()=>({}));
+    if(!r.ok){ toast(data.error||("Error "+r.status)); return; }
+  }catch(e){ toast("No me pude conectar. ¿Ya conectaste esta marca con Mercado Libre?"); return; }
+
+  const existentes=new Set(soloPedidos().map(p=>p.ref).filter(Boolean));
+  const ignorados=ignoradosSet();
+  const crudos=(data.pedidos||[]).filter(f=>f&&(!f.ref||(!existentes.has(f.ref)&&!ignorados.has(f.ref))));
+  const filas=[]; let fallidos=0;
+  for(const f of crudos){                                   // uno por uno: si uno viene roto, se saltea y sigue
+    try{
+      f.empresa=IMP_EMPRESA; f.canal="ml_flex";
+      f.cliente=f.cliente||""; f.dir=f.dir||""; f.ciudad=f.ciudad||""; f.provincia=f.provincia||""; f.items=f.items||"";
+      // productos: los vinculo al catálogo por SKU (o lo aprendido), y si no por nombre — mismo criterio que Tienda Nube
+      if(Array.isArray(f.prodsTN) && f.prodsTN.length){
+        const nb=s=>String(s||"").replace(/\D/g,"").replace(/^0+/,"");
+        const prods=[]; let todos=true;
+        f.prodsTN.forEach(x=>{
+          const pk=packDef(x.sku, x.nombre);
+          let prod=null, conflicto=false;
+          if(pk && pk.comps && pk.comps.length){
+            const esAliasSimple = pk.comps.length===1 && (pk.comps[0].cant||1)===1;
+            const sugerido = esAliasSimple && x.nombre ? mejorProducto(packDeNombre(x.nombre).nombre) : null;
+            conflicto = !!(sugerido && sugerido.nombre!==pk.comps[0].prod);
+            if(!conflicto){ prods.push({nombre:x.nombre, cant:x.cant, sku:x.sku, reconocido:true}); return; }
+          }
+          if(!prod && nb(x.sku).length>=8) prod=prodPorBarcode(x.sku);
+          const pn=packDeNombre(x.nombre); x.cant=x.cant*pn.n;   // "Pack x3 ..." → multiplica
+          if(!prod && !conflicto) prod=mejorProducto(pn.nombre);
+          if(prod) prods.push({nombre:prod.nombre, cant:x.cant, sku:x.sku, reconocido:true});
+          else { todos=false; prods.push({nombre:x.nombre, nomML:x.nombre, cant:x.cant, sku:x.sku, reconocido:false}); }
+        });
+        f.prods=prods; f.items=prods.map(p=>p.cant+"x "+p.nombre).join(" · ");
+        if(!todos) f.prodsDudosos=true;
+      }
+      delete f.prodsTN;
+      const rr=sugerirRuta(f.provincia,f.ciudad); f.origen=(rr&&rr.origen)||"bsas";
+      if(llegaCadete(f)){ f.metodo="cadete"; f.correo=""; }                // CABA / Zona 1-3 (por CP) => Cardinal
+      else { f.metodo="correo"; f.correo="Correo Argentino"; }             // resto => correo
+      filas.push(f);
+    }catch(err){ fallidos++; console.warn("Pedido salteado:", f&&f.ref, err); }
+  }
+  IMP_FILAS=filas;
+  if(!IMP_FILAS.length){ toast("No hay pedidos nuevos para importar"); return; }
+  try{ mostrarPreviewImport(); }
+  catch(err){ console.error("Error al mostrar el preview:", err); toast("Trajo "+IMP_FILAS.length+" pedidos pero falló mostrarlos (mirá la consola)"); return; }
   toast("Trajo "+IMP_FILAS.length+" pedidos"+(fallidos?(" · "+fallidos+" salteados"):""));
 }
 /* Le avisa a Tienda Nube que el pedido salió (marca enviado + manda el tracking si lo hay) */
