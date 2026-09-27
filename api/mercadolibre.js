@@ -101,6 +101,7 @@ async function traerPedidos(empresa, desde) {
         } catch (e) { /* sin conexión al detalle del envío: sigue igual, se completa a mano en la app */ }
       }
       if (ship && ["shipped", "delivered", "cancelled"].includes(ship.status)) continue;   // ya salió: no lo traigo de nuevo
+      if (ship && ship.logistic_type === "fulfillment") continue;   // Full: lo despacha el depósito de ML, no la marca
       out.push(mapearPedido(o, ship, empresa));
     }
     if (results.length < 50) break;   // última página
