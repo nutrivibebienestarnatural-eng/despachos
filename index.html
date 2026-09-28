@@ -1536,6 +1536,8 @@ function vistaControl(){
     return `<tr><td><b>${esc(nombreEmp(e))}</b></td>${tipos.map(t=>celda(pe.filter(p=>tipoEnvioPrep(p)===t.id))).join("")}${celda(pe)}</tr>`; }).join("");
   // cadetes
   const cadetes={}; by(p=>tipoEnvioPrep(p)==="cadete" && ["preparado",...CTL_EN_CAMINO].includes(p.estado)).forEach(p=>{ const k=p.cadete||"Sin asignar"; (cadetes[k]=cadetes[k]||[]).push(p); });
+  // correo, desglosado por transportista (Andreani, Correo Argentino, etc.)
+  const porCorreo={}; by(p=>tipoEnvioPrep(p)==="correo" && ["pendiente","preparado",...CTL_EN_CAMINO].includes(p.estado)).forEach(p=>{ const k=p.correo||"Sin definir"; (porCorreo[k]=porCorreo[k]||[]).push(p); });
   // productos que faltan preparar
   const prods={}; by(p=>p.estado==="pendiente").forEach(p=>{ try{ itemsPedido(p).forEach(it=>{ const k=it.prodNombre||it.nombre; prods[k]=(prods[k]||0)+(it.cant||0); }); }catch(_){} });
   const topProds=Object.entries(prods).sort((a,b)=>b[1]-a[1]);
@@ -1625,18 +1627,28 @@ function vistaControl(){
       <div class="card">
         <span class="label">🛵 Lo que lleva cada cadete</span>
         ${Object.keys(cadetes).length?Object.entries(cadetes).sort((a,b)=>b[1].length-a[1].length).map(([c,arr])=>`
-          <div class="row" style="justify-content:space-between;padding:8px 0;border-top:.5px solid var(--border)">
-            <span style="${c==='Sin asignar'?'color:var(--amber);font-weight:700':''}">${esc(c)}</span>
-            <span><b>${arr.length}</b> <span class="muted" style="font-size:12px">· ${arr.filter(p=>p.estado==='preparado').length} por salir · ${arr.filter(p=>CTL_EN_CAMINO.includes(p.estado)).length} en camino</span></span>
+          <div style="padding:8px 0;border-top:.5px solid var(--border)">
+            <div class="row" style="justify-content:space-between">
+              <span style="${c==='Sin asignar'?'color:var(--amber);font-weight:700':''}">${esc(c)}</span>
+              <span><b>${arr.length}</b> <span class="muted" style="font-size:12px">· ${arr.filter(p=>p.estado==='preparado').length} por salir · ${arr.filter(p=>CTL_EN_CAMINO.includes(p.estado)).length} en camino</span></span>
+            </div>
+            <div class="muted" style="font-size:12px;margin-top:3px">${arr.map(p=>esc(p.cliente||'—')).join(' · ')}</div>
           </div>`).join(""):`<div class="muted" style="padding:10px 0">Nada para cadetes</div>`}
       </div>
       <div class="card">
-        <span class="label">✉️ Correo y 📦 Pickit</span>
-        ${["correo","pickit"].map(t=>{ const g=by(p=>tipoEnvioPrep(p)===t); return `
-          <div class="row" style="justify-content:space-between;padding:8px 0;border-top:.5px solid var(--border)">
-            <span>${(ENVIOS_PREP.find(x=>x.id===t)||{}).nombre}</span>
-            <span><b>${g.length}</b> <span class="muted" style="font-size:12px">· ${g.filter(p=>p.estado==='pendiente').length} a preparar · ${g.filter(p=>p.estado==='preparado').length} a despachar · ${g.filter(p=>p.metodo==='correo'&&!p.etiquetaPdf&&['pendiente','preparado'].includes(p.estado)).length} sin etiqueta</span></span>
-          </div>`; }).join("")}
+        <span class="label">✉️ Correo, por transportista</span>
+        ${Object.keys(porCorreo).length?Object.entries(porCorreo).sort((a,b)=>b[1].length-a[1].length).map(([c,arr])=>`
+          <div style="padding:8px 0;border-top:.5px solid var(--border)">
+            <div class="row" style="justify-content:space-between">
+              <span style="${c==='Sin definir'?'color:var(--amber);font-weight:700':''}">${esc(c)}</span>
+              <span><b>${arr.length}</b> <span class="muted" style="font-size:12px">· ${arr.filter(p=>p.estado==='pendiente').length} a preparar · ${arr.filter(p=>!p.etiquetaPdf&&['pendiente','preparado'].includes(p.estado)).length} sin etiqueta</span></span>
+            </div>
+            <div class="muted" style="font-size:12px;margin-top:3px">${arr.map(p=>esc(p.cliente||'—')).join(' · ')}</div>
+          </div>`).join(""):`<div class="muted" style="padding:10px 0">Nada por correo</div>`}
+        <div class="row" style="justify-content:space-between;padding:8px 0;border-top:.5px solid var(--border)">
+          <span>📦 Pickit</span>
+          <span><b>${by(p=>tipoEnvioPrep(p)==="pickit").length}</b></span>
+        </div>
       </div>
       <div class="card">
         <span class="label">📦 Qué juntar para lo que falta preparar</span>
