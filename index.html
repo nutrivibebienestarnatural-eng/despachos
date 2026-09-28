@@ -1535,7 +1535,7 @@ function vistaControl(){
   const filasEmp=(CTL_EMP==="todas"?emps:[CTL_EMP]).map(e=>{ const pe=peds.filter(p=>(p.empresa||"")===e); if(!pe.length) return "";
     return `<tr><td><b>${esc(nombreEmp(e))}</b></td>${tipos.map(t=>celda(pe.filter(p=>tipoEnvioPrep(p)===t.id))).join("")}${celda(pe)}</tr>`; }).join("");
   // cadetes
-  const cadetes={}; by(p=>tipoEnvioPrep(p)==="cadete" && ["preparado",...CTL_EN_CAMINO].includes(p.estado)).forEach(p=>{ const k=p.cadete||"Sin asignar"; (cadetes[k]=cadetes[k]||[]).push(p); });
+  const cadetes={}; by(p=>tipoEnvioPrep(p)==="cadete" && ["pendiente","preparado",...CTL_EN_CAMINO].includes(p.estado)).forEach(p=>{ const k=p.cadete||"Sin asignar"; (cadetes[k]=cadetes[k]||[]).push(p); });
   // correo, desglosado por transportista (Andreani, Correo Argentino, etc.)
   const porCorreo={}; by(p=>tipoEnvioPrep(p)==="correo" && ["pendiente","preparado",...CTL_EN_CAMINO].includes(p.estado)).forEach(p=>{ const k=p.correo||"Sin definir"; (porCorreo[k]=porCorreo[k]||[]).push(p); });
   // productos que faltan preparar
@@ -1630,9 +1630,9 @@ function vistaControl(){
           <div style="padding:8px 0;border-top:.5px solid var(--border)">
             <div class="row" style="justify-content:space-between">
               <span style="${c==='Sin asignar'?'color:var(--amber);font-weight:700':''}">${esc(c)}</span>
-              <span><b>${arr.length}</b> <span class="muted" style="font-size:12px">· ${arr.filter(p=>p.estado==='preparado').length} por salir · ${arr.filter(p=>CTL_EN_CAMINO.includes(p.estado)).length} en camino</span></span>
+              <span><b>${arr.length}</b> <span class="muted" style="font-size:12px">· ${arr.filter(p=>p.estado==='pendiente').length} a preparar · ${arr.filter(p=>p.estado==='preparado').length} por salir · ${arr.filter(p=>CTL_EN_CAMINO.includes(p.estado)).length} en camino</span></span>
             </div>
-            <div class="muted" style="font-size:12px;margin-top:3px">${arr.map(p=>esc(p.cliente||'—')).join(' · ')}</div>
+            <div class="muted" style="font-size:12.5px;margin-top:4px;line-height:1.7">${arr.map((p,k)=>(k+1)+". "+esc(p.cliente||'—')).join("<br>")}</div>
           </div>`).join(""):`<div class="muted" style="padding:10px 0">Nada para cadetes</div>`}
       </div>
       <div class="card">
@@ -1643,7 +1643,7 @@ function vistaControl(){
               <span style="${c==='Sin definir'?'color:var(--amber);font-weight:700':''}">${esc(c)}</span>
               <span><b>${arr.length}</b> <span class="muted" style="font-size:12px">· ${arr.filter(p=>p.estado==='pendiente').length} a preparar · ${arr.filter(p=>!p.etiquetaPdf&&['pendiente','preparado'].includes(p.estado)).length} sin etiqueta</span></span>
             </div>
-            <div class="muted" style="font-size:12px;margin-top:3px">${arr.map(p=>esc(p.cliente||'—')).join(' · ')}</div>
+            <div class="muted" style="font-size:12.5px;margin-top:4px;line-height:1.7">${arr.map((p,k)=>(k+1)+". "+esc(p.cliente||'—')).join("<br>")}</div>
           </div>`).join(""):`<div class="muted" style="padding:10px 0">Nada por correo</div>`}
         <div class="row" style="justify-content:space-between;padding:8px 0;border-top:.5px solid var(--border)">
           <span>📦 Pickit</span>
