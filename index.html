@@ -1035,6 +1035,13 @@ async function marcarFotoRevisada(id){
   toast("Foto revisada ✓");
   vistaControl();
 }
+/* Doble chequeo del admin sobre un pedido ya preparado (aparte de lo que haya dicho la IA) —
+   solo deja constancia visual de que vos lo miraste y está bien, no cambia el estado del pedido. */
+async function marcarRevisadoAdmin(id){
+  await DB.update(id,{revisadoAdmin:true, revisadoAdminTs:Date.now()});
+  toast("Pedido revisado ✓");
+  vistaControl();
+}
 /* Si al revisar la foto ves que el contenido de la caja está mal (no la foto en sí), esto lo manda
    a "Con problema" — mismo mecanismo que "Algo no coincide" durante el despacho. */
 async function reportarProblemaFoto(id){
@@ -1585,7 +1592,10 @@ function vistaControl(){
         ${p.despachoAviso&&!p.despachoAvisoVisto?`<div style="font-size:12px;color:var(--red)">⚠ ${esc((p.despachoAvisoTxt||[]).join(" · "))}</div>`:''}
         ${p.telegramVeredicto&&p.fotoRevisada?`<div style="font-size:11.5px;color:var(--green);margin-top:2px">🤖✓ Verificado por IA (Telegram)</div>`:''}
       </div>
-      <span style="flex:0 0 auto;font-size:11.5px;font-weight:700;color:${col}">${esc(estObj(p.estado).label)}</span>
+      ${est==="listos"?(p.revisadoAdmin
+        ?`<span style="flex:0 0 auto;font-size:11px;font-weight:700;color:var(--green);text-align:right">✓ Revisado por vos</span>`
+        :`<button class="btn sm green" style="flex:0 0 auto" onclick="event.stopPropagation();marcarRevisadoAdmin('${p.id}')">✓ OK</button>`)
+        :`<span style="flex:0 0 auto;font-size:11.5px;font-weight:700;color:${col}">${esc(estObj(p.estado).label)}</span>`}
     </div>`; };
   app().innerHTML=`
     <div class="row" style="justify-content:space-between;align-items:flex-end;gap:10px;margin-bottom:10px">
