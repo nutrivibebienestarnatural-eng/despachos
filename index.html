@@ -1025,10 +1025,13 @@ async function borrarFotoPedido(id){
   if(!await askConfirm("¿Borrar la foto de este pedido?")) return;
   await DB.update(id,{fotoPrep:"", fotoPrepTs:null, fotoDoc:""}); toast("Foto borrada"); refrescarFoto(id,{fotoPrep:"", fotoPrepTs:null});
 }
-/* El admin revisa la foto que subió la empleada y la da por buena — no frena el despacho
-   (el pedido ya avanzó solo), es un chequeo aparte para detectar errores a tiempo. */
+/* El admin revisa la foto que subió la empleada y la da por buena. Si el pedido todavía estaba
+   pendiente (por ejemplo, el bot de Telegram detectó algo raro y no lo avanzó solo), el OK
+   también lo marca Preparado — así queda guardado de una, sin que siga apareciendo como pendiente. */
 async function marcarFotoRevisada(id){
-  await DB.update(id,{fotoRevisada:true});
+  const p=PEDIDOS.find(x=>x.id===id);
+  if(p && p.estado==="pendiente") await avanzar(id,"preparado","Preparado · OK al revisar la foto en Control",{fotoRevisada:true});
+  else await DB.update(id,{fotoRevisada:true});
   toast("Foto revisada ✓");
   vistaControl();
 }
@@ -1070,7 +1073,10 @@ async function marcarTodasRevisadas(){
   const peds=ctlPedidos().filter(p=>p.fotoPrep && !p.fotoRevisada);
   if(!peds.length) return;
   if(!await askConfirm("¿Marcar como revisadas las "+peds.length+" fotos de esta lista?")) return;
-  for(const p of peds) await DB.update(p.id,{fotoRevisada:true});
+  for(const p of peds){
+    if(p.estado==="pendiente") await avanzar(p.id,"preparado","Preparado · OK al revisar la foto en Control",{fotoRevisada:true});
+    else await DB.update(p.id,{fotoRevisada:true});
+  }
   toast(peds.length+" fotos marcadas ✓");
   vistaControl();
 }
