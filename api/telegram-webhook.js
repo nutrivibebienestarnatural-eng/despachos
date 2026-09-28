@@ -260,6 +260,24 @@ module.exports = async (req, res) => {
       await tg("answerCallbackQuery", { callback_query_id: cq.id });
       if (!autorizados.includes(chatId)) return res.status(200).json({ ok: true });
       if (cq.data === "lista") { await mostrarLista(chatId); return res.status(200).json({ ok: true }); }
+
+      // Avisar al resto de la gente autorizada (el encargado) que una cantidad no cierra — típico
+      // síntoma de un pack mal aprendido en Stock, que multiplica de más un producto que en este
+      // pedido va suelto. No cambia nada del pedido, solo manda el aviso.
+      const mFlag = /^flag:(.+)$/.exec(cq.data || "");
+      if (mFlag) {
+        const combinados = (await pedidosPendientes()).concat(await pedidosPreparadosRecientes());
+        const pedido = combinados.find(p => p.id === mFlag[1]);
+        const detalle = pedido ? (pedido.items || []).map(i => `${i.cant}x ${esc(i.nombre)}`).join(", ") : "";
+        const texto = `🚩 Aviso desde el pickeo: el pedido de <b>${esc(pedido ? pedido.cliente : "—")}</b>` +
+          (detalle ? ` pide llevar ${detalle} y la cantidad no cierra.` : ` tiene una cantidad que no cierra.`) +
+          ` Puede ser un pack mal aprendido — revisá Stock → Packs aprendidos.`;
+        const otros = autorizados.filter(a => a !== chatId);
+        for (const otro of otros) await enviarTexto(otro, texto);
+        await enviarTexto(chatId, otros.length ? "👍 Avisado — ya le llegó al encargado." : "Anotado, pero no hay otro número autorizado a quien avisarle todavía.");
+        return res.status(200).json({ ok: true });
+      }
+
       const m = /^p:(.+)$/.exec(cq.data || "");
       if (!m) return res.status(200).json({ ok: true });
       const pend = await pedidosPendientes();
@@ -272,7 +290,8 @@ module.exports = async (req, res) => {
       const lista = (pedido.items || []).map(i => `• ${i.cant}x ${esc(i.nombre)}`).join("\n") || "(sin productos cargados)";
       await enviarTexto(chatId,
         `🧺 <b>Andá a buscar esto para ${esc(pedido.cliente || "—")}:</b>\n${lista}\n\n` +
-        `📷 Cuando lo armes, mandame la foto del pedido acá mismo.`);
+        `📷 Cuando lo armes, mandame la foto del pedido acá mismo.`,
+        [[{ text: "⚠️ Esta cantidad no me cierra", callback_data: "flag:" + pedido.id }]]);
       return res.status(200).json({ ok: true });
     }
 
@@ -359,7 +378,8 @@ module.exports = async (req, res) => {
         // la foto corregida dé bien (o alguien lo revise a mano en Control).
         await kvSet("telegram_wait:" + chatId, { pedidoId: pedido.id, ts: Date.now() });
         await enviarTexto(chatId, aviso + formatearVeredicto(veredicto, pedido.cliente) +
-          `\n\n🔧 Corregí el pedido de <b>${esc(pedido.cliente || "—")}</b> y mandame la foto de nuevo antes de seguir con otro.`);
+          `\n\n🔧 Corregí el pedido de <b>${esc(pedido.cliente || "—")}</b> y mandame la foto de nuevo antes de seguir con otro.`,
+          [[{ text: "⚠️ La cantidad esperada no me cierra", callback_data: "flag:" + pedido.id }]]);
       }
       await guardarFotoParaLaApp(pedido, base64, mediaType, veredicto);
       return res.status(200).json({ ok: true });

@@ -5167,13 +5167,20 @@ async function traerTiendaNube(){
             // NI la cantidad — el mismo SKU puede venderse suelto (x1) o en pack (x3): si el nombre de ESTE
             // pedido dice "Pack x3" pero el SKU quedó vinculado como 1x1, no hay que confiar en lo viejo.
             const esAliasSimple = pk.comps.length===1 && (pk.comps[0].cant||1)===1;
-            const pn = esAliasSimple ? packDeNombre(x.nombre) : null;
-            const sugerido = esAliasSimple && x.nombre ? mejorProducto(pn.nombre) : null;
-            conflicto = !!(esAliasSimple && (pn.n>1 || (sugerido && sugerido.nombre!==pk.comps[0].prod)));
+            if(esAliasSimple){
+              const pn = packDeNombre(x.nombre);
+              const sugerido = x.nombre ? mejorProducto(pn.nombre) : null;
+              conflicto = !!(pn.n>1 || (sugerido && sugerido.nombre!==pk.comps[0].prod));
+            } else {
+              // acá pk es un pack real que multiplica cantidad (aprendido con otra venta). Si el nombre
+              // de ESTE pedido no tiene ninguna pinta de pack, el mismo SKU se vendió suelto esta vez —
+              // no hay que aplicarle el multiplicador de memoria: se marca para que lo confirme una persona.
+              conflicto = !pareceePack(x.nombre);
+            }
             if(!conflicto){ prods.push({nombre:x.nombre, cant:x.cant, sku:x.sku, reconocido:true}); return; }   // itemsPedido lo expande
           }
           for(const c of [x.barcode,x.sku]){ if(!prod && nb(c).length>=8) prod=prodPorBarcode(c); }
-          const pn=packDeNombre(x.nombre); x.cant=x.cant*pn.n;   // "Pack x3 ..." → multiplica
+          const pn=packDeNombre(x.nombre); if(!conflicto) x.cant=x.cant*pn.n;   // "Pack x3 ..." → multiplica (salvo que ya esté en duda)
           if(!prod && !conflicto) prod=mejorProducto(pn.nombre);   // en conflicto no adivino de nuevo: que lo confirme una persona
           if(prod) prods.push({nombre:prod.nombre, cant:x.cant, sku:x.sku, reconocido:true});
           else { todos=false; prods.push({nombre:x.nombre, nomML:x.nombre, cant:x.cant, sku:x.sku, reconocido:false}); }
@@ -5225,13 +5232,20 @@ async function traerMercadoLibre(){
             // mismo SKU puede vender x1 o en pack x3: si ya está vinculado como 1x1 pero el nombre de
             // ESTE pedido dice "Pack x3", no hay que confiar en lo viejo — se marca para revisar.
             const esAliasSimple = pk.comps.length===1 && (pk.comps[0].cant||1)===1;
-            const pn0 = esAliasSimple ? packDeNombre(x.nombre) : null;
-            const sugerido = esAliasSimple && x.nombre ? mejorProducto(pn0.nombre) : null;
-            conflicto = !!(esAliasSimple && (pn0.n>1 || (sugerido && sugerido.nombre!==pk.comps[0].prod)));
+            if(esAliasSimple){
+              const pn0 = packDeNombre(x.nombre);
+              const sugerido = x.nombre ? mejorProducto(pn0.nombre) : null;
+              conflicto = !!(pn0.n>1 || (sugerido && sugerido.nombre!==pk.comps[0].prod));
+            } else {
+              // pk es un pack real (multiplica cantidad), aprendido con otra venta. Si el nombre de ESTE
+              // pedido no tiene pinta de pack, el mismo SKU se vendió suelto esta vez — no se le aplica
+              // el multiplicador de memoria: se marca para que lo confirme una persona.
+              conflicto = !pareceePack(x.nombre);
+            }
             if(!conflicto){ prods.push({nombre:x.nombre, cant:x.cant, sku:x.sku, reconocido:true}); return; }
           }
           if(!prod && nb(x.sku).length>=8) prod=prodPorBarcode(x.sku);
-          const pn=packDeNombre(x.nombre); x.cant=x.cant*pn.n;   // "Pack x3 ..." → multiplica
+          const pn=packDeNombre(x.nombre); if(!conflicto) x.cant=x.cant*pn.n;   // "Pack x3 ..." → multiplica (salvo que ya esté en duda)
           if(!prod && !conflicto) prod=mejorProducto(pn.nombre);
           if(prod) prods.push({nombre:prod.nombre, cant:x.cant, sku:x.sku, reconocido:true});
           else { todos=false; prods.push({nombre:x.nombre, nomML:x.nombre, cant:x.cant, sku:x.sku, reconocido:false}); }
