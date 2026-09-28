@@ -6071,6 +6071,15 @@ async function sincronizarPedidosTelegram(){
     await fetch("/api/telegram-sync",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({pedidos:pendientes,preparados})});
   }catch(e){ /* sync en segundo plano: si falla, no afecta el resto de la app */ }
 }
+/* Sin esto, sincronizar/revisar Telegram solo pasaba cuando cambiaba ALGÚN pedido en la base
+   (disparado por el listener de Firestore) — si nada más cambiaba mientras tanto, lo que hacía
+   el bot (marcar preparado, guardar una foto) quedaba sin reflejarse en la página hasta que
+   pasara otra cosa. Con este chequeo cada pocos segundos, no depende de eso. */
+let TG_POLL_INICIADO=false;
+function iniciarPollingTelegram(){
+  if(TG_POLL_INICIADO) return; TG_POLL_INICIADO=true;
+  setInterval(()=>{ sincronizarPedidosTelegram(); revisarFotosTelegram(); }, 5000);
+}
 /* Levanta las fotos que llegaron por el bot de Telegram (pickeo con IA) y las guarda en el
    pedido correspondiente — quedan igual que si alguien las hubiera subido a mano, así aparecen
    solas en Control con el veredicto de la IA como nota. */
@@ -8038,7 +8047,7 @@ function vistaSimulacion(){
   } else if((rolInit==="operador"||rolInit==="empleado"||rolInit==="despacho") && DB.modo==="firebase"){
     // empleada por link: sin login propio. Firestore igual pide sesión, así que entro como anónimo.
     AUTH_READY=true;
-    const arrancar=()=>{ if(!SUBSCRITO){ SUBSCRITO=true; DB.subscribe(d=>{ PEDIDOS=d; cargarProdsExtra(); sincronizarPedidosTelegram(); revisarFotosTelegram(); render(); }); } render(); };
+    const arrancar=()=>{ if(!SUBSCRITO){ SUBSCRITO=true; iniciarPollingTelegram(); DB.subscribe(d=>{ PEDIDOS=d; cargarProdsExtra(); sincronizarPedidosTelegram(); revisarFotosTelegram(); render(); }); } render(); };
     firebase.auth().signInAnonymously()
       .then(arrancar)
       .catch(e=>{ console.warn("anonimo:", e);
@@ -8052,7 +8061,7 @@ function vistaSimulacion(){
           if(d.exists){ USERROL=d.data().rol||null;
             if(USERROL==="cadete") CADETE_ACTIVO=d.data().cadete||d.data().nombre||null; }
         }catch(e){ USERROL=null; }
-        if(USERROL && !SUBSCRITO){ SUBSCRITO=true; DB.subscribe(d=>{ PEDIDOS=d; cargarProdsExtra(); sincronizarPedidosTelegram(); revisarFotosTelegram(); render(); }); }
+        if(USERROL && !SUBSCRITO){ SUBSCRITO=true; iniciarPollingTelegram(); DB.subscribe(d=>{ PEDIDOS=d; cargarProdsExtra(); sincronizarPedidosTelegram(); revisarFotosTelegram(); render(); }); }
       }
       AUTH_READY=true; render();
     });
