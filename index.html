@@ -5565,14 +5565,15 @@ function mostrarPreviewImport(){
                 <span class="chip" style="background:${envioChip.bg};color:${envioChip.c};font-weight:700">${envioChip.t}</span>
                 ${elegis?`<span class="chip" style="background:#fff3cd;color:#7a5a00">elegís vos</span>`:''}
                 ${(f.marcaDetectada&&marcasEnLote.length>1)?`<span class="chip" style="background:#e8e6ff;color:#4b3fa8">${esc(empresaObj(f.empresa).nombre)} ✓</span>`:''}
-                ${f.etiquetaPdf?`<span class="chip" style="background:#d9f2e5;color:#0f6b40">📎 CORREO</span>`:''}
+                ${f.etiquetaPdf?`<span class="chip" style="background:#d9f2e5;color:#0f6b40">📎 ${f.canal==='ml_flex'?'ETIQUETA ML':'CORREO'}</span>`:''}
               </div>
               <div class="ord-sub"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${anilloColor(an.n)};margin-right:5px;vertical-align:-1px"></span>${f.ref?('N° '+esc(f.ref.startsWith('#')?f.ref:('#'+f.ref))+' · '):''}${esc((f.ciudad||'').toUpperCase())} · ${esc(an.label)}</div>
             </div>
           </div>
           <div class="ord-body">
-            <div class="addr">${esc(f.dir)} — ${esc(f.ciudad)}, ${esc(f.provincia)}</div>
-            ${(f.hojaDetalle||f.etiquetaPdf)?`<button class="btn sm ghost" style="margin-bottom:8px" onclick="verHojaDetalle(${i})">🔍 Ver hoja 2 (cantidades, sin abrir el PDF)</button>`:''}
+            <div class="addr">${esc(f.dir)} — ${esc(f.ciudad)}, ${esc(f.provincia)}${f.cp?(' · CP '+esc(f.cp)):''}${f.tel?(' · 📞 '+esc(f.tel)):''}</div>
+            ${(f.hojaDetalle||(f.etiquetaPdf&&f.canal!=='ml_flex'))?`<button class="btn sm ghost" style="margin-bottom:8px" onclick="verHojaDetalle(${i})">🔍 Ver hoja 2 (cantidades, sin abrir el PDF)</button>`:''}
+            ${(f.etiquetaPdf&&f.canal==='ml_flex')?`<button class="btn sm ghost" style="margin-bottom:8px" onclick='abrirEtiquetaPDF(IMP_FILAS[${i}])'>📄 Ver etiqueta de ML</button>`:''}
             <span class="tag">Items</span>
             ${(()=>{ const agregar=`<div style="margin-top:6px"><button class="btn sm ghost" onclick="editarProdImport(${i},-1)">+ Agregar producto</button></div>`;
               if(!f.prods||!f.prods.length) return `<div class="muted" style="font-size:14px;margin-top:4px">${esc(f.items||'—')}</div>${agregar}`;

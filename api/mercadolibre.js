@@ -47,6 +47,21 @@ async function tokenValido(empresa) {
 
 function mlHeaders(token) { return { "Authorization": "Bearer " + token, "Accept": "application/json" }; }
 
+// Trae la etiqueta OFICIAL de Mercado Envíos (PDF) para un envío — el mismo PDF que bajarías
+// vos a mano desde "Imprimir etiqueta" en el sitio de ML, con el QR/código de barras real.
+// Si todavía no está lista (el envío recién se creó, o algo falla) devuelve null sin romper
+// el resto de la importación — el pedido igual se trae, solo queda sin etiqueta adjunta.
+async function descargarEtiquetaML(shipId, token) {
+  try {
+    const r = await fetch(`${API_BASE}/shipment_labels?shipment_ids=${shipId}&response_type=pdf`, {
+      headers: { "Authorization": "Bearer " + token },
+    });
+    if (!r.ok || (r.headers.get("content-type") || "").indexOf("pdf") === -1) return null;
+    const buf = Buffer.from(await r.arrayBuffer());
+    return buf.toString("base64");
+  } catch (e) { return null; }
+}
+
 // Convierte una orden + su envío al formato que usa la app de despacho
 // (mismos nombres de campo que arma api/tiendanube.js, para que el import del lado
 // del navegador — vincular productos por SKU, elegir método de envío, etc — sea igual).
@@ -102,7 +117,12 @@ async function traerPedidos(empresa, desde) {
       }
       if (ship && ["shipped", "delivered", "cancelled"].includes(ship.status)) continue;   // ya salió: no lo traigo de nuevo
       if (ship && ship.logistic_type === "fulfillment") continue;   // Full: lo despacha el depósito de ML, no la marca
-      out.push(mapearPedido(o, ship, empresa));
+      const pedido = mapearPedido(o, ship, empresa);
+      if (shipId) {
+        const etiquetaPdf = await descargarEtiquetaML(shipId, t.access_token);
+        if (etiquetaPdf) { pedido.etiquetaPdf = etiquetaPdf; pedido.etiquetaPdfNombre = "etiqueta-ml-" + o.id + ".pdf"; }
+      }
+      out.push(pedido);
     }
     if (results.length < 50) break;   // última página
   }
