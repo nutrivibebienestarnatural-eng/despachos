@@ -378,7 +378,9 @@ module.exports = async (req, res) => {
       await kvSet("telegram_checkmode:" + chatId, true);
       await enviarTexto(chatId, "📷 Mandame la foto del pedido que querés chequear (puede ser uno que ya diste por armado).");
     } else {
-      await enviarTexto(chatId, "Escribime /hoy para ver todo lo que hay que buscar, o /pedidos para elegir un pedido puntual 🙂");
+      // cualquier saludo u otra cosa que no reconozco: le muestro el menú de nuevo, así nunca
+      // queda sin saber qué tocar (no hace falta que sepa escribir /start ni ningún comando).
+      await enviarMenuPrincipal(chatId);
     }
     return res.status(200).json({ ok: true });
   } catch (e) {
