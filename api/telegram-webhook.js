@@ -445,7 +445,9 @@ module.exports = async (req, res) => {
 
     // 3) Texto / comando (incluye los botones del menú fijo, que mandan su propio texto)
     const texto = String(msg.text || "").trim().toLowerCase();
-    if (texto === "/start") {
+    if (texto === "/id") {
+      await enviarTexto(chatId, "Tu chat id es:\n<code>" + chatId + "</code>");
+    } else if (texto === "/start") {
       await enviarMenuPrincipal(chatId);
       await mostrarLista(chatId);
     } else if (texto === "/pedidos" || texto === "pedidos" || texto === "📦 a preparar") {
