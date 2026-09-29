@@ -1626,6 +1626,7 @@ function vistaControl(){
         :`<span style="flex:0 0 auto;font-size:11.5px;font-weight:700;color:${col}">${esc(estObj(p.estado).label)}</span>`}
     </div>`; };
   app().innerHTML=`
+    ${segOp('control')}
     <div class="row" style="justify-content:space-between;align-items:flex-end;gap:10px;margin-bottom:10px">
       <div><div class="title" style="margin:0">🎯 Control</div>
         <div class="subtitle" style="margin:2px 0 0">${new Date().toLocaleDateString("es-AR",{weekday:"long",day:"numeric",month:"long"})} · ${peds.length} pedidos · avance ${avance}%</div></div>
@@ -3906,7 +3907,7 @@ function pintarSidebar(){
 }
 function segOp(active){
   if(ROL!=="admin" || PREVIEW) return "";   // operador (o admin previsualizando) no ve pestañas
-  const tabs=[["hoy","Hoy"],["pedidos","Pedidos"],["stock","Stock"],["listados","Listados"]];
+  const tabs=[["control","Control"],["hoy","Hoy"],["pedidos","Pedidos"],["stock","Stock"],["listados","Listados"]];
   return `<div class="row" style="justify-content:space-between;margin-bottom:14px"><div class="seg">${
     tabs.map(t=>`<button class="${active===t[0]?'on':''}" ${active===t[0]?'':`onclick="OPVIEW='${t[0]}';vistaOperador()"`}>${t[1]}</button>`).join("")
   }</div></div>`;
@@ -7068,7 +7069,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v49-un-producto-nunca-multiplica";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v50-control-en-el-celu";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
