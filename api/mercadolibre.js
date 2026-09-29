@@ -85,6 +85,10 @@ function mapearPedido(ordenes, ship, empresa) {
   return {
     mlId: refId,
     ref: "#" + refId,
+    // los ids de CADA orden individual que se agrupó acá — así, si una venta ya se había importado
+    // antes (con su propio ref, de cuando todavía no agrupábamos por pack), el chequeo de duplicados
+    // del navegador la reconoce igual y no la vuelve a traer.
+    mlOrderIds: ordenes.map(o => String(o.id)),
     empresa,
     canal: "ml_flex",
     cliente: rd.receiver_name || (primera.buyer && primera.buyer.nickname) || "",

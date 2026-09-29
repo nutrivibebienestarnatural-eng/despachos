@@ -3735,7 +3735,7 @@ async function crearPedido(d){
     cliente:d.cliente,tel:d.tel||"",dir:d.dir||"",ciudad:d.ciudad||"",provincia:d.provincia||"",cp:d.cp||"",
     etiquetaPdf:d.etiquetaPdf||"",etiquetaPdfNombre:d.etiquetaPdfNombre||"",nota:d.nota||"",zonaFija:(d.zonaFija!=null?d.zonaFija:""),
     items:d.items||"",prods:(d.prods&&d.prods.length)?d.prods:prodsDesdeTexto(d.items||"").ok,origen:d.origen||r.origen,metodo:d.metodo||r.metodo,pickit:!!d.pickit,envio:d.envio||"",
-    correo:d.correo||"",tracking:d.tracking||"",tnId:d.tnId||"",mlId:d.mlId||"",cadete:"",estado:"pendiente",creado:Date.now(),
+    correo:d.correo||"",tracking:d.tracking||"",tnId:d.tnId||"",mlId:d.mlId||"",mlOrderIds:d.mlOrderIds||[],cadete:"",estado:"pendiente",creado:Date.now(),
     eventos:[{estado:"pendiente",ts:Date.now(),nota:"Pedido creado"}]});
   return id;
 }
@@ -5209,6 +5209,14 @@ async function traerTiendaNube(){
             if(!conflicto){ prods.push({nombre:x.nombre, cant:x.cant, sku:x.sku, reconocido:true}); return; }   // itemsPedido lo expande
           }
           for(const c of [x.barcode,x.sku]){ if(!prod && nb(c).length>=8) prod=prodPorBarcode(c); }
+          // el código de barras puede estar mal cargado en el catálogo (repetido entre dos productos
+          // distintos) — antes de confiar ciego, cruzo contra lo que dice el NOMBRE de esta venta. Si
+          // no tienen ninguna palabra fuerte en común, el código está mal vinculado: mejor que lo
+          // confirme una persona en vez de descontar el producto equivocado (pasó con "Melena de León").
+          if(prod){
+            const sugeridoPorNombre = x.nombre ? mejorProducto(packDeNombre(x.nombre).nombre) : null;
+            if(sugeridoPorNombre && sugeridoPorNombre.nombre!==prod.nombre) prod=null;
+          }
           const pn=packDeNombre(x.nombre); if(!conflicto) x.cant=x.cant*pn.n;   // "Pack x3 ..." → multiplica (salvo que ya esté en duda)
           if(!prod && !conflicto) prod=mejorProducto(pn.nombre);   // en conflicto no adivino de nuevo: que lo confirme una persona
           if(prod) prods.push({nombre:prod.nombre, cant:x.cant, sku:x.sku, reconocido:true});
@@ -5243,8 +5251,18 @@ async function traerMercadoLibre(){
   }catch(e){ toast("No me pude conectar. ¿Ya conectaste esta marca con Mercado Libre?"); return; }
 
   const existentes=new Set(soloPedidos().map(p=>p.ref).filter(Boolean));
+  // ids de ventas individuales ya conocidas (de pedidos ya guardados, incluso de antes de agrupar por
+  // pack) — si una sola de las ventas de un pack nuevo ya está acá, todo el pack se considera ya traído.
+  const idsConocidos=new Set();
+  soloPedidos().forEach(p=>{ const d=String(p.ref||"").replace(/\D/g,""); if(d) idsConocidos.add(d);
+    (p.mlOrderIds||[]).forEach(idv=>idsConocidos.add(String(idv))); });
   const ignorados=ignoradosSet();
-  const crudos=(data.pedidos||[]).filter(f=>f&&(!f.ref||(!existentes.has(f.ref)&&!ignorados.has(f.ref))));
+  const crudos=(data.pedidos||[]).filter(f=>{
+    if(!f) return false;
+    if(f.ref && (existentes.has(f.ref)||ignorados.has(f.ref))) return false;
+    if(Array.isArray(f.mlOrderIds) && f.mlOrderIds.some(idv=>idsConocidos.has(String(idv)))) return false;
+    return true;
+  });
   const filas=[]; let fallidos=0;
   for(const f of crudos){                                   // uno por uno: si uno viene roto, se saltea y sigue
     try{
@@ -5274,6 +5292,14 @@ async function traerMercadoLibre(){
             if(!conflicto){ prods.push({nombre:x.nombre, cant:x.cant, sku:x.sku, reconocido:true}); return; }
           }
           if(!prod && nb(x.sku).length>=8) prod=prodPorBarcode(x.sku);
+          // el código de barras puede estar mal cargado en el catálogo (repetido entre dos productos
+          // distintos) — antes de confiar ciego, cruzo contra lo que dice el NOMBRE de esta venta. Si
+          // no tienen ninguna palabra fuerte en común, el código está mal vinculado: mejor que lo
+          // confirme una persona en vez de descontar el producto equivocado (pasó con "Melena de León").
+          if(prod){
+            const sugeridoPorNombre = x.nombre ? mejorProducto(packDeNombre(x.nombre).nombre) : null;
+            if(sugeridoPorNombre && sugeridoPorNombre.nombre!==prod.nombre) prod=null;
+          }
           const pn=packDeNombre(x.nombre); if(!conflicto) x.cant=x.cant*pn.n;   // "Pack x3 ..." → multiplica (salvo que ya esté en duda)
           if(!prod && !conflicto) prod=mejorProducto(pn.nombre);
           if(prod) prods.push({nombre:prod.nombre, cant:x.cant, sku:x.sku, reconocido:true});
