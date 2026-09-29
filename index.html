@@ -7039,7 +7039,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v42-fix-orden-titulo-partido";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v43-fix-pack-agrupado-y-codigo-cruzado";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
