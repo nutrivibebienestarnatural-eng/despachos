@@ -5623,7 +5623,8 @@ function stockChipImport(nombreProd){
     let pedidoTotal=0;
     IMP_FILAS.forEach(f=>{ (f.prods||[]).forEach(x=>{
       const comps=x.noPack?null:packComponentes(x.nombre,x.sku);
-      if(comps){ comps.forEach(c=>{ if(c.nombre===nombreProd) pedidoTotal+=c.cant*(x.cant||1); }); }
+      if(comps && comps.length>=2){ comps.forEach(c=>{ if(c.nombre===nombreProd) pedidoTotal+=c.cant*(x.cant||1); }); }
+      else if(comps && comps.length===1){ if(comps[0].nombre===nombreProd) pedidoTotal+=(x.cant||1); }
       else if(x.nombre===nombreProd) pedidoTotal+=(x.cant||1);
     }); });
     const queda=actual-pedidoTotal;
@@ -5688,11 +5689,10 @@ function mostrarPreviewImport(){
                 // un "pack" de UN solo componente a razón de 1x1 no es un pack de verdad — es simplemente el
                 // vínculo SKU→producto que ya enseñaste alguna vez (por "Vincular a mi producto"). En ese caso
                 // no tiene sentido mostrar el cartel de pack: se muestra igual que cualquier producto reconocido.
-                const esAliasSimple = comps && comps.length===1 && (comps[0].cant||1)===1;
-                // mismo cuidado que al traer el pedido: si el pack aprendido multiplica cantidad pero el
-                // nombre de ESTE pedido no tiene ninguna pinta de pack, no hay que confiar en el aprendizaje
-                // viejo — el mismo SKU se vendió suelto esta vez (pasó con "Inulina": aprendido x2, pedido real x1).
-                const esPackReal = comps && !esAliasSimple && pareceePack(x.nomML||x.nombre);
+                // UN SOLO componente nunca multiplica cantidad (ver itemsPedido) — "pack real" con cartel
+                // y multiplicador solo aplica a kits de VARIOS productos distintos (2+ componentes).
+                const esAliasSimple = comps && comps.length===1;
+                const esPackReal = comps && comps.length>=2;
                 const esPackND=(!comps && pareceePack(x.nomML||x.nombre));   // parece pack pero no lo conozco
                 const corregir=`<button class="btn sm ghost" style="padding:2px 8px;font-size:11px" onclick="editarProdImport(${i},${pi})">✎ corregir</button>`;
                 if(esPackReal){ return `<div style="font-size:13.5px;margin-top:3px">📦 <b>${esc(x.nomML||x.nombre)}</b> <span class="muted">→ descuenta:</span> ${comps.map(c=>c.cant*(x.cant||1)+"× "+esc(c.nombre)+stockChipImport(c.nombre)).join(", ")}
@@ -7068,7 +7068,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v48-noPack-corte-de-raiz";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v49-un-producto-nunca-multiplica";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
@@ -7258,18 +7258,20 @@ function itemsPedido(p){
       // aprendido que no correspondía a este pedido) — no se vuelve a buscar NINGÚN pack para esto,
       // ni por SKU ni por nombre, así no se puede volver a multiplicar solo.
       const comps=x.noPack?null:packComponentes(x.nombre, x.sku);
-      // un "pack" de un solo componente a razón de 1x1 no es un pack real — es el vínculo SKU→producto
-      // que ya enseñaste una vez ("Vincular a mi producto"). Ahí se muestra como un producto normal,
-      // sin la etiqueta "(pack)" que solo tiene sentido para kits de verdad.
-      const esAliasSimple = comps && comps.length===1 && (comps[0].cant||1)===1;
-      if(comps && !esAliasSimple){ comps.forEach(c=>out.push({nombre:c.nombre+"  (pack)", cant:(+x.cant||1)*c.cant, prodNombre:c.nombre, kit:true})); }
+      // UN SOLO componente NUNCA multiplica cantidad — es nomás el vínculo SKU→nombre de catálogo
+      // ("Vincular a mi producto"), aunque alguna vez se haya guardado con un cant>1 por error. Eso
+      // fue la causa de varios líos (Adrelax, Inulina): un pack de un solo producto aprendido con
+      // cantidad mal, que se re-aplicaba solo cada vez que se volvía a mirar el pedido. Multiplicar
+      // cantidad real solo tiene sentido para kits de VARIOS productos distintos (2+ componentes).
+      const esAliasSimple = comps && comps.length===1;
+      if(comps && comps.length>=2){ comps.forEach(c=>out.push({nombre:c.nombre+"  (pack)", cant:(+x.cant||1)*c.cant, prodNombre:c.nombre, kit:true})); }
       else if(esAliasSimple){
         // ojo: el mismo SKU corto de ML puede haber quedado enseñado para OTRO producto en otro pedido
         // (pasó con "CURC"). Si este pedido ya tiene guardado un nombre de catálogo válido y DISTINTO
         // al del alias, confío en lo que ya quedó resuelto acá — no lo piso con un vínculo viejo/ajeno.
         const yaResuelto = x.nombre!==comps[0].nombre && PRODUCTOS.some(pp=>pp.nombre===x.nombre);
         const nombreFinal = yaResuelto ? x.nombre : comps[0].nombre;
-        out.push({nombre:nombreFinal, cant:+x.cant||1, prodNombre:nombreFinal});
+        out.push({nombre:nombreFinal, cant:+x.cant||1, prodNombre:nombreFinal});   // cant SIEMPRE la real del pedido, nunca comps[0].cant
       }
       else out.push({nombre:x.nombre, cant:+x.cant||1, prodNombre:x.nombre});
     });
@@ -7277,9 +7279,9 @@ function itemsPedido(p){
   }
   parseItems(p.items||"").forEach(it=>{
     const aprendido=packComponentes(it.nombre);   // si ya aprendiste este kit, mandan sus componentes
-    const aliasSimple = aprendido && aprendido.length===1 && (aprendido[0].cant||1)===1;
+    const aliasSimple = aprendido && aprendido.length===1;   // un solo componente nunca multiplica cantidad
     if(aprendido && aliasSimple){ out.push({nombre:aprendido[0].nombre, cant:it.cant||1, prodNombre:aprendido[0].nombre}); return; }
-    if(aprendido){ aprendido.forEach(c=>out.push({nombre:c.nombre+"  (pack)", cant:(it.cant||1)*c.cant, prodNombre:c.nombre, kit:true})); return; }
+    if(aprendido && aprendido.length>=2){ aprendido.forEach(c=>out.push({nombre:c.nombre+"  (pack)", cant:(it.cant||1)*c.cant, prodNombre:c.nombre, kit:true})); return; }
     const ke=kitEspecial(it.nombre);
     if(ke){ ke.comps.forEach(cmp=>{ const prod=mejorProducto(cmp.n);
         out.push({nombre:cmp.n+"  (kit)", cant:(it.cant||1)*cmp.c, prodNombre:prod?prod.nombre:cmp.n, kit:true}); }); return; }
