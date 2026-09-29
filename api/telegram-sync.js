@@ -34,7 +34,10 @@ module.exports = async (req, res) => {
         ok: true,
         pendientes: pedidos.length,
         preparados: preparados.length,
-        clientes_pendientes: pedidos.map(p => p.cliente || p.id),
+        detalle_pendientes: pedidos.map(p => ({
+          cliente: p.cliente || p.id,
+          items: (p.items || []).map(i => i.cant + "x " + i.nombre),
+        })),
       });
     } catch (e) {
       return res.status(500).json({ ok: false, error: String((e && e.message) || e) });
