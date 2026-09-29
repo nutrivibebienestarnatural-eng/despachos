@@ -7,7 +7,7 @@
 //   pedidos    -> pendientes de preparar (lo normal)
 //   preparados -> ya avanzados (últimas 24hs), para el modo "Chequear un pedido" del bot
 
-const { kvSet } = require("./_lib/kv");
+const { kvGet, kvSet } = require("./_lib/kv");
 
 function limpiar(arr) {
   return (Array.isArray(arr) ? arr : []).slice(0, 200).map(p => ({
@@ -23,6 +23,23 @@ function limpiar(arr) {
 
 module.exports = async (req, res) => {
   res.setHeader("Cache-Control", "no-store");
+  if (req.method === "GET") {
+    // Diagnóstico: abrí /api/telegram-sync en el navegador para ver qué es lo que el bot está
+    // leyendo AHORA MISMO desde KV — sirve para saber si el problema es que no llega el dato desde
+    // la app, o que el bot no lo lee bien.
+    try {
+      const pedidos = (await kvGet("pending_orders")) || [];
+      const preparados = (await kvGet("prepared_recent")) || [];
+      return res.status(200).json({
+        ok: true,
+        pendientes: pedidos.length,
+        preparados: preparados.length,
+        clientes_pendientes: pedidos.map(p => p.cliente || p.id),
+      });
+    } catch (e) {
+      return res.status(500).json({ ok: false, error: String((e && e.message) || e) });
+    }
+  }
   if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Usá POST" });
   try {
     const body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
