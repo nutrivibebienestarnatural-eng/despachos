@@ -1087,6 +1087,21 @@ async function marcarTodasRevisadas(){
   toast(peds.length+" fotos marcadas ✓");
   vistaControl();
 }
+/* Habilita un pedido para que el bot de Telegram se lo muestre a Claudia — hasta acá, aunque esté
+   pendiente, sincronizarPedidosTelegram() no lo manda (queda esperando tu OK). */
+async function aprobarParaTelegram(id){
+  await DB.update(id,{telegramAprobado:true});
+  toast("Aprobado ✓ ya se lo puede mostrar el bot");
+  vistaControl();
+}
+async function aprobarTodasParaTelegram(){
+  const peds=ctlPedidos().filter(p=>p.estado==="pendiente" && !pedidoListoParaTelegram(p));
+  if(!peds.length) return;
+  if(!await askConfirm("¿Aprobar los "+peds.length+" pedidos de esta lista para que el bot se los muestre a Claudia?")) return;
+  for(const p of peds) await DB.update(p.id,{telegramAprobado:true});
+  toast(peds.length+" pedidos aprobados ✓");
+  vistaControl();
+}
 // actualiza solo el bloque de la foto (sin redibujar la pantalla, así no se pierde lo que se está editando)
 function refrescarFoto(id,patch){
   const p=PEDIDOS.find(x=>x.id===id); if(p) Object.assign(p,patch);
@@ -1565,8 +1580,20 @@ function vistaControl(){
     sinfoto:{t:"📷 Salieron / listos SIN foto", arr:sinFotoSalida},
     sinprod:{t:"❓ Productos sin cargar o sin reconocer", arr:sinProd},
     revisar:{t:"📷 Fotos sin revisar", arr:by(p=>p.fotoPrep && !p.fotoRevisada)},
+    aprobar:{t:"📋 Para aprobar (todavía no los ve Claudia)", arr:by(p=>p.estado==="pendiente" && !pedidoListoParaTelegram(p))},
   };
   const L=listas[CTL_LISTA]||listas.faltan;
+  const filaAprobar=p=>{ const its=(()=>{ try{ return itemsPedido(p); }catch(_){ return []; } })();
+    return `<div class="row" style="gap:12px;padding:12px 0;border-top:.5px solid var(--border);align-items:flex-start">
+      <div style="min-width:0;flex:1">
+        <div style="font-weight:650">${esc(p.cliente||'—')} <span class="muted" style="font-weight:400;font-size:12px">· ${esc(numOrden(p))} · ${esc(nombreEmp(p.empresa))}</span></div>
+        <div style="font-size:12.5px;color:var(--text-2);margin-top:2px">${its.map(x=>x.cant+"× "+esc(x.prodNombre)).join(" · ")||'<span style="color:var(--red)">sin productos</span>'}</div>
+        <div class="row" style="gap:6px;margin-top:8px">
+          <button class="btn sm green" onclick="aprobarParaTelegram('${p.id}')">✅ Aprobar para Claudia</button>
+          <button class="btn sm ghost" onclick="cambiarRuta('${p.id}')">✏️ Revisar / editar</button>
+        </div>
+      </div>
+    </div>`; };
   const filaRevisar=p=>{ const its=(()=>{ try{ return itemsPedido(p); }catch(_){ return []; } })();
     return `<div class="row" style="gap:12px;padding:12px 0;border-top:.5px solid var(--border);align-items:flex-start">
       <img src="${p.fotoPrep}" style="width:76px;height:76px;object-fit:cover;border-radius:10px;flex:0 0 auto;cursor:pointer" onclick="window.open('${p.fotoPrep}','_blank')">
@@ -1610,6 +1637,7 @@ function vistaControl(){
       ${[["entregados","var(--text-3)"],["camino","var(--accent)"],["listos","var(--green)"],["faltan","var(--amber)"],["mal","var(--red)"]].map(([k,c])=>cnt[k]?`<div title="${k}" style="width:${pct(cnt[k],peds.length)}%;background:${c}"></div>`:'').join("")}
     </div>
     <div class="kpis">
+      ${kpi(listas.aprobar.arr.length,"📋 Para aprobar (Claudia no los ve)",listas.aprobar.arr.length?"var(--red)":"var(--text-3)","aprobar")}
       ${kpi(cnt.faltan,"⏳ Falta preparar","var(--amber)","faltan")}
       ${kpi(cnt.listos,"✓ Listos para salir","var(--green)","listos")}
       ${kpi(cnt.camino,"🚚 En camino","var(--accent)","camino")}
@@ -1626,8 +1654,9 @@ function vistaControl(){
     <div class="card" style="margin-bottom:12px">
       <div class="row" style="justify-content:space-between"><span class="label" style="margin:0">${L.t} · ${L.arr.length}</span>
         ${CTL_LISTA==="mal"&&L.arr.length?`<button class="btn sm ghost" onclick="OPVIEW='despachar';vistaOperador()">Ver avisos →</button>`:''}
-        ${CTL_LISTA==="revisar"&&L.arr.length?`<button class="btn sm ghost" onclick="marcarTodasRevisadas()">✓ Marcar todas OK</button>`:''}</div>
-      ${L.arr.length?L.arr.slice(0,60).map(CTL_LISTA==="revisar"?filaRevisar:fila).join(""):`<div class="muted" style="padding:14px 0;text-align:center">Nada acá 👍</div>`}
+        ${CTL_LISTA==="revisar"&&L.arr.length?`<button class="btn sm ghost" onclick="marcarTodasRevisadas()">✓ Marcar todas OK</button>`:''}
+        ${CTL_LISTA==="aprobar"&&L.arr.length?`<button class="btn sm green" onclick="aprobarTodasParaTelegram()">✅ Aprobar todos</button>`:''}</div>
+      ${L.arr.length?L.arr.slice(0,60).map(CTL_LISTA==="revisar"?filaRevisar:(CTL_LISTA==="aprobar"?filaAprobar:fila)).join(""):`<div class="muted" style="padding:14px 0;text-align:center">Nada acá 👍</div>`}
     </div>
 
     <div class="card" style="margin-bottom:12px">
@@ -6084,22 +6113,44 @@ function cargarProdsExtra(){
 }
 /* Le pasa al bot de Telegram (api/telegram-sync) el listado de pedidos pendientes y qué debía
    llevar cada uno, para que /api/telegram-webhook pueda mostrarlos y verificar fotos de pickeo
-   sin necesitar acceso directo a Firestore. Se llama solo, cada vez que cambian los pedidos. */
+   sin necesitar acceso directo a Firestore. Se llama solo, cada vez que cambian los pedidos.
+   OJO: solo manda los que ya aprobaste (telegramAprobado) — así Claudia nunca ve un pedido antes
+   de que vos lo revisaste, por si el sistema se equivocó al importarlo (packs, cantidades, etc). */
 let TG_SYNC_FIRMA="";
+// Pedidos creados ANTES de este momento (los que ya estaban en curso cuando se agregó el filtro de
+// aprobación) se siguen mandando al bot como siempre, para no dejar a Claudia sin nada de un día
+// para el otro — el filtro de "Para aprobar" rige solo para los pedidos nuevos de acá en adelante.
+const TG_APROBACION_DESDE=new Date("2026-09-29T00:00:00-03:00").getTime();
+function pedidoListoParaTelegram(p){ return !!(p.telegramAprobado || (p.creado||0)<TG_APROBACION_DESDE); }
 async function sincronizarPedidosTelegram(){
   try{
     const aItem=p=>({ id:p.id, cliente:p.cliente||"", estado:p.estado,
       items:(()=>{ try{ return itemsPedido(p).map(it=>({nombre:it.prodNombre||it.nombre, cant:it.cant})); }catch(e){ return []; } })() });
-    const pendientes=soloPedidos().filter(p=>p.estado==="pendiente").map(aItem);
+    const todosPend=soloPedidos().filter(p=>p.estado==="pendiente");
+    const pendientes=todosPend.filter(pedidoListoParaTelegram).map(aItem);
     const haceUnDia=Date.now()-24*3600*1000;
     // pedidos ya avanzados (preparado en adelante) de las últimas 24hs, para el modo "Chequear un
     // pedido" del bot — permite releer una foto de algo ya armado y avisar si en realidad está mal.
     const preparados=soloPedidos().filter(p=>p.estado!=="pendiente"&&p.estado!=="anulado"&&(p.creado||0)>=haceUnDia).map(aItem);
     const firma=JSON.stringify([pendientes,preparados]);
-    if(firma===TG_SYNC_FIRMA) return;   // sin cambios desde la última vez: no reenvío
-    TG_SYNC_FIRMA=firma;
-    await fetch("/api/telegram-sync",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({pedidos:pendientes,preparados})});
+    if(firma!==TG_SYNC_FIRMA){
+      TG_SYNC_FIRMA=firma;
+      await fetch("/api/telegram-sync",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({pedidos:pendientes,preparados})});
+    }
+    // pedidos pendientes nuevos que todavía no te avisé por Telegram: te mando la lista para que
+    // la mires en Control → "Para aprobar" antes de habilitarlos para el bot.
+    const porAvisar=todosPend.filter(p=>!pedidoListoParaTelegram(p) && !p.telegramAvisoTs);
+    if(porAvisar.length) await avisarNuevosPedidosTelegram(porAvisar);
   }catch(e){ /* sync en segundo plano: si falla, no afecta el resto de la app */ }
+}
+async function avisarNuevosPedidosTelegram(peds){
+  for(const p of peds){ try{ await DB.update(p.id,{telegramAvisoTs:Date.now()}); }catch(e){} }   // marco primero: si falla el envío, no lo reintento en loop
+  const lista=peds.map(p=>{
+    const its=(()=>{ try{ return itemsPedido(p); }catch(_){ return []; } })();
+    return "• "+(p.cliente||"—")+" — "+(its.map(x=>x.cant+"x "+x.prodNombre).join(", ")||"(sin productos)");
+  }).join("\n");
+  const texto="📋 "+peds.length+" pedido"+(peds.length===1?"":"s")+" nuevo"+(peds.length===1?"":"s")+" para Claudia — revisalos antes de aprobarlos:\n\n"+lista+"\n\nEntrá a Control → \"Para aprobar\" para darles el OK.";
+  await enviarTelegram(texto);
 }
 /* Sin esto, sincronizar/revisar Telegram solo pasaba cuando cambiaba ALGÚN pedido en la base
    (disparado por el listener de Firestore) — si nada más cambiaba mientras tanto, lo que hacía
