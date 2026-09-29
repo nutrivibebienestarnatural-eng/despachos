@@ -5224,8 +5224,8 @@ async function traerTiendaNube(){
           // tiene un multiplicador guardado), NO guardo ese sku en el pedido: si no, en cualquier otra
           // pantalla (Preparación, descuento de stock) se vuelve a buscar por sku, encuentra el mismo
           // pack viejo y multiplica de nuevo — aunque acá ya hayamos guardado bien la cantidad real.
-          if(prod) prods.push({nombre:prod.nombre, cant:x.cant, sku:conflicto?"":x.sku, reconocido:true});
-          else { todos=false; prods.push({nombre:x.nombre, nomML:x.nombre, cant:x.cant, sku:conflicto?"":x.sku, reconocido:false}); }
+          if(prod) prods.push({nombre:prod.nombre, cant:x.cant, sku:conflicto?"":x.sku, reconocido:true, ...(conflicto?{noPack:true}:{})});
+          else { todos=false; prods.push({nombre:x.nombre, nomML:x.nombre, cant:x.cant, sku:conflicto?"":x.sku, reconocido:false, ...(conflicto?{noPack:true}:{})}); }
         });
         f.prods=prods; f.items=prods.map(p=>p.cant+"x "+p.nombre).join(" · ");
         if(!todos) f.prodsDudosos=true;
@@ -5311,8 +5311,8 @@ async function traerMercadoLibre(){
           // tiene un multiplicador guardado), NO guardo ese sku en el pedido: si no, en cualquier otra
           // pantalla (Preparación, descuento de stock) se vuelve a buscar por sku, encuentra el mismo
           // pack viejo y multiplica de nuevo — aunque acá ya hayamos guardado bien la cantidad real.
-          if(prod) prods.push({nombre:prod.nombre, cant:x.cant, sku:conflicto?"":x.sku, reconocido:true});
-          else { todos=false; prods.push({nombre:x.nombre, nomML:x.nombre, cant:x.cant, sku:conflicto?"":x.sku, reconocido:false}); }
+          if(prod) prods.push({nombre:prod.nombre, cant:x.cant, sku:conflicto?"":x.sku, reconocido:true, ...(conflicto?{noPack:true}:{})});
+          else { todos=false; prods.push({nombre:x.nombre, nomML:x.nombre, cant:x.cant, sku:conflicto?"":x.sku, reconocido:false, ...(conflicto?{noPack:true}:{})}); }
         });
         f.prods=prods; f.items=prods.map(p=>p.cant+"x "+p.nombre).join(" · ");
         if(!todos) f.prodsDudosos=true;
@@ -5601,7 +5601,7 @@ function guardarEditProd(){
   const f=IMP_FILAS[c.fi]; if(!f) return;
   if(!f.prods) f.prods=[];
   const match=PRODUCTOS.find(p=>p.nombre===nombre) || mejorProducto(nombre);
-  const nuevo={ nombre: match?match.nombre:nombre, cant, sku:c.sku||"", nomML:c.nomML||nombre, reconocido: !!match };
+  const nuevo={ nombre: match?match.nombre:nombre, cant, sku:c.sku||"", nomML:c.nomML||nombre, reconocido: !!match, noPack:true };
   if(c.pi>=0 && f.prods[c.pi]) f.prods[c.pi]=nuevo; else f.prods.push(nuevo);
   IMP_REV[c.fi]=true;   // ya lo corregiste a mano, cuenta como revisado
   cerrarEditProd();
@@ -5622,7 +5622,7 @@ function stockChipImport(nombreProd){
     const actual=nivel(nombreProd, st);
     let pedidoTotal=0;
     IMP_FILAS.forEach(f=>{ (f.prods||[]).forEach(x=>{
-      const comps=packComponentes(x.nombre,x.sku);
+      const comps=x.noPack?null:packComponentes(x.nombre,x.sku);
       if(comps){ comps.forEach(c=>{ if(c.nombre===nombreProd) pedidoTotal+=c.cant*(x.cant||1); }); }
       else if(x.nombre===nombreProd) pedidoTotal+=(x.cant||1);
     }); });
@@ -5684,7 +5684,7 @@ function mostrarPreviewImport(){
             ${(()=>{ const agregar=`<div style="margin-top:6px"><button class="btn sm ghost" onclick="editarProdImport(${i},-1)">+ Agregar producto</button></div>`;
               if(!f.prods||!f.prods.length) return `<div class="muted" style="font-size:14px;margin-top:4px">${esc(f.items||'—')}</div>${agregar}`;
               return `<div style="margin-top:4px">`+f.prods.map((x,pi)=>{
-                const comps=packComponentes(x.nombre,x.sku);
+                const comps=x.noPack?null:packComponentes(x.nombre,x.sku);
                 // un "pack" de UN solo componente a razón de 1x1 no es un pack de verdad — es simplemente el
                 // vínculo SKU→producto que ya enseñaste alguna vez (por "Vincular a mi producto"). En ese caso
                 // no tiene sentido mostrar el cartel de pack: se muestra igual que cualquier producto reconocido.
@@ -5955,7 +5955,7 @@ async function guardarNuevo(){
   try{
     await crearPedido({ empresa:$("#f_emp").value, canal:$("#f_canal").value, cliente, ref:refFinal, nota:($("#f_nota")?$("#f_nota").value:"").trim(), zonaFija:($("#f_zona")?$("#f_zona").value:""), tel:$("#f_tel").value.trim(),
       dir:$("#f_dir").value.trim(), ciudad:$("#f_ciu").value.trim(), provincia:$("#f_prov").value,
-      items:$("#f_items").value.trim(), prods:EDIT_PRODS.slice(), origen:$("#f_origen").value, metodo,
+      items:$("#f_items").value.trim(), prods:EDIT_PRODS.map(x=>({...x,noPack:true})), origen:$("#f_origen").value, metodo,
       correo: metodo==="correo"?$("#f_correo").value:"", tracking: metodo==="correo"?$("#f_track").value.trim():"" });
     toast("Pedido creado ✅");
   }catch(e){ notify("⚠️ NO SE PUDO CREAR EL PEDIDO\n\nError: "+(e&&e.message||e)+"\nVersión: "+APP_VERSION+"\n\nSacale captura y pasásela a Claude."); return; }
@@ -5967,7 +5967,7 @@ async function guardarEdicion(id){
   const metodo=$("#f_metodo").value;
   const refV=($("#f_ref")?$("#f_ref").value:"").trim().replace(/\D/g,"");
   await DB.update(id,{ cliente, empresa:($("#f_emp")?$("#f_emp").value:undefined), ref:refV?("#"+refV):"", nota:($("#f_nota")?$("#f_nota").value:"").trim(), zonaFija:($("#f_zona")?$("#f_zona").value:""), tel:$("#f_tel").value.trim(), dir:$("#f_dir").value.trim(),
-    ciudad:$("#f_ciu").value.trim(), provincia:$("#f_prov").value, items:$("#f_items").value.trim(), prods:EDIT_PRODS.slice(),
+    ciudad:$("#f_ciu").value.trim(), provincia:$("#f_prov").value, items:$("#f_items").value.trim(), prods:EDIT_PRODS.map(x=>({...x,noPack:true})),
     origen:$("#f_origen").value, metodo, correo: metodo==="correo"?$("#f_correo").value:"",
     tracking: metodo==="correo"?$("#f_track").value.trim():"" });
   // Si ya se había descontado, ofrezco rehacer el descuento con las cantidades nuevas
@@ -6234,7 +6234,7 @@ async function revisarCorreccionesTelegram(){
       try{
         const prods=(c.items||[]).map(it=>{
           const m=mejorProducto(it.nombre);
-          return { nombre: m?m.nombre:it.nombre, cant: Math.max(1,+it.cant||1), sku:"", reconocido: !!m };
+          return { nombre: m?m.nombre:it.nombre, cant: Math.max(1,+it.cant||1), sku:"", reconocido: !!m, noPack:true };
         });
         const items=prods.map(x=>x.cant+"x "+x.nombre).join(" · ");
         await DB.update(c.pedidoId,{prods, items, prodsDudosos: prods.some(x=>!x.reconocido)});
@@ -7068,7 +7068,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v47-sync-siempre-sin-comparar";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v48-noPack-corte-de-raiz";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
@@ -7254,7 +7254,10 @@ function itemsPedido(p){
   // Si la orden tiene productos elegidos del catálogo, esos mandan — pero expandimos packs conocidos
   if(p.prods && p.prods.length){
     p.prods.filter(x=>x&&x.nombre&&x.cant>0).forEach(x=>{
-      const comps=packComponentes(x.nombre, x.sku);
+      // x.noPack: cantidad puesta a mano por una persona (corrección manual, o se descartó un pack
+      // aprendido que no correspondía a este pedido) — no se vuelve a buscar NINGÚN pack para esto,
+      // ni por SKU ni por nombre, así no se puede volver a multiplicar solo.
+      const comps=x.noPack?null:packComponentes(x.nombre, x.sku);
       // un "pack" de un solo componente a razón de 1x1 no es un pack real — es el vínculo SKU→producto
       // que ya enseñaste una vez ("Vincular a mi producto"). Ahí se muestra como un producto normal,
       // sin la etiqueta "(pack)" que solo tiene sentido para kits de verdad.
