@@ -5654,7 +5654,10 @@ function mostrarPreviewImport(){
                 // vínculo SKU→producto que ya enseñaste alguna vez (por "Vincular a mi producto"). En ese caso
                 // no tiene sentido mostrar el cartel de pack: se muestra igual que cualquier producto reconocido.
                 const esAliasSimple = comps && comps.length===1 && (comps[0].cant||1)===1;
-                const esPackReal = comps && !esAliasSimple;
+                // mismo cuidado que al traer el pedido: si el pack aprendido multiplica cantidad pero el
+                // nombre de ESTE pedido no tiene ninguna pinta de pack, no hay que confiar en el aprendizaje
+                // viejo — el mismo SKU se vendió suelto esta vez (pasó con "Inulina": aprendido x2, pedido real x1).
+                const esPackReal = comps && !esAliasSimple && pareceePack(x.nomML||x.nombre);
                 const esPackND=(!comps && pareceePack(x.nomML||x.nombre));   // parece pack pero no lo conozco
                 const corregir=`<button class="btn sm ghost" style="padding:2px 8px;font-size:11px" onclick="editarProdImport(${i},${pi})">✎ corregir</button>`;
                 if(esPackReal){ return `<div style="font-size:13.5px;margin-top:3px">📦 <b>${esc(x.nomML||x.nombre)}</b> <span class="muted">→ descuenta:</span> ${comps.map(c=>c.cant*(x.cant||1)+"× "+esc(c.nombre)+stockChipImport(c.nombre)).join(", ")}
