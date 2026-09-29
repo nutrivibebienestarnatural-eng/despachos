@@ -5219,8 +5219,12 @@ async function traerTiendaNube(){
           }
           const pn=packDeNombre(x.nombre); if(!conflicto) x.cant=x.cant*pn.n;   // "Pack x3 ..." → multiplica (salvo que ya esté en duda)
           if(!prod && !conflicto) prod=mejorProducto(pn.nombre);   // en conflicto no adivino de nuevo: que lo confirme una persona
-          if(prod) prods.push({nombre:prod.nombre, cant:x.cant, sku:x.sku, reconocido:true});
-          else { todos=false; prods.push({nombre:x.nombre, nomML:x.nombre, cant:x.cant, sku:x.sku, reconocido:false}); }
+          // si hubo conflicto con el pack aprendido (el nombre no tenía pinta de pack pero el SKU sí
+          // tiene un multiplicador guardado), NO guardo ese sku en el pedido: si no, en cualquier otra
+          // pantalla (Preparación, descuento de stock) se vuelve a buscar por sku, encuentra el mismo
+          // pack viejo y multiplica de nuevo — aunque acá ya hayamos guardado bien la cantidad real.
+          if(prod) prods.push({nombre:prod.nombre, cant:x.cant, sku:conflicto?"":x.sku, reconocido:true});
+          else { todos=false; prods.push({nombre:x.nombre, nomML:x.nombre, cant:x.cant, sku:conflicto?"":x.sku, reconocido:false}); }
         });
         f.prods=prods; f.items=prods.map(p=>p.cant+"x "+p.nombre).join(" · ");
         if(!todos) f.prodsDudosos=true;
@@ -5302,8 +5306,12 @@ async function traerMercadoLibre(){
           }
           const pn=packDeNombre(x.nombre); if(!conflicto) x.cant=x.cant*pn.n;   // "Pack x3 ..." → multiplica (salvo que ya esté en duda)
           if(!prod && !conflicto) prod=mejorProducto(pn.nombre);
-          if(prod) prods.push({nombre:prod.nombre, cant:x.cant, sku:x.sku, reconocido:true});
-          else { todos=false; prods.push({nombre:x.nombre, nomML:x.nombre, cant:x.cant, sku:x.sku, reconocido:false}); }
+          // si hubo conflicto con el pack aprendido (el nombre no tenía pinta de pack pero el SKU sí
+          // tiene un multiplicador guardado), NO guardo ese sku en el pedido: si no, en cualquier otra
+          // pantalla (Preparación, descuento de stock) se vuelve a buscar por sku, encuentra el mismo
+          // pack viejo y multiplica de nuevo — aunque acá ya hayamos guardado bien la cantidad real.
+          if(prod) prods.push({nombre:prod.nombre, cant:x.cant, sku:conflicto?"":x.sku, reconocido:true});
+          else { todos=false; prods.push({nombre:x.nombre, nomML:x.nombre, cant:x.cant, sku:conflicto?"":x.sku, reconocido:false}); }
         });
         f.prods=prods; f.items=prods.map(p=>p.cant+"x "+p.nombre).join(" · ");
         if(!todos) f.prodsDudosos=true;
@@ -7039,7 +7047,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v43-fix-pack-agrupado-y-codigo-cruzado";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v44-fix-pack-no-se-reaplica";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
