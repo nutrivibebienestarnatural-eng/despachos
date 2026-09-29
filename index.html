@@ -6196,7 +6196,7 @@ async function avisarNuevosPedidosTelegram(peds){
 let TG_POLL_INICIADO=false;
 function iniciarPollingTelegram(){
   if(TG_POLL_INICIADO) return; TG_POLL_INICIADO=true;
-  setInterval(()=>{ sincronizarPedidosTelegram(); revisarFotosTelegram(); }, 5000);
+  setInterval(()=>{ sincronizarPedidosTelegram(); revisarFotosTelegram(); revisarCorreccionesTelegram(); }, 5000);
 }
 /* Levanta las fotos que llegaron por el bot de Telegram (pickeo con IA) y las guarda en el
    pedido correspondiente — quedan igual que si alguien las hubiera subido a mano, así aparecen
@@ -6218,6 +6218,28 @@ async function revisarFotosTelegram(){
           await DB.update(f.pedidoId,{telegramVeredicto:f.veredicto||""});
         }
       }catch(e){ console.warn("foto de Telegram no guardada:", f.pedidoId, e); }
+    }
+  }catch(e){ /* sync en segundo plano: si falla, no afecta el resto de la app */ }
+}
+/* Levanta las correcciones que el ADMIN mandó por texto desde el bot de Telegram ("✏️ Corregir este
+   pedido") y las aplica al pedido — el bot no puede escribir en Firestore directamente, así que las
+   deja en una cola hasta que la app (con la sesión real) las procese. Cada línea que mandó por
+   Telegram se busca en el catálogo (igual que "corregir" a mano en Importar); lo que no reconoce
+   queda marcado para revisar en Control, no se pierde. */
+async function revisarCorreccionesTelegram(){
+  try{
+    const r=await fetch("/api/telegram-correcciones"); const data=await r.json().catch(()=>({}));
+    const correcciones=(data&&data.correcciones)||[];
+    for(const c of correcciones){
+      const p=PEDIDOS.find(x=>x.id===c.pedidoId); if(!p) continue;   // el pedido ya no existe: lo salteo
+      try{
+        const prods=(c.items||[]).map(it=>{
+          const m=mejorProducto(it.nombre);
+          return { nombre: m?m.nombre:it.nombre, cant: Math.max(1,+it.cant||1), sku:"", reconocido: !!m };
+        });
+        const items=prods.map(x=>x.cant+"x "+x.nombre).join(" · ");
+        await DB.update(c.pedidoId,{prods, items, prodsDudosos: prods.some(x=>!x.reconocido)});
+      }catch(e){ console.warn("corrección de Telegram no aplicada:", c.pedidoId, e); }
     }
   }catch(e){ /* sync en segundo plano: si falla, no afecta el resto de la app */ }
 }
@@ -7047,7 +7069,7 @@ async function fijarSku(sku,nombre){
   toast(sku+" → "+nombre.split(" ").slice(0,3).join(" "));
   previsualizarCarga();
 }
-const APP_VERSION="v44-fix-pack-no-se-reaplica";   // versión visible para saber qué archivo está corriendo
+const APP_VERSION="v45-corregir-pedido-desde-bot";   // versión visible para saber qué archivo está corriendo
 async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
@@ -8165,7 +8187,7 @@ function vistaSimulacion(){
   } else if((rolInit==="operador"||rolInit==="empleado"||rolInit==="despacho") && DB.modo==="firebase"){
     // empleada por link: sin login propio. Firestore igual pide sesión, así que entro como anónimo.
     AUTH_READY=true;
-    const arrancar=()=>{ if(!SUBSCRITO){ SUBSCRITO=true; iniciarPollingTelegram(); DB.subscribe(d=>{ PEDIDOS=d; cargarProdsExtra(); sincronizarPedidosTelegram(); revisarFotosTelegram(); render(); }); } render(); };
+    const arrancar=()=>{ if(!SUBSCRITO){ SUBSCRITO=true; iniciarPollingTelegram(); DB.subscribe(d=>{ PEDIDOS=d; cargarProdsExtra(); sincronizarPedidosTelegram(); revisarFotosTelegram(); revisarCorreccionesTelegram(); render(); }); } render(); };
     firebase.auth().signInAnonymously()
       .then(arrancar)
       .catch(e=>{ console.warn("anonimo:", e);
@@ -8179,7 +8201,7 @@ function vistaSimulacion(){
           if(d.exists){ USERROL=d.data().rol||null;
             if(USERROL==="cadete") CADETE_ACTIVO=d.data().cadete||d.data().nombre||null; }
         }catch(e){ USERROL=null; }
-        if(USERROL && !SUBSCRITO){ SUBSCRITO=true; iniciarPollingTelegram(); DB.subscribe(d=>{ PEDIDOS=d; cargarProdsExtra(); sincronizarPedidosTelegram(); revisarFotosTelegram(); render(); }); }
+        if(USERROL && !SUBSCRITO){ SUBSCRITO=true; iniciarPollingTelegram(); DB.subscribe(d=>{ PEDIDOS=d; cargarProdsExtra(); sincronizarPedidosTelegram(); revisarFotosTelegram(); revisarCorreccionesTelegram(); render(); }); }
       }
       AUTH_READY=true; render();
     });

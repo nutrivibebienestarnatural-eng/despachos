@@ -65,6 +65,13 @@ function chatsAutorizados() {
   return String(process.env.TELEGRAM_PICKEO_CHAT_IDS || "").split(",").map(s => s.trim()).filter(Boolean);
 }
 
+// Solo vos (el encargado) podés corregir un pedido desde el bot — Claudia puede armar y avisar,
+// pero no reescribir qué debía llevar cada pedido. Se identifica por chat id, no por nombre.
+function esAdmin(chatId) {
+  const id = String(process.env.TELEGRAM_ADMIN_CHAT_ID || "").trim();
+  return !!id && String(chatId) === id;
+}
+
 async function tg(method, body) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const r = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
@@ -278,6 +285,22 @@ module.exports = async (req, res) => {
         return res.status(200).json({ ok: true });
       }
 
+      // Corregir qué debía llevar un pedido — solo para el encargado (ver esAdmin). El bot no puede
+      // escribir en Firestore, así que la corrección queda en una cola (KV) hasta que la app, abierta
+      // en el navegador con la sesión real, la aplique — mismo mecanismo que las fotos del pickeo.
+      const mCorregir = /^corregir:(.+)$/.exec(cq.data || "");
+      if (mCorregir) {
+        if (!esAdmin(chatId)) return res.status(200).json({ ok: true });
+        const combinados = (await pedidosPendientes()).concat(await pedidosPreparadosRecientes());
+        const pedido = combinados.find(p => p.id === mCorregir[1]);
+        if (!pedido) { await enviarTexto(chatId, "No encuentro ese pedido — puede que ya haya cambiado. Mandá /pedidos de nuevo."); return res.status(200).json({ ok: true }); }
+        await kvSet("telegram_correccion_espera:" + chatId, { pedidoId: pedido.id, cliente: pedido.cliente || "", ts: Date.now() });
+        await enviarTexto(chatId,
+          `✏️ Mandame la lista corregida para <b>${esc(pedido.cliente || "—")}</b>, un producto por línea, así:\n<code>4x Inulina - Prebiotico Natural (60 capsulas)\n1x Glicinato de Magnesio</code>\n\n` +
+          `Esto reemplaza TODO lo que este pedido debía llevar. Mandá "cancelar" si te arrepentís.`);
+        return res.status(200).json({ ok: true });
+      }
+
       const m = /^p:(.+)$/.exec(cq.data || "");
       if (!m) return res.status(200).json({ ok: true });
       const pend = await pedidosPendientes();
@@ -288,10 +311,12 @@ module.exports = async (req, res) => {
       }
       await kvSet("telegram_wait:" + chatId, { pedidoId: pedido.id, ts: Date.now() });
       const lista = (pedido.items || []).map(i => `• ${i.cant}x ${esc(i.nombre)}`).join("\n") || "(sin productos cargados)";
+      const botonesPedido = [[{ text: "⚠️ Esta cantidad no me cierra", callback_data: "flag:" + pedido.id }]];
+      if (esAdmin(chatId)) botonesPedido.push([{ text: "✏️ Corregir este pedido", callback_data: "corregir:" + pedido.id }]);
       await enviarTexto(chatId,
         `🧺 <b>Andá a buscar esto para ${esc(pedido.cliente || "—")}:</b>\n${lista}\n\n` +
         `📷 Cuando lo armes, mandame la foto del pedido acá mismo.`,
-        [[{ text: "⚠️ Esta cantidad no me cierra", callback_data: "flag:" + pedido.id }]]);
+        botonesPedido);
       return res.status(200).json({ ok: true });
     }
 
@@ -377,12 +402,45 @@ module.exports = async (req, res) => {
         // algo no coincide: NO se ofrece pasar a otro pedido — se re-arma el mismo, hasta que
         // la foto corregida dé bien (o alguien lo revise a mano en Control).
         await kvSet("telegram_wait:" + chatId, { pedidoId: pedido.id, ts: Date.now() });
+        const botonesIncompleto = [[{ text: "⚠️ La cantidad esperada no me cierra", callback_data: "flag:" + pedido.id }]];
+        if (esAdmin(chatId)) botonesIncompleto.push([{ text: "✏️ Corregir este pedido", callback_data: "corregir:" + pedido.id }]);
         await enviarTexto(chatId, aviso + formatearVeredicto(veredicto, pedido.cliente) +
           `\n\n🔧 Corregí el pedido de <b>${esc(pedido.cliente || "—")}</b> y mandame la foto de nuevo antes de seguir con otro.`,
-          [[{ text: "⚠️ La cantidad esperada no me cierra", callback_data: "flag:" + pedido.id }]]);
+          botonesIncompleto);
       }
       await guardarFotoParaLaApp(pedido, base64, mediaType, veredicto);
       return res.status(200).json({ ok: true });
+    }
+
+    // 2.5) ¿Está esperando que mandes la lista corregida de un pedido? (solo admin, ver esAdmin)
+    if (esAdmin(chatId) && msg.text) {
+      const esperaCorreccion = await kvGet("telegram_correccion_espera:" + chatId);
+      if (esperaCorreccion) {
+        const textoOriginal = String(msg.text || "").trim();
+        if (/^cancelar$/i.test(textoOriginal)) {
+          await kvSet("telegram_correccion_espera:" + chatId, null);
+          await enviarTexto(chatId, "👍 Cancelado, no cambié nada.");
+          return res.status(200).json({ ok: true });
+        }
+        const lineas = textoOriginal.split("\n").map(l => l.trim()).filter(Boolean);
+        const items = lineas.map(l => {
+          const m = /^(\d+)\s*[xX]\s*(.+)$/.exec(l);
+          return m ? { cant: parseInt(m[1], 10) || 1, nombre: m[2].trim() } : { cant: 1, nombre: l };
+        });
+        if (!items.length) {
+          await enviarTexto(chatId, "No entendí ningún producto — mandalo como \"2x nombre del producto\", uno por línea, o \"cancelar\".");
+          return res.status(200).json({ ok: true });
+        }
+        const cola = (await kvGet("telegram_correcciones_pendientes")) || [];
+        cola.push({ pedidoId: esperaCorreccion.pedidoId, cliente: esperaCorreccion.cliente || "", items, ts: Date.now() });
+        await kvSet("telegram_correcciones_pendientes", cola.slice(-30));
+        await kvSet("telegram_correccion_espera:" + chatId, null);
+        const resumen = items.map(i => `• ${i.cant}x ${esc(i.nombre)}`).join("\n");
+        await enviarTexto(chatId,
+          `✅ Corrección guardada para <b>${esc(esperaCorreccion.cliente || "—")}</b>:\n${resumen}\n\n` +
+          `Se aplica sola apenas la app esté abierta (unos segundos) — después Claudia ya ve la lista corregida.`);
+        return res.status(200).json({ ok: true });
+      }
     }
 
     // 3) Texto / comando (incluye los botones del menú fijo, que mandan su propio texto)
