@@ -62,24 +62,32 @@ async function descargarEtiquetaML(shipId, token) {
   } catch (e) { return null; }
 }
 
-// Convierte una orden + su envío al formato que usa la app de despacho
-// (mismos nombres de campo que arma api/tiendanube.js, para que el import del lado
-// del navegador — vincular productos por SKU, elegir método de envío, etc — sea igual).
-function mapearPedido(o, ship, empresa) {
-  const items = (o.order_items || []).map(it => ({
-    nombre: String((it.item && it.item.title) || "").trim(),
-    cant: parseInt(it.quantity, 10) || 1,
-    sku: String((it.item && (it.item.seller_sku || it.item.seller_custom_field)) || "").trim(),
-  }));
+// Convierte un grupo de órdenes (una o varias — ver nota de "pack" en traerPedidos) + su envío
+// al formato que usa la app de despacho (mismos nombres de campo que arma api/tiendanube.js, para
+// que el import del lado del navegador — vincular productos por SKU, elegir método de envío, etc —
+// sea igual).
+function mapearPedido(ordenes, ship, empresa) {
+  const items = [];
+  ordenes.forEach(o => {
+    (o.order_items || []).forEach(it => {
+      items.push({
+        nombre: String((it.item && it.item.title) || "").trim(),
+        cant: parseInt(it.quantity, 10) || 1,
+        sku: String((it.item && (it.item.seller_sku || it.item.seller_custom_field)) || "").trim(),
+      });
+    });
+  });
   const itemsTxt = items.map(p => p.cant + "x " + p.nombre).join(" · ");
   const rd = (ship && ship.receiver_address) || {};
   const dir = [rd.address_line, rd.comment].filter(Boolean).join(" - ").trim();
+  const primera = ordenes[0];
+  const refId = primera.pack_id || primera.id;
   return {
-    mlId: o.id,
-    ref: "#" + o.id,
+    mlId: refId,
+    ref: "#" + refId,
     empresa,
     canal: "ml_flex",
-    cliente: rd.receiver_name || (o.buyer && o.buyer.nickname) || "",
+    cliente: rd.receiver_name || (primera.buyer && primera.buyer.nickname) || "",
     tel: (rd.receiver_phone || "").trim(),
     dir: dir,
     ciudad: (rd.city && rd.city.name) || "",
@@ -96,7 +104,7 @@ async function traerPedidos(empresa, desde) {
   const sellerId = SELLER_ID[empresa];
   if (!sellerId) throw new Error("No tengo el ID de vendedor de ML de '" + empresa + "'. Falta agregarlo en api/mercadolibre.js (SELLER_ID).");
   const filtroFecha = desde ? `&order.date_created.from=${encodeURIComponent(desde + "T00:00:00.000-03:00")}` : "";
-  const out = [];
+  const ordenes = [];
   for (let offset = 0; offset < 500; offset += 50) {
     const url = `${API_BASE}/orders/search?seller=${sellerId}&order.status=paid&sort=date_desc&limit=50&offset=${offset}${filtroFecha}`;
     const r = await fetch(url, { headers: mlHeaders(t.access_token) });
@@ -106,25 +114,42 @@ async function traerPedidos(empresa, desde) {
     }
     const data = await r.json();
     const results = data.results || [];
-    for (const o of results) {
-      const shipId = o.shipping && o.shipping.id;
-      let ship = null;
-      if (shipId) {
+    ordenes.push(...results);
+    if (results.length < 50) break;   // última página
+  }
+  // Cuando el comprador junta varios productos en un mismo carrito, ML los separa en varias "orders"
+  // (una por cada publicación) pero las despacha juntas en UN solo envío — si no las agrupamos acá,
+  // el depósito termina viendo "un pedido por producto" para lo que en realidad es una sola caja.
+  const grupos = new Map();
+  for (const o of ordenes) {
+    const shipId = o.shipping && o.shipping.id;
+    const key = shipId ? ("ship:" + shipId) : (o.pack_id ? ("pack:" + o.pack_id) : ("orden:" + o.id));
+    if (!grupos.has(key)) grupos.set(key, []);
+    grupos.get(key).push(o);
+  }
+  const shipCache = new Map();
+  const out = [];
+  for (const grupo of grupos.values()) {
+    const shipId = grupo.map(o => o.shipping && o.shipping.id).find(Boolean);
+    let ship = null;
+    if (shipId) {
+      if (shipCache.has(shipId)) ship = shipCache.get(shipId);
+      else {
         try {
           const rs = await fetch(`${API_BASE}/shipments/${shipId}`, { headers: mlHeaders(t.access_token) });
           if (rs.ok) ship = await rs.json();
         } catch (e) { /* sin conexión al detalle del envío: sigue igual, se completa a mano en la app */ }
+        shipCache.set(shipId, ship);
       }
-      if (ship && ["shipped", "delivered", "cancelled"].includes(ship.status)) continue;   // ya salió: no lo traigo de nuevo
-      if (ship && ship.logistic_type === "fulfillment") continue;   // Full: lo despacha el depósito de ML, no la marca
-      const pedido = mapearPedido(o, ship, empresa);
-      if (shipId) {
-        const etiquetaPdf = await descargarEtiquetaML(shipId, t.access_token);
-        if (etiquetaPdf) { pedido.etiquetaPdf = etiquetaPdf; pedido.etiquetaPdfNombre = "etiqueta-ml-" + o.id + ".pdf"; }
-      }
-      out.push(pedido);
     }
-    if (results.length < 50) break;   // última página
+    if (ship && ["shipped", "delivered", "cancelled"].includes(ship.status)) continue;   // ya salió: no lo traigo de nuevo
+    if (ship && ship.logistic_type === "fulfillment") continue;   // Full: lo despacha el depósito de ML, no la marca
+    const pedido = mapearPedido(grupo, ship, empresa);
+    if (shipId) {
+      const etiquetaPdf = await descargarEtiquetaML(shipId, t.access_token);
+      if (etiquetaPdf) { pedido.etiquetaPdf = etiquetaPdf; pedido.etiquetaPdfNombre = "etiqueta-ml-" + shipId + ".pdf"; }
+    }
+    out.push(pedido);
   }
   return out;
 }
