@@ -529,7 +529,12 @@ const formatoEnvio = p => (p&&p.pickit) ? "Pickit" : (canalDe(p)==="ml_flex" ? "
 /* Marcas que SIEMPRE salen de Bs As y por lo tanto SIEMPRE descuentan stock
    (no se eligen pedido por pedido, como sí pasa con Labs del interior). */
 function saleSiempreBsAs(empresa){ return empresa==="nutrivibe" || empresa==="suplemundo"; }
-const costoEnvio = p => precioCat(catPedido(p));   // precio por zona (costo Flex + margen; correo = gestión)
+/* Descuento de 500 en los envíos de cadete (Cardinal): vale para pedidos creados desde el lunes 28/9/2026 */
+const DESC_CADETE = 500, DESC_CADETE_DESDE = new Date(2026,8,28).getTime();
+const descCad = p => ((p&&p.creado)||0)>=DESC_CADETE_DESDE ? DESC_CADETE : 0;
+const esCatCadete = c => ["caba","1","2","3"].includes(c);
+const costoCard = (p,c,zc) => { const b=(zc||zonaCosto())[c]||0; return b?Math.max(0,b-descCad(p)):0; };   // lo que se le paga al cadete por ese pedido
+const costoEnvio = p => { const c=catPedido(p); return Math.max(0, precioCat(c)-(esCatCadete(c)?descCad(p):0)); };   // precio por zona (costo Flex + margen; correo = gestión), con descuento
 const STOCK_DUENO = "labs";   // Labs pone el stock compartido; las demás empresas le pagan lo que sacan
 /* Zonas de reparto reales (precio editable). Buenos Aires → cadete por zona; otra provincia → correo */
 let ZONAS = {
@@ -2217,7 +2222,7 @@ function cuentaTransportistas(peds){
   const g={};
   peds.forEach(p=>{ const c=catPedido(p);
     const quien = p.metodo==="correo" ? "Correo" : (p.cadete || "Sin asignar");
-    const costo = (esCad(c) && cadeteCobra(quien)) ? (zc[c]||0) : 0;      // lo que le pagás al que reparte
+    const costo = (esCad(c) && cadeteCobra(quien)) ? costoCard(p,c,zc) : 0;      // lo que le pagás al que reparte
     if(!g[quien]) g[quien]={quien,n:0,costo:0,peds:[],zonas:{}};
     g[quien].n++; g[quien].costo+=costo; g[quien].peds.push({p,costo});
     const zl=anilloDe(p).label; g[quien].zonas[zl]=(g[quien].zonas[zl]||0)+1; });
@@ -2290,7 +2295,7 @@ function datosPeriodo(desdeTs){
   const rep={};
   peds.forEach(p=>{ const q=p.metodo==="correo"?"Correo":(p.cadete||"Sin asignar"); const c=catPedido(p);
     if(!rep[q]) rep[q]={quien:q,envios:0,pagar:0};
-    rep[q].envios++; rep[q].pagar += (esCad(c)&&p.metodo!=="correo"&&cadeteCobra(q))?(zc[c]||0):0; });
+    rep[q].envios++; rep[q].pagar += (esCad(c)&&p.metodo!=="correo"&&cadeteCobra(q))?costoCard(p,c,zc):0; });
   const saldos={}; PRODUCTOS.forEach(pr=>{ const n=nivel(pr.nombre,st); if(n) saldos[pr.nombre]=n; });
   return {marcas:Object.values(marcas), rep:Object.values(rep), saldos, movs:movs.length, peds:peds.length};
 }
@@ -2667,7 +2672,7 @@ function pantallaZonas(){
   const g={}; orden.forEach(([k,l])=>g[k]={k,label:l,n:0,cobro:0,costo:0});
   peds.forEach(p=>{ const c=catPedido(p); if(!g[c]) return;
     g[c].n++; g[c].cobro+=costoEnvio(p);
-    g[c].costo += ["caba","1","2","3"].includes(c) ? (zc[c]||0) : 0; });
+    g[c].costo += ["caba","1","2","3"].includes(c) ? costoCard(p,c,zc) : 0; });
   const filas=orden.map(([k])=>g[k]).filter(x=>x.n>0);
   const tN=filas.reduce((s,x)=>s+x.n,0), tCob=filas.reduce((s,x)=>s+x.cobro,0), tCos=filas.reduce((s,x)=>s+x.costo,0);
   const maxN=Math.max(1,...filas.map(x=>x.n));
@@ -2718,7 +2723,7 @@ function imprimirZonas(){
   const zc=zonaCosto();
   const orden=[["caba","CABA"],["1","Zona 1"],["2","Zona 2"],["3","Zona 3"],["correo","Correo"],["pickit","Pickit"]];
   const g={}; orden.forEach(([k,l])=>g[k]={label:l,n:0,cobro:0,costo:0});
-  peds.forEach(p=>{ const c=catPedido(p); if(!g[c]) return; g[c].n++; g[c].cobro+=costoEnvio(p); g[c].costo+=["caba","1","2","3"].includes(c)?(zc[c]||0):0; });
+  peds.forEach(p=>{ const c=catPedido(p); if(!g[c]) return; g[c].n++; g[c].cobro+=costoEnvio(p); g[c].costo+=["caba","1","2","3"].includes(c)?costoCard(p,c,zc):0; });
   const filas=orden.map(([k])=>g[k]).filter(x=>x.n>0);
   const tN=filas.reduce((s,x)=>s+x.n,0), tCob=filas.reduce((s,x)=>s+x.cobro,0), tCos=filas.reduce((s,x)=>s+x.costo,0);
   const w=window.open("","_blank","width=760,height=800"); if(!w){ toast("Permití las ventanas emergentes"); return; }
@@ -2741,7 +2746,7 @@ function pantallaCuenta(){
   const zc=zonaCosto(); const esCad=c=>["caba","1","2","3"].includes(c);
   const g={};
   peds.filter(p=>!p.cobradoEn).forEach(p=>{ const e=p.empresa||"—"; if(!g[e]) g[e]={emp:e,n:0,cobrar:0,costo:0,peds:[]};
-    const c=catPedido(p), cob=costoEnvio(p), cos=esCad(c)?(zc[c]||0):0;
+    const c=catPedido(p), cob=costoEnvio(p), cos=esCad(c)?costoCard(p,c,zc):0;
     g[e].n++; g[e].cobrar+=cob; g[e].costo+=cos; g[e].peds.push({p,cob,cos}); });
   const grupos=Object.values(g).sort((a,b)=>b.cobrar-a.cobrar);
   const totC=grupos.reduce((s,x)=>s+x.cobrar,0), totK=grupos.reduce((s,x)=>s+x.costo,0);
@@ -3024,7 +3029,7 @@ function cobroReparto(desde,hasta){
     && enRango(fechaFacturable(p),desde,hasta));
   const byEmp={};
   proc.forEach(p=>{ const e=p.empresa; if(!byEmp[e]) byEmp[e]={empresa:e,pedidos:[],total:0,costo:0};
-    const c=catPedido(p), precio=precioCat(c), costo=(zonaCosto()[c]||0);
+    const c=catPedido(p), precio=costoEnvio(p), costo=costoCard(p,c);
     byEmp[e].total+=precio; byEmp[e].costo+=costo;
     byEmp[e].pedidos.push({id:p.id, ref:codigoOrden(p), cliente:p.cliente||"—", cat:c, zona:COB_ET[c], destino:(p.ciudad||"")+(p.provincia?(", "+p.provincia):""), precio, pagado:!!p.pagado}); });
   const arr=Object.values(byEmp);
@@ -4578,7 +4583,7 @@ function vistaPanel(){
   const zc=zonaCosto(), esCad=c=>["caba","1","2","3"].includes(c);
   const repHoy={}; activos.forEach(p=>{ const q=p.metodo==="correo"?"Correo":(p.cadete||"Sin asignar");
     const c=catPedido(p); if(!repHoy[q]) repHoy[q]={q,n:0,$:0};
-    repHoy[q].n++; repHoy[q].$ += (esCad(c)&&p.metodo!=="correo"&&cadeteCobra(q))?(zc[c]||0):0; });
+    repHoy[q].n++; repHoy[q].$ += (esCad(c)&&p.metodo!=="correo"&&cadeteCobra(q))?costoCard(p,c,zc):0; });
   const estados=[["pendiente","Por preparar"],["preparado","Preparados"],["asignado","Asignados"],["en_reparto","En reparto"],["despachado","Despachados"],["en_camino","En camino"],["entregado","Entregados"]];
   const filaEst=estados.map(([k,l])=>{ const n=ped.filter(p=>p.estado===k).length; if(!n) return "";
     const e=estObj(k);
@@ -7130,10 +7135,10 @@ function vistaInformes(){
   const aCobrar=peds.reduce((s,p)=>s+costoEnvio(p),0);
   const zc=zonaCosto(); const esCadeteCat=c=>["caba","1","2","3"].includes(c);
   const aCardinal=peds.reduce((s,p)=>{ const c=catPedido(p); const q=p.metodo==="correo"?"Correo":(p.cadete||"");
-    return s+((esCadeteCat(c)&&p.metodo!=="correo"&&cadeteCobra(q))?(zc[c]||0):0); },0);
+    return s+((esCadeteCat(c)&&p.metodo!=="correo"&&cadeteCobra(q))?costoCard(p,c,zc):0); },0);
   const cats=[["caba","CABA",0],["1","Zona 1",1],["2","Zona 2",2],["3","Zona 3",3],["correo","Correo",null],["pickit","Pickit",null]];
   const porZona=cats.map(([c,lbl,anillo])=>{ const g=peds.filter(p=>catPedido(p)===c);
-    return {c,lbl,anillo,n:g.length, cobrar:g.reduce((s,p)=>s+costoEnvio(p),0), cardinal:esCadeteCat(c)?g.reduce((s,p)=>s+(zc[c]||0),0):0}; }).filter(z=>z.n>0);
+    return {c,lbl,anillo,n:g.length, cobrar:g.reduce((s,p)=>s+costoEnvio(p),0), cardinal:esCadeteCat(c)?g.reduce((s,p)=>s+costoCard(p,c,zc),0):0}; }).filter(z=>z.n>0);
   const dias=[]; for(let i=6;i>=0;i--){ const d=new Date(); d.setHours(0,0,0,0); d.setDate(d.getDate()-i);
     const ini=d.getTime(), fin=ini+86400000;
     dias.push({ lbl:d.toLocaleDateString("es-AR",{weekday:"short",day:"numeric"}), n:soloPedidos().filter(p=>(p.creado||0)>=ini&&(p.creado||0)<fin&&p.estado!=="anulado").length }); }
@@ -7542,17 +7547,17 @@ function vistaElegirCadete(){
     <div class="grid">${CADETES.map(c=>`<button class="role-card" onclick="CADETE_ACTIVO='${esc(c)}';render()"><h3>${esc(c)}</h3></button>`).join("")}</div>`;
 }
 function vistaCadete(){
-  const mios=soloPedidos().filter(p=>p.metodo==="cadete"&&p.cadete===CADETE_ACTIVO&&["asignado","en_reparto"].includes(p.estado));   // entregados: afuera de la ruta
+  const mios=soloPedidos().filter(p=>p.metodo==="cadete"&&p.cadete===CADETE_ACTIVO&&["preparado","asignado","en_reparto"].includes(p.estado));   // preparado ya lo ve directo, sin paso de asignación; entregados: afuera de la ruta
   const hechos=soloPedidos().filter(p=>p.cadete===CADETE_ACTIVO&&["entregado","confirmado"].includes(p.estado)).length;
   app().innerHTML=`<div class="title">${esc(CADETE_ACTIVO)}</div>
     <div class="subtitle">${mios.length} para repartir · ${hechos} entregados</div>
-    ${mios.some(p=>["asignado","en_reparto"].includes(p.estado))?`<button class="btn block" style="margin-bottom:14px" onclick="escanearEntrega()">${icon('check')} Escanear entrega</button>`:""}
+    ${mios.some(p=>["preparado","asignado","en_reparto"].includes(p.estado))?`<button class="btn block" style="margin-bottom:14px" onclick="escanearEntrega()">${icon('check')} Escanear entrega</button>`:""}
     <div class="cardgrid">${mios.map(cardCadete).join("")||empty('check','No tenés pedidos asignados ahora.')}</div>`;
 }
 function cardCadete(p){
   const e=estObj(p.estado);
   let acts="";
-  if(p.estado==="asignado")  acts=`<button class="btn amber" onclick="salirReparto('${p.id}')">Salí a repartir</button>`;
+  if(p.estado==="asignado"||p.estado==="preparado")  acts=`<button class="btn amber" onclick="salirReparto('${p.id}')">Salí a repartir</button>`;
   if(p.estado==="en_reparto")acts=`<button class="btn green" onclick="marcarEntregado('${p.id}')">Marcar entregado</button><button class="btn sm ghost" onclick="adjuntarFoto('${p.id}')">Foto</button>`;
   if(p.estado==="entregado")acts=`<span class="muted" style="font-size:13px;align-self:center">Esperando confirmación</span><button class="btn sm ghost" onclick="pedirConfirmacion('${p.id}')">Reenviar confirmación</button>`;
   const mapa=`https://maps.google.com/?q=${encodeURIComponent((p.dir||"")+", "+(p.ciudad||"")+", "+(p.provincia||""))}`;
