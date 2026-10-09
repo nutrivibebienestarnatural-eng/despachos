@@ -340,6 +340,12 @@ hr{border:none;border-top:.5px solid var(--border);margin:20px 0}
    Pegá tu config de Firebase para sincronizar entre dispositivos en vivo.
    Vacío = MODO DEMO (guarda en este navegador). Instrucciones al final.
    ========================================================================= */
+/* Selectores de fecha: mientras se tipea el año (0002, 0020, 0202…) el valor ya es una fecha válida y
+   el onchange redibujaba la pantalla, dejando el año trabado en 0006. Se ignora todo cambio con año < 2000. */
+document.addEventListener("change", e=>{
+  const t=e.target;
+  if(t && t.tagName==="INPUT" && t.type==="date" && t.value && parseInt(t.value.slice(0,t.value.indexOf("-")),10)<2000) e.stopImmediatePropagation();
+}, true);
 const FIREBASE_CONFIG = {
   apiKey: "AIzaSyD7Bzg7yP8yP_ZsvpShh6Fi7mYsc-_bUik",
   authDomain: "fullminenet.firebaseapp.com",
@@ -2266,10 +2272,10 @@ function rangoSemana(off){   // off=0 esta semana, off=-1 la pasada. Lunes a dom
   const f=x=>x.toISOString().slice(0,10);
   return [f(ini),f(fin)];
 }
-function rangoMes(){ const d=new Date(); const f=x=>x.toISOString().slice(0,10);
-  return [f(new Date(d.getFullYear(),d.getMonth(),1)), f(new Date(d.getFullYear(),d.getMonth()+1,0))]; }
+function rangoMes(off){ const d=new Date(); const m=d.getMonth()+(+off||0); const f=x=>new Date(x.getTime()-x.getTimezoneOffset()*60000).toISOString().slice(0,10);
+  return [f(new Date(d.getFullYear(),m,1)), f(new Date(d.getFullYear(),m+1,0))]; }
 function setRangoCta(k){
-  const r = k==="sem"?rangoSemana(0) : k==="ant"?rangoSemana(-1) : k==="mes"?rangoMes() : ["",""];
+  const r = k==="sem"?rangoSemana(0) : k==="ant"?rangoSemana(-1) : k==="mes"?rangoMes() : k==="mesant"?rangoMes(-1) : ["",""];
   CTA_DESDE=r[0]; CTA_HASTA=r[1]; pantallaCuenta();
 }
 function setRangoSal(k){
@@ -2919,20 +2925,21 @@ function pantallaSalidas(){
     ${salMinEfectivo()?`<div class="hint" style="margin-top:6px">Mostrando desde el corte del ${new Date(salMinEfectivo()).toLocaleString("es-AR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})} hs · <a onclick="setRangoSal('todo')" style="color:var(--accent);cursor:pointer;font-weight:700;text-decoration:underline">Ver todo</a></div>`:`<div class="hint" style="margin-top:6px">Mostrando todo el histórico</div>`}
     <div class="card" style="margin:14px 0">
       <div class="row" style="gap:10px;align-items:flex-end;flex-wrap:wrap">
-        <div style="flex:1;min-width:120px"><span class="label">Desde</span><input type="date" value="${SAL_DESDE}" onchange="SAL_DESDE=this.value;pantallaSalidas()" style="${inpS}"></div>
-        <div style="flex:1;min-width:120px"><span class="label">Hasta</span><input type="date" value="${SAL_HASTA}" onchange="SAL_HASTA=this.value;pantallaSalidas()" style="${inpS}"></div>
+        <div style="flex:1;min-width:120px"><span class="label">Desde</span><input type="date" value="${SAL_DESDE}" onchange="SAL_MIN=0;SAL_DESDE=this.value;pantallaSalidas()" style="${inpS}"></div>
+        <div style="flex:1;min-width:120px"><span class="label">Hasta</span><input type="date" value="${SAL_HASTA}" onchange="SAL_MIN=0;SAL_HASTA=this.value;pantallaSalidas()" style="${inpS}"></div>
       </div>
       <div class="row" style="margin-top:10px">
         <button class="btn sm ghost" onclick="SAL_MIN=null;SAL_DESDE='';SAL_HASTA='';pantallaSalidas()">Desde el último cierre</button>
         <button class="btn sm ghost" onclick="setRangoSal('sem')">Esta semana</button>
         <button class="btn sm ghost" onclick="setRangoSal('ant')">Semana pasada</button>
         <button class="btn sm ghost" onclick="setRangoSal('mes')">Este mes</button>
+        <button class="btn sm ghost" onclick="setRangoSal('mesant')">Mes pasado</button>
         <button class="btn sm ghost" onclick="setRangoSal('todo')">Todo</button>
       </div>
     </div>
     <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
       <b>${total} unidades salieron</b>
-      ${lista.length?`<span class="row" style="gap:6px"><button class="btn sm green" onclick="enviarSalidasWA()">WhatsApp</button><button class="btn sm ghost" onclick="imprimirSalidas()">${icon('printer')} PDF</button></span>`:''}
+      ${lista.length?`<span class="row" style="gap:6px"><button class="btn sm green" onclick="enviarSalidasWA()">WhatsApp</button><button class="btn sm ghost" onclick="exportarSalidasExcel()">📊 Excel</button><button class="btn sm ghost" onclick="imprimirSalidas()">${icon('printer')} PDF</button></span>`:''}
     </div>
     ${Object.keys(totEmp).length?`<div class="card" style="margin-bottom:12px;padding:12px 14px">
       <div class="label" style="margin-bottom:2px">Salió por empresa</div>
@@ -2961,6 +2968,38 @@ function pantallaSalidas(){
           </div>`).join("")}
         </div>`:''}
       </div>`; }).join(""):empty('box','No salió nada en este período.')}`;
+}
+/* Exporta a Excel lo que salió del stock en el rango elegido: una fila por retiro + resumen por empresa */
+function exportarSalidasExcel(){
+  if(typeof XLSX==="undefined"){ toast("No cargó el generador de Excel, recargá la página"); return; }
+  const st=stockState(); const min=salMinEfectivo();
+  const movs=(st.movs||[]).filter(m=>m.tipo==="salida" && (m.ts||0)>=min && enRango(m.ts,SAL_DESDE,SAL_HASTA))
+    .sort((a,b)=>(a.ts||0)-(b.ts||0));
+  if(!movs.length){ toast("No hay retiros en ese rango"); return; }
+  const filas=movs.map(m=>({
+    Fecha: m.ts? new Date(m.ts).toLocaleDateString("es-AR") : "",
+    Hora: m.ts? new Date(m.ts).toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"}) : "",
+    Empresa: nombreEmp(m.empresa),
+    Producto: m.prod||"",
+    Cantidad: m.cant||0,
+    Canal: m.canal||"",
+    Cliente: m.cliente||m.motivo||"",
+    Orden: m.ref||""
+  }));
+  const porEmpProd={};
+  movs.forEach(m=>{ const k=(m.empresa||"—")+"||"+(m.prod||""); porEmpProd[k]=(porEmpProd[k]||0)+(m.cant||0); });
+  const resumen=Object.entries(porEmpProd).map(([k,c])=>{ const [e,p]=k.split("||");
+    return {Empresa:nombreEmp(e), Producto:p, Unidades:c}; }).sort((a,b)=>a.Empresa.localeCompare(b.Empresa)||b.Unidades-a.Unidades);
+  const totEmp={}; movs.forEach(m=>{ const e=m.empresa||"—"; totEmp[e]=(totEmp[e]||0)+(m.cant||0); });
+  const totales=Object.entries(totEmp).sort((a,b)=>b[1]-a[1]).map(([e,c])=>({Empresa:nombreEmp(e), Unidades:c}));
+  totales.push({Empresa:"TOTAL", Unidades:movs.reduce((s,m)=>s+(m.cant||0),0)});
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(totales), "Totales por empresa");
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(resumen), "Por empresa y producto");
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(filas), "Detalle");
+  const per=(SAL_DESDE||SAL_HASTA)?((SAL_DESDE||"inicio")+" a "+(SAL_HASTA||"hoy")):"todo";
+  XLSX.writeFile(wb, "Retiros de stock "+per+".xlsx");
+  toast("Excel descargado ✓ "+movs.length+" retiros");
 }
 function textoSalidas(){
   const {lista,total,totEmp}=salidasResumen(SAL_DESDE,SAL_HASTA);
