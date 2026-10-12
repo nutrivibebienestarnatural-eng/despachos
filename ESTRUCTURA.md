@@ -19,7 +19,7 @@ api/                Lo que corre en el servidor de Vercel (claves secretas, nunc
 | `02-estados.js` | Los estados por los que pasa un pedido, la sugerencia de ruta y el registro de errores |
 | `03-datos.js` | La única puerta a la base: `DB.create / update / delete / get / subscribe` |
 | `04-utiles.js` | Variables en memoria (`PEDIDOS`, `ROL`, …) y ayudas generales |
-| `05-fotos.js` | Fotos de pedidos, lectura del QR de la etiqueta y la carpeta Ventas vigilada |
+| `05-fotos.js` | Fotos de pedidos y lectura del QR de la etiqueta |
 | `06-despacho.js` | Tablero **Control**, avisos a Telegram y la solapa **Despacho** |
 | `07-stock.js` | Stock: niveles, movimientos, mínimos y cuánto sacó cada empresa |
 | `08-caja.js` | Cuenta corriente, caja, cobros y cierres de período |

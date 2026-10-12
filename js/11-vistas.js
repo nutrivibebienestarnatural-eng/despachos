@@ -1195,7 +1195,6 @@ function formImportar(){
     <button class="btn sm ghost" onclick="vistaOperador()">← Volver</button>
     <div class="title" style="margin-top:14px">Importar pedidos</div>
     <div class="subtitle">Subí el archivo que exportaste de Tienda Nube (CSV o PDF). Yo me encargo del resto.</div>
-    ${window.showDirectoryPicker?`<button class="btn ghost block" style="margin:10px 0" onclick="conectarCarpeta(${CARPETA.activa?'true':'false'})">📂 ${CARPETA.activa?('Vigilando "'+esc(CARPETA.handle.name)+'" · cambiar carpeta'):'Conectar carpeta Ventas (trae las etiquetas y fotos solas)'}</button>`:''}
     <div class="card">
       <span class="label">¿De qué empresa son?</span>
       <div class="seg" id="impEmp" style="margin-bottom:14px;flex-wrap:wrap">

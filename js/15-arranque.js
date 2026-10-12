@@ -86,7 +86,6 @@ function vistaSimulacion(){
    ========================================================================= */
 (function start(){
   initDB();
-  setTimeout(reconectarCarpetaGuardada,1500);   // si ya conectaste la carpeta Ventas, retoma la vigilancia
   const q=new URLSearchParams(location.search);
   const esCliente=!!q.get("p");
   const qInit=new URLSearchParams(location.search);
