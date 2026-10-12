@@ -727,7 +727,7 @@ function pickingConsolidado(){
   const map={};
   PEDIDOS.filter(p=>(!p.tipo||p.tipo==="pedido")&&p.estado==="pendiente").forEach(p=>{
     try{ itemsPedido(p).forEach(it=>{ const nombre=it.prodNombre||it.nombre; const k=nombre.toLowerCase();
-      if(!map[k]) map[k]={nombre, cant:0}; map[k].cant+=(it.cant||0); }); }catch(e){}   // itemsPedido abre los kits
+      if(!map[k]) map[k]={nombre, cant:0}; map[k].cant+=(it.cant||0); }); }catch(e){ logErr("auto",e); }   // itemsPedido abre los kits
   });
   return Object.values(map).sort((a,b)=>b.cant-a.cant);
 }
@@ -841,11 +841,39 @@ function sugerirRuta(provincia, ciudad){
 }
 
 /* =========================================================================
+   3.9) ERRORES: nada se pierde en silencio
+   ========================================================================= */
+const ERRORES=[];
+function logErr(donde, e, grave){
+  const msg=String((e&&e.message)||e||"");
+  const reg={donde:String(donde||"?"), msg, stack:String((e&&e.stack)||"").split("\n").slice(0,3).join(" | "), ts:Date.now()};
+  ERRORES.unshift(reg); if(ERRORES.length>80) ERRORES.pop();
+  console.warn("[error]", reg.donde, msg, e);
+  if(grave){
+    try{ toast("⚠ "+reg.donde+": "+msg.slice(0,90)); }catch(_){ logErr("auto",_); }
+    avisarErrorTelegram(reg);
+  }
+  return reg;
+}
+let ERR_ULTIMO_AVISO=0;
+function avisarErrorTelegram(reg){
+  if(Date.now()-ERR_ULTIMO_AVISO < 60000) return;            // como mucho un aviso por minuto
+  ERR_ULTIMO_AVISO=Date.now();
+  try{ if(typeof enviarTelegram==="function")
+    enviarTelegram("🐞 ERROR EN LA APP\n\n"+reg.donde+"\n"+reg.msg+"\n\n"+(ROL||"?")+" · "+new Date(reg.ts).toLocaleString("es-AR"));
+  }catch(_){ logErr("auto",_); }
+}
+/* Errores que nadie atrapó: antes quedaban solo en la consola */
+window.addEventListener("error", e=>{ logErr("pantalla", e.error||e.message, true); });
+window.addEventListener("unhandledrejection", e=>{ logErr("tarea en segundo plano", e.reason, true); });
+
+/* =========================================================================
    4) CAPA DE DATOS (Firebase o modo demo). Interfaz única.
    ========================================================================= */
 let DB;
 function initDB(){
   const ok = FIREBASE_CONFIG && FIREBASE_CONFIG.projectId && typeof firebase!=="undefined";
+  if(ok) setTimeout(()=>{ try{ suscribirMovs(); }catch(e){ logErr("initDB movs", e); } }, 300);
   if(ok){
     firebase.initializeApp(FIREBASE_CONFIG);
     const fs=firebase.firestore();
@@ -863,9 +891,13 @@ function initDB(){
           const b=document.createElement("div");
           b.style.cssText="position:fixed;top:0;left:0;right:0;z-index:9999;background:#b00020;color:#fff;padding:12px 16px;font-weight:600;text-align:center";
           b.textContent=msg; document.body.appendChild(b); }); },   // sin orderBy: los docs sin fecha (stock) también llegan
-      async create(o){ if(o.creado==null) o.creado=Date.now(); return (await col.add(o)).id; },
-      async update(id,patch){ await col.doc(id).update(patch); },
-      async delete(id){ await col.doc(id).delete(); },
+      async create(o){ if(o.creado==null) o.creado=Date.now();
+        try{ return (await col.add(o)).id; }catch(e){ logErr("guardar en la base", e, true); throw e; } },
+      async update(id,patch){
+        try{ await col.doc(id).update(patch); }
+        catch(e){ logErr("guardar cambios ("+id+")", e, true); throw e; } },
+      async delete(id){
+        try{ await col.doc(id).delete(); }catch(e){ logErr("borrar de la base", e, true); throw e; } },
       async get(id){ const d=await col.doc(id).get(); return d.exists?{id:d.id,...d.data()}:null; } };
   } else {
     const KEY="despacho_v6";
@@ -940,7 +972,7 @@ const app=()=>$("#app");
       if(!foco||Date.now()-foco.ts>3000) return;
       const el=document.getElementById(foco.id);
       if(el&&document.activeElement!==el){ el.focus();
-        try{ el.setSelectionRange(foco.s,foco.e); }catch(_){} }
+        try{ el.setSelectionRange(foco.s,foco.e); }catch(_){ logErr("auto",_); } }
     }).observe(root,{childList:true,subtree:true});
   };
   if(document.readyState==="loading") document.addEventListener("DOMContentLoaded",iniciar); else iniciar();
@@ -951,7 +983,7 @@ function toggleZen(){
   try{
     if(on && document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(()=>{});
     else if(!on && document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(()=>{});
-  }catch(e){}
+  }catch(e){ logErr("auto",e); }
 }
 function zenBtn(){ const on=document.body.classList.contains("zen");
   return `<button class="btn sm ghost" onclick="toggleZen()">${on?'✕ Salir de pantalla completa':'⛶ Pantalla completa'}</button>`; }
@@ -1164,15 +1196,15 @@ async function leerCodigosDeFoto(file){
       }
     }
     if(!out.size && "BarcodeDetector" in window){
-      try{ const det=new BarcodeDetector(); (await det.detect(c)).forEach(x=>x.rawValue&&out.add(x.rawValue)); }catch(e){}
+      try{ const det=new BarcodeDetector(); (await det.detect(c)).forEach(x=>x.rawValue&&out.add(x.rawValue)); }catch(e){ logErr("auto",e); }
     }
     if(!out.size && typeof ZXing!=="undefined"){
       const hints=new Map(); hints.set(ZXing.DecodeHintType.TRY_HARDER,true);
       const intentar=async dataUrl=>{
-        try{ const rd=new ZXing.BrowserQRCodeReader(hints); const res=await rd.decodeFromImageUrl(dataUrl); if(res) out.add(res.getText()); }catch(e){}
+        try{ const rd=new ZXing.BrowserQRCodeReader(hints); const res=await rd.decodeFromImageUrl(dataUrl); if(res) out.add(res.getText()); }catch(e){ logErr("auto",e); }
         if(!out.size){
           try{ const rd=new ZXing.BrowserMultiFormatReader(hints);
-            const res=await rd.decodeFromImageUrl(dataUrl); if(res) out.add(res.getText()); }catch(e){}
+            const res=await rd.decodeFromImageUrl(dataUrl); if(res) out.add(res.getText()); }catch(e){ logErr("auto",e); }
         }
       };
       await intentar(c.toDataURL("image/png"));
@@ -1192,7 +1224,7 @@ async function textoEtiquetaPedido(p){
   try{ const bin=atob(p.etiquetaPdf); const arr=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
     const pdf=await pdfjsLib.getDocument({data:arr}).promise;
     for(let n=1;n<=Math.min(pdf.numPages,3);n++){ const tc=await (await pdf.getPage(n)).getTextContent(); t+=tc.items.map(x=>x.str).join(" ")+"\n"; }
-  }catch(e){}
+  }catch(e){ logErr("auto",e); }
   ETQ_TXT_CACHE[p.id]=t; return t;
 }
 async function envioDePedido(p){
@@ -1302,7 +1334,7 @@ async function reconectarCarpetaGuardada(){
   if(!window.showDirectoryPicker) return;
   const h=await idbCarpeta("get"); if(!h) return;
   CARPETA.handle=h;
-  try{ if((await h.queryPermission({mode:"readwrite"}))==="granted") iniciarVigilancia(); else pintarAvisoCarpeta(); }catch(e){}
+  try{ if((await h.queryPermission({mode:"readwrite"}))==="granted") iniciarVigilancia(); else pintarAvisoCarpeta(); }catch(e){ logErr("auto",e); }
 }
 function desconectarCarpeta(){ clearInterval(CARPETA.timer); CARPETA.activa=false; CARPETA.etiquetas=[]; CARPETA.fotos=[]; CARPETA.viejos=[]; CARPETA.errores=[]; pintarAvisoCarpeta(); toast("Carpeta desconectada"); }
 function iniciarVigilancia(){ clearInterval(CARPETA.timer); CARPETA.activa=true; revisarCarpeta(); CARPETA.timer=setInterval(revisarCarpeta,5000); }
@@ -1378,7 +1410,7 @@ async function moverAProcesadas(item){
     const proc=await CARPETA.handle.getDirectoryHandle("Procesadas",{create:true});
     const file=await item.h.getFile();
     let nombre=item.nombre;
-    try{ await proc.getFileHandle(nombre); nombre=Date.now()+"_"+nombre; }catch(_){}   // si ya existe, no piso
+    try{ await proc.getFileHandle(nombre); nombre=Date.now()+"_"+nombre; }catch(_){ logErr("auto",_); }   // si ya existe, no piso
     const nuevo=await proc.getFileHandle(nombre,{create:true});
     const w=await nuevo.createWritable(); await w.write(file); await w.close();
     await item.dir.removeEntry(item.nombre);
@@ -1386,11 +1418,11 @@ async function moverAProcesadas(item){
 }
 async function procesarEtiquetasCarpeta(){
   const lote=CARPETA.etiquetas.splice(0); pintarAvisoCarpeta(); if(!lote.length) return;
-  const files=[]; for(const it of lote){ try{ files.push(await it.h.getFile()); }catch(e){} }
+  const files=[]; for(const it of lote){ try{ files.push(await it.h.getFile()); }catch(e){ logErr("auto",e); } }
   // separo ML (traen "Venta:" / "Pack ID") de los PDF de Tienda Nube
   pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
   const ml=[], tn=[];
-  for(const f of files){ let t=""; try{ t=await pdfTextoRemito(f); }catch(e){}
+  for(const f of files){ let t=""; try{ t=await pdfTextoRemito(f); }catch(e){ logErr("auto",e); }
     (/Venta:|Pack ID|Envio:/i.test(t)?ml:tn).push({f,t}); }
   formImportar();
   for(const {f,t} of tn){   // leerPDF reemplaza la lista: voy juntando lo de cada PDF
@@ -1490,7 +1522,7 @@ async function elegirPedidoManual(pid){
    etiqueta, muestra qué tiene que llevar y avisa si algo no coincide ===== */
 let DESP=null;   // {id, foto, avisos:[], check:{}}
 function vistaDespachar(){
-  try{ pintarSidebar(); }catch(e){}
+  try{ pintarSidebar(); }catch(e){ logErr("auto",e); }
   const hoy=new Date(); hoy.setHours(0,0,0,0);
   const hechos=soloPedidos().filter(p=>p.fotoPrepTs && p.fotoPrepTs>=hoy.getTime()).sort((a,b)=>b.fotoPrepTs-a.fotoPrepTs);
   const avisos=soloPedidos().filter(p=>p.despachoAviso && !p.despachoAvisoVisto).sort((a,b)=>(b.despachoAvisoTs||0)-(a.despachoAvisoTs||0));
@@ -1549,7 +1581,7 @@ function ctlEstado(p){
   return "entregados";
 }
 function vistaControl(){
-  try{ pintarSidebar(); }catch(e){}
+  try{ pintarSidebar(); }catch(e){ logErr("auto",e); }
   const peds=ctlPedidos();
   const by=f=>peds.filter(f);
   const cnt={faltan:0,listos:0,camino:0,entregados:0,mal:0};
@@ -1578,7 +1610,7 @@ function vistaControl(){
   // correo, desglosado por transportista (Andreani, Correo Argentino, etc.)
   const porCorreo={}; by(p=>tipoEnvioPrep(p)==="correo" && ["pendiente","preparado",...CTL_EN_CAMINO].includes(p.estado)).forEach(p=>{ const k=p.correo||"Sin definir"; (porCorreo[k]=porCorreo[k]||[]).push(p); });
   // productos que faltan preparar
-  const prods={}; by(p=>p.estado==="pendiente").forEach(p=>{ try{ itemsPedido(p).forEach(it=>{ const k=it.prodNombre||it.nombre; prods[k]=(prods[k]||0)+(it.cant||0); }); }catch(_){} });
+  const prods={}; by(p=>p.estado==="pendiente").forEach(p=>{ try{ itemsPedido(p).forEach(it=>{ const k=it.prodNombre||it.nombre; prods[k]=(prods[k]||0)+(it.cant||0); }); }catch(_){ logErr("auto",_); } });
   const topProds=Object.entries(prods).sort((a,b)=>b[1]-a[1]);
   // lista de detalle según la tarjeta elegida
   const listas={
@@ -1762,7 +1794,7 @@ function plataEmpresa(emp){
   // unidades que salieron del stock hoy para esta empresa
   const prods={}; let unid=0;
   try{ (stockState().movs||[]).filter(m=>m.tipo==="salida" && m.empresa===emp && (m.ts||0)>=h0)
-    .forEach(m=>{ prods[m.prod]=(prods[m.prod]||0)+m.cant; unid+=m.cant; }); }catch(_){}
+    .forEach(m=>{ prods[m.prod]=(prods[m.prod]||0)+m.cant; unid+=m.cant; }); }catch(_){ logErr("auto",_); }
   return {hoy:sumar(hoyP), unid, prods:Object.entries(prods).sort((a,b)=>b[1]-a[1])};
 }
 async function pdfResumenEmpresa(emp, peds, fecha){
@@ -1979,7 +2011,7 @@ async function despFoto(file){
   const its=(()=>{ try{ return itemsPedido(p); }catch(e){ return []; } })();
   if(!its.length) DESP.avisos.push("El pedido no tiene productos cargados");
   if((p.prods||[]).some(x=>x&&x.reconocido===false)) DESP.avisos.push("Tiene productos sin reconocer en el catálogo");
-  if(DESP.avisos.length) try{ navigator.vibrate&&navigator.vibrate([300,100,300]); }catch(e){}
+  if(DESP.avisos.length) try{ navigator.vibrate&&navigator.vibrate([300,100,300]); }catch(e){ logErr("auto",e); }
   // la foto queda guardada en ESE pedido apenas se encuentra (aunque después no toquen nada)
   try{ await guardarFotoPedido(p.id, foto); DESP.guardada=true; toast("📷 Foto guardada en el pedido de "+(p.cliente||""));
     telegramPedido(p, foto, DESP.avisos.length?"⚠ PEDIDO CON FOTO — REVISAR":"📷 PEDIDO CON FOTO", DESP.avisos); }
@@ -2057,6 +2089,7 @@ async function vaciarStock(){
     if(!docs.length){ toast("No hay stock que vaciar"); return; }
     const main=stockRecord();
     toast("Limpiando "+docs.length+" registros… puede tardar 1 o 2 minutos, NO cierres la página");
+    await borrarMovs(()=>true);                              // borra también los movimientos de la colección nueva
     const tareas=docs.map(d=> d.id===main.id ? {id:d.id,patch:{movs:[]}} : {id:d.id,patch:{tipo:"stock_viejo",movs:[]}});
     for(let i=0;i<tareas.length;i+=15){                       // tandas de 15 en paralelo
       await Promise.all(tareas.slice(i,i+15).map(t=>DB.update(t.id,t.patch)));
@@ -2069,7 +2102,7 @@ async function vaciarStock(){
 async function diagnosticoStock(){
   let r="🩺 DIAGNÓSTICO · versión "+APP_VERSION+"\n\n";
   r+="Datos: "+(DB.modo==="firebase"?"Firebase (nube) ✅":"⚠️ MODO LOCAL: solo este navegador, revisá la configuración")+"\n";
-  try{ const u=(typeof firebase!=="undefined"&&firebase.auth&&firebase.auth().currentUser); r+="Usuario: "+(u?(u.email+" ✅"):"⚠️ SIN LOGIN (las escrituras pueden fallar)")+"\n"; }catch(e){}
+  try{ const u=(typeof firebase!=="undefined"&&firebase.auth&&firebase.auth().currentUser); r+="Usuario: "+(u?(u.email+" ✅"):"⚠️ SIN LOGIN (las escrituras pueden fallar)")+"\n"; }catch(e){ logErr("auto",e); }
   const docs=PEDIDOS.filter(p=>p.tipo==="stock");
   r+="Registros de stock: "+docs.length+(docs.length>1?" ⚠️ (duplicados: usá Reparar)":"")+"\n";
   const st=stockRecord();
@@ -2119,8 +2152,56 @@ async function setMarcaProducto(nombre, marca){
   const r=marcasRecord(); const map=Object.assign({},(r&&r.map)||{}); map[nombre]=marca;
   if(r) await DB.update(r.id,{map}); else await DB.create({tipo:"marcasProd",map});
 }
+/* ===== Movimientos de stock =====
+   Antes vivían TODOS dentro del documento "stock" (crecía sin límite y Firestore corta en 1 MB).
+   Ahora cada movimiento nuevo va a su propia colección "movs"; los viejos se siguen leyendo del documento. */
+let MOVS_EXT=[], MOVS_SUB=false;
+function suscribirMovs(){
+  if(MOVS_SUB || DB.modo!=="firebase") return;
+  MOVS_SUB=true;
+  try{
+    firebase.firestore().collection("movs").onSnapshot(s=>{
+      MOVS_EXT=s.docs.map(d=>({_id:d.id, ...d.data()}));
+      if(typeof render==="function") try{ render(); }catch(e){ logErr("render movs",e); }
+    }, e=>logErr("suscribir movs", e));
+  }catch(e){ logErr("suscribir movs", e); }
+}
+async function agregarMovs(arr){
+  const movs=(arr||[]).filter(Boolean).map(m=>({ts:Date.now(), ...m}));
+  if(!movs.length) return;
+  if(DB.modo==="firebase"){
+    try{
+      const col=firebase.firestore().collection("movs");
+      for(let i=0;i<movs.length;i+=400){                      // Firestore: máx 500 operaciones por lote
+        const lote=firebase.firestore().batch();
+        movs.slice(i,i+400).forEach(m=>lote.set(col.doc(), m));
+        await lote.commit();
+      }
+      MOVS_EXT=MOVS_EXT.concat(movs);                        // al toque en pantalla, sin esperar el snapshot
+    }catch(e){
+      logErr("guardar movimientos (uso el modo viejo)", e);   // si las reglas no dejan, guardo como antes
+      const st=stockState(); st.movs=(stockRecord()&&stockRecord().movs||[]).concat(movs); await persistStock(st, true);
+    }
+  } else {
+    const st=stockState(); st.movs=st.movs.concat(movs); await persistStock(st, true);
+  }
+}
+/* Borra los movimientos que cumplan la condición (ej: deshacer el descuento de un pedido) */
+async function borrarMovs(cond){
+  if(DB.modo==="firebase"){
+    const borrar=MOVS_EXT.filter(cond);
+    for(const m of borrar){ try{ await firebase.firestore().collection("movs").doc(m._id).delete(); }catch(e){ logErr("borrar mov", e); } }
+    MOVS_EXT=MOVS_EXT.filter(m=>!cond(m));
+  }
+  // los viejos (los que están adentro del documento stock) se filtran igual
+  const r=stockRecord();
+  if(r && (r.movs||[]).some(cond)){
+    const quedan=(r.movs||[]).filter(m=>!cond(m));
+    await DB.update(r.id,{movs:quedan});
+  }
+}
 function stockState(){
-  const r=stockRecord()||{}; let min={...(r.min||{})}, movs=(r.movs||[]).slice();
+  const r=stockRecord()||{}; let min={...(r.min||{})}, movs=(r.movs||[]).concat(MOVS_EXT);
   if(r.data){ for(const k in r.data){ const v=r.data[k]||{};   // migra formato viejo
     if(v.min) min[k]=v.min;
     if(v.cant) movs.push({ts:Date.now(),prod:k,tipo:"inicial",cant:v.cant,motivo:"Saldo inicial"}); } }
@@ -2130,16 +2211,17 @@ function descuentoActivo(){ return stockState().descontar!==false; }
 async function toggleDescuento(){ const st=stockState(); st.descontar=!st.descontar;
   await persistStock(st); toast(st.descontar?"Descuento de stock activado":"Descuento de stock desactivado"); vistaStock(); }
 function nivel(prod,st){ return (st.movs||[]).filter(m=>m.prod===prod).reduce((s,m)=>s+(m.tipo==="salida"?-m.cant:m.cant),0); }
-async function persistStock(st){ const r=stockRecord();
-  const data={min:st.min,movs:st.movs};
+async function persistStock(st, conMovs){ const r=stockRecord();
+  const data={min:st.min};
+  if(conMovs) data.movs=st.movs;        // solo cuando hace falta reescribirlos (modo demo / reparación)
   if(st.descontar!==undefined) data.descontar=st.descontar;   // solo si está definido (undefined = ON por defecto)
   if(st.zonas!==undefined && st.zonas!==null) data.zonas=st.zonas;
   if(st.margen!==undefined && st.margen!==null) data.margen=st.margen;
   if(st.correoGestion!==undefined && st.correoGestion!==null) data.correoGestion=st.correoGestion;
   if(r) await DB.update(r.id,{...data,data:null});
   else await DB.create({tipo:"stock",...data}); }
-async function pushMov(prod,tipo,cant,motivo,extra={}){ const st=stockState();
-  st.movs.push({ts:Date.now(),prod,tipo,cant:Math.abs(+cant||0),motivo:motivo||"",...extra}); await persistStock(st); }
+async function pushMov(prod,tipo,cant,motivo,extra={}){
+  await agregarMovs([{prod,tipo,cant:Math.abs(+cant||0),motivo:motivo||"",...extra}]); }
 /* Descuenta del pool compartido los items de un pedido, etiquetando empresa+canal (imputación) */
 async function descontarStockPedido(id, scanMap, forzar){
   const p=await DB.get(id); if(!p || (p.stockBajado && !forzar)) return;
@@ -2152,13 +2234,11 @@ async function descontarStockPedido(id, scanMap, forzar){
     ? Object.entries(scanMap).filter(([,c])=>c>0).map(([prodNombre,c])=>({prodNombre, cant:c}))
     : itemsPedido(p);
   if(items.length){
-    const st=stockState();
     const an=anilloDe(p);                                    // zona del pedido
     const quien=p.metodo==="correo"?"Correo":(p.cadete||"sin asignar");
-    items.forEach(it=>{ st.movs.push({ts:Date.now(),prod:it.prodNombre,tipo:"salida",cant:Math.abs(it.cant||1),
+    await agregarMovs(items.map(it=>({prod:it.prodNombre,tipo:"salida",cant:Math.abs(it.cant||1),
         motivo:"Venta "+(p.ref||p.id),empresa:p.empresa,canal:canalDe(p),ref:p.ref||p.id,
-        cliente:p.cliente||"",destino:[p.ciudad,p.provincia].filter(Boolean).join(", "),zona:an.label,quien:quien,pedidoId:p.id}); });
-    await persistStock(st);
+        cliente:p.cliente||"",destino:[p.ciudad,p.provincia].filter(Boolean).join(", "),zona:an.label,quien:quien,pedidoId:p.id})));
   }
   await DB.update(id,{stockBajado:true});
 }
@@ -2217,7 +2297,7 @@ async function cobrarSeleccion(emp){
   await cajaAgregar({nro, clase:"cobro", quien, monto:total, cant:peds.length,
     periodo:periodoTxt(), ts:Date.now(),
     ordenes:peds.map(p=>({ref:numOrden(p), cliente:p.cliente||"", monto:costoEnvio(p), fecha:p.creado||0}))});
-  for(const p of peds){ try{ await DB.update(p.id,{cobradoEn:Date.now(), cobradoNro:nro}); }catch(e){} }
+  for(const p of peds){ try{ await DB.update(p.id,{cobradoEn:Date.now(), cobradoNro:nro}); }catch(e){ logErr("auto",e); } }
   peds.forEach(p=>delete CTA_SEL[p.id]);
   toast("Cobro "+nro+" registrado ✓");
   imprimirComprobanteCaja(nro);
@@ -2370,7 +2450,7 @@ async function cerrarDesdeFecha(){
   const fC=new Date(corte).toLocaleDateString("es-AR");
   if(!await askConfirm("Corte: "+fC+"\n\nQuedan A LA VISTA: "+quedan.length+" pedidos (desde "+fC+" en adelante).\nSe ARCHIVAN: "+aCerrar.length+" pedidos anteriores.\n\n¿Confirmás?")) return;
   const sello=corte; let ok=0;
-  for(const p of aCerrar){ try{ await DB.update(p.id,{cerradoEn:sello, estado:(p.estado==="entregado"?"confirmado":p.estado)}); ok++; }catch(e){} }
+  for(const p of aCerrar){ try{ await DB.update(p.id,{cerradoEn:sello, estado:(p.estado==="entregado"?"confirmado":p.estado)}); ok++; }catch(e){ logErr("auto",e); } }
   const r=cierresRecord();
   const lista=((r&&r.lista)||[]).concat([{ts:sello, fecha:fC, nota:"Corte manual "+fC}]);
   if(r) await DB.update(r.id,{lista}); else await DB.create({tipo:"cierres",lista});
@@ -2389,7 +2469,7 @@ async function cerrarAnterioresAEstaSemana(){
   if(!await askConfirm("Voy a dejar A LA VISTA solo los pedidos de ESTA SEMANA (desde el lunes "+fLunes+"): "+quedan.length+" pedidos.\n\nY voy a ARCHIVAR "+aCerrar.length+" pedidos anteriores.\n\nNo se borran, quedan archivados y recuperables. ¿Confirmás?")) return;
   const sello=lunes;
   let ok=0;
-  for(const p of aCerrar){ try{ await DB.update(p.id,{cerradoEn:sello, estado:(p.estado==="entregado"?"confirmado":p.estado)}); ok++; }catch(e){} }
+  for(const p of aCerrar){ try{ await DB.update(p.id,{cerradoEn:sello, estado:(p.estado==="entregado"?"confirmado":p.estado)}); ok++; }catch(e){ logErr("auto",e); } }
   const r=cierresRecord();
   const nuevo={ts:sello, fecha:fLunes, nota:"Archivó anteriores a esta semana"};
   const lista=((r&&r.lista)||[]).concat([nuevo]);
@@ -2409,7 +2489,7 @@ async function cerrarHastaAnteayer(){
   if(!await askConfirm("Voy a dejar A COBRAR solo los pedidos de AYER y HOY ("+quedan.length+" pedidos).\n\nY voy a CERRAR (archivar) "+aCerrar.length+" pedidos anteriores al "+fAyer+".\n\nLos cerrados no se borran, quedan archivados. ¿Confirmás?")) return;
   const sello=ayer0;   // el cierre queda marcado a las 00:00 de ayer
   let ok=0;
-  for(const p of aCerrar){ try{ await DB.update(p.id,{cerradoEn:sello, estado:(p.estado==="entregado"?"confirmado":p.estado)}); ok++; }catch(e){} }
+  for(const p of aCerrar){ try{ await DB.update(p.id,{cerradoEn:sello, estado:(p.estado==="entregado"?"confirmado":p.estado)}); ok++; }catch(e){ logErr("auto",e); } }
   // registro el cierre
   const r=cierresRecord();
   const nuevo={ts:sello, fecha:fAyer, nota:"Cierre hasta anteayer (dejó ayer y hoy)"};
@@ -2424,10 +2504,10 @@ async function recuperarTodo(){
   if(!archivados.length){ toast("No hay pedidos archivados, ya está todo a la vista"); return; }
   if(!await askConfirm("Voy a traer de vuelta TODOS los pedidos archivados ("+archivados.length+") y borrar todos los cierres.\n\nAsí volvés a ver TODO junto, sin ningún cierre. Después decidís con calma.\n\n¿Dale?")) return;
   let ok=0;
-  for(const p of archivados){ try{ await DB.update(p.id,{cerradoEn:null}); ok++; }catch(e){} }
+  for(const p of archivados){ try{ await DB.update(p.id,{cerradoEn:null}); ok++; }catch(e){ logErr("auto",e); } }
   // borro todos los cierres
   const r=cierresRecord();
-  if(r){ try{ await DB.update(r.id,{lista:[]}); }catch(e){} }
+  if(r){ try{ await DB.update(r.id,{lista:[]}); }catch(e){ logErr("auto",e); } }
   notify("✅ Recuperé "+ok+" pedidos.\n\nAhora tenés TODO a la vista, sin cierres. Andá a Pedidos y fijate que estén todos.");
   OPVIEW="pedidos"; FILTRO="todos"; render();
 }
@@ -2440,7 +2520,7 @@ async function revertirUltimoCierre(){
   const fecha=new Date(ultimo.ts).toLocaleString("es-AR");
   if(!await askConfirm("¿Revertir el cierre del "+fecha+"?\n\nEsto devuelve "+sellados.length+" pedidos a la lista (les saca el sello de cierre) y borra ese cierre.\n\nTus pedidos NO se perdieron, solo estaban ocultos.")) return;
   let ok=0;
-  for(const p of sellados){ try{ await DB.update(p.id,{cerradoEn:null}); ok++; }catch(e){} }
+  for(const p of sellados){ try{ await DB.update(p.id,{cerradoEn:null}); ok++; }catch(e){ logErr("auto",e); } }
   // borro el registro del cierre
   const r=cierresRecord();
   if(r){ const lista=(r.lista||[]).filter(c=>c.ts!==ultimo.ts); await DB.update(r.id,{lista}); }
@@ -2512,7 +2592,7 @@ async function archivarConfirmadas(){
   if(!await askConfirm("¿Archivar "+conf.length+" pedidos ya confirmados?\n\nDesaparecen de la lista y quedan en el filtro 📁 Archivados.\nNo se borra nada.")) return;
   const sello=ultimoCierreTs()||Date.now();
   toast("Archivando "+conf.length+"…");
-  let ok=0; for(const p of conf){ try{ await DB.update(p.id,{cerradoEn:sello}); ok++; }catch(e){} }
+  let ok=0; for(const p of conf){ try{ await DB.update(p.id,{cerradoEn:sello}); ok++; }catch(e){ logErr("auto",e); } }
   notify("✅ "+ok+" pedidos archivados.");
   render();
 }
@@ -2522,7 +2602,7 @@ async function confirmarEntregados(){
   if(!await askConfirm("¿Cerrar "+ent.length+" pedidos entregados?\n\nPasan a CONFIRMADOS: salen de 'activos' y dejan de sumar en 'a facturar'.\nSiguen guardados y los podés ver con el filtro Confirmados.")) return;
   toast("Cerrando "+ent.length+" pedidos…");
   const sello=Date.now();
-  let ok=0; for(const p of ent){ try{ await DB.update(p.id,{estado:"confirmado",cerradoEn:sello}); ok++; }catch(e){} }
+  let ok=0; for(const p of ent){ try{ await DB.update(p.id,{estado:"confirmado",cerradoEn:sello}); ok++; }catch(e){ logErr("auto",e); } }
   notify("✅ "+ok+" pedidos cerrados.\n\nEl panel ya arranca de cero.");
   render();
 }
@@ -2544,7 +2624,7 @@ async function ejecutarCierre(){
   if(r) await DB.update(r.id,{lista}); else await DB.create({tipo:"cierres",lista});
   if(entregados.length){                                  // cierro los entregados: dejan de ser activos
     toast("Cerrando "+entregados.length+" pedidos entregados…");
-    for(const p of entregados){ try{ await DB.update(p.id,{estado:"confirmado",cerradoEn:c.ts}); }catch(e){} }
+    for(const p of entregados){ try{ await DB.update(p.id,{estado:"confirmado",cerradoEn:c.ts}); }catch(e){ logErr("auto",e); } }
   }
   SAL_MIN=null; SAL_DESDE=""; SAL_HASTA="";
   notify("✅ PERÍODO CERRADO\n\n"+entregados.length+" pedidos confirmados.\nQuedó guardado el resumen y el saldo de stock.\nDesde ahora se cuenta de cero.");
@@ -2556,7 +2636,7 @@ function imprimirFacturaMarca(empId){
   const nom=nombreEmp(empId);
   const total=peds.reduce((s,p)=>s+costoEnvio(p),0);
   const problemas=[];
-  peds.forEach(p=>{ let it=[]; try{ it=itemsPedido(p); }catch(e){}
+  peds.forEach(p=>{ let it=[]; try{ it=itemsPedido(p); }catch(e){ logErr("auto",e); }
     if(!it.length) problemas.push({p, q:"sin productos cargados"});
     const dest=[p.ciudad,p.provincia].filter(Boolean).join(", ").toLowerCase();
     if(anilloDe(p).label==="CABA" && dest && !/capital|caba|autonoma|ciudad de buenos|c\.a\.b\.a/.test(dest) && /buenos aires/.test(dest))
@@ -2564,7 +2644,7 @@ function imprimirFacturaMarca(empId){
   });
   const acc={}; let unid=0;
   peds.forEach(p=>{ try{ itemsPedido(p).forEach(it=>{ const k=it.prodNombre||it.nombre;
-    acc[k]=(acc[k]||0)+(it.cant||0); unid+=(it.cant||0); }); }catch(e){} });
+    acc[k]=(acc[k]||0)+(it.cant||0); unid+=(it.cant||0); }); }catch(e){ logErr("auto",e); } });
   const mercaderia=Object.entries(acc).sort((a,b)=>b[1]-a[1]);
   const w=window.open("","_blank","width=800,height=900"); if(!w){ toast("Permití las ventanas emergentes"); return; }
   const prodsDe=p=>{ try{ return itemsPedido(p).map(i=>i.cant+"× "+i.prodNombre).join("<br>"); }catch(e){ return esc(p.items||""); } };
@@ -2870,7 +2950,7 @@ function pantallaRepickeo(){
     .sort((a,b)=>(b.creado||0)-(a.creado||0));
   if(!Object.keys(REP_SEL).length) peds.forEach(p=>REP_SEL[p.id]=true);
   const sel=peds.filter(p=>REP_SEL[p.id]);
-  let uds=0; sel.forEach(p=>{ try{ uds+=itemsPedido(p).reduce((s,i)=>s+(i.cant||0),0); }catch(e){} });
+  let uds=0; sel.forEach(p=>{ try{ uds+=itemsPedido(p).reduce((s,i)=>s+(i.cant||0),0); }catch(e){ logErr("auto",e); } });
   const inpR="width:100%;padding:7px;border:1px solid var(--border);border-radius:9px;font:inherit;background:var(--bg)";
   app().innerHTML=`
     <button class="btn sm ghost" onclick="OPVIEW='stock';vistaOperador()">← Volver</button>
@@ -2893,7 +2973,7 @@ function pantallaRepickeo(){
       <button class="btn sm ghost" onclick="peds_todos(0)">Ninguna</button>
     </div>
     <div class="card">
-      ${peds.length?peds.map(p=>{ let u=0; try{ u=itemsPedido(p).reduce((s,i)=>s+(i.cant||0),0); }catch(e){}
+      ${peds.length?peds.map(p=>{ let u=0; try{ u=itemsPedido(p).reduce((s,i)=>s+(i.cant||0),0); }catch(e){ logErr("auto",e); }
         return `<label style="display:flex;gap:10px;align-items:flex-start;padding:10px 0;border-top:.5px solid var(--border);cursor:pointer">
           <input type="checkbox" ${REP_SEL[p.id]?'checked':''} onchange="REP_SEL['${p.id}']=this.checked;pantallaRepickeo()" style="margin-top:3px">
           <div style="flex:1;min-width:0">
@@ -3246,7 +3326,7 @@ function pantallaCheckout(){
   const porRep={}; peds.forEach(p=>{ const q=p.metodo==="correo"?"Correo":(p.cadete||"Sin asignar"); porRep[q]=(porRep[q]||0)+1; });
   // unidades totales
   let uds=0; const prods={};
-  peds.forEach(p=>{ try{ itemsPedido(p).forEach(it=>{ uds+=it.cant||0; prods[it.prodNombre]=(prods[it.prodNombre]||0)+(it.cant||0); }); }catch(e){} });
+  peds.forEach(p=>{ try{ itemsPedido(p).forEach(it=>{ uds+=it.cant||0; prods[it.prodNombre]=(prods[it.prodNombre]||0)+(it.cant||0); }); }catch(e){ logErr("auto",e); } });
   const marcas=Object.values(porMarca).filter(x=>x.n>0);
   const inp="width:100%;padding:8px 11px;border:1px solid var(--border);border-radius:9px;font:inherit;background:var(--bg)";
   app().innerHTML=`
@@ -3300,7 +3380,7 @@ async function confirmarCheckout(){
   if(!ok){ toast("Marcá la confirmación"); return; }
   const ini=new Date(dia+"T00:00:00").getTime(), fin=ini+86400000;
   const peds=soloPedidos().filter(p=>p.estado!=="anulado" && (p.cliente||"")!=="_PRUEBA_DIAGNOSTICO" && (p.creado||0)>=ini && (p.creado||0)<fin);
-  let uds=0; peds.forEach(p=>{ try{ itemsPedido(p).forEach(it=>uds+=it.cant||0); }catch(e){} });
+  let uds=0; peds.forEach(p=>{ try{ itemsPedido(p).forEach(it=>uds+=it.cant||0); }catch(e){ logErr("auto",e); } });
   const reg={dia, quien, ordenes:peds.length, unidades:uds, ts:Date.now()};
   const r=PEDIDOS.find(p=>p.tipo==="checkouts");
   const lista=((r&&r.lista)||[]).concat([reg]);
@@ -3326,11 +3406,11 @@ function imprimirCheckout(){
   const ini=new Date(dia+"T00:00:00").getTime(), fin=ini+86400000;
   const peds=soloPedidos().filter(p=>p.estado!=="anulado" && (p.cliente||"")!=="_PRUEBA_DIAGNOSTICO" && (p.creado||0)>=ini && (p.creado||0)<fin);
   let uds=0, prods={}; const porRep={};
-  peds.forEach(p=>{ try{ itemsPedido(p).forEach(it=>{ uds+=it.cant||0; prods[it.prodNombre]=(prods[it.prodNombre]||0)+(it.cant||0); }); }catch(e){}
+  peds.forEach(p=>{ try{ itemsPedido(p).forEach(it=>{ uds+=it.cant||0; prods[it.prodNombre]=(prods[it.prodNombre]||0)+(it.cant||0); }); }catch(e){ logErr("auto",e); }
     const q=p.metodo==="correo"?"Correo":(p.cadete||"Sin asignar"); porRep[q]=(porRep[q]||0)+1; });
   const w=window.open("","_blank","width=800,height=900"); if(!w){ toast("Permití las ventanas emergentes"); return; }
   const filas=peds.sort((a,b)=>(a.creado||0)-(b.creado||0)).map((p,i)=>{
-    let it=[]; try{ it=itemsPedido(p); }catch(e){}
+    let it=[]; try{ it=itemsPedido(p); }catch(e){ logErr("auto",e); }
     return `<tr><td>${i+1}</td><td>${esc(numOrden(p))}</td><td>${esc(p.cliente||"")}</td>
       <td>${esc(nombreEmp(p.empresa))}</td><td>${esc(p.metodo==="correo"?"Correo":(p.cadete||"—"))}</td>
       <td>${it.map(x=>x.cant+"× "+esc(x.prodNombre)).join("<br>")}</td></tr>`; }).join("");
@@ -3361,7 +3441,7 @@ function imprimirChecklistDia(empresaFiltro){
   if(!pedsAll.length){ toast("No hay pedidos para preparar"); return; }
   const peds = empresaFiltro ? pedsAll.filter(p=>p.empresa===empresaFiltro) : pedsAll;
   if(empresaFiltro && !peds.length){ toast("No hay pedidos de "+empresaObj(empresaFiltro).nombre+" para preparar"); return; }
-  let udsTot=0; peds.forEach(p=>{ try{ itemsPedido(p).forEach(it=>udsTot+=it.cant||0); }catch(e){} });
+  let udsTot=0; peds.forEach(p=>{ try{ itemsPedido(p).forEach(it=>udsTot+=it.cant||0); }catch(e){ logErr("auto",e); } });
 
   // agrupar por empresa, respetando el orden de EMPRESAS
   const grupos={}; peds.forEach(p=>{ (grupos[p.empresa]=grupos[p.empresa]||[]).push(p); });
@@ -3369,10 +3449,10 @@ function imprimirChecklistDia(empresaFiltro){
   let cuerpo=""; let n=0;
   EMPRESAS.forEach(e=>{
     const g=grupos[e.id]; if(!g||!g.length) return;
-    let uEmp=0; g.forEach(p=>{ try{ itemsPedido(p).forEach(it=>uEmp+=it.cant||0);}catch(_){} });
+    let uEmp=0; g.forEach(p=>{ try{ itemsPedido(p).forEach(it=>uEmp+=it.cant||0);}catch(_){ logErr("auto",_); } });
     cuerpo+='<div class="marca">'+esc(e.nombre)+' · '+g.length+' ped · '+uEmp+' u</div>';
     g.forEach(p=>{ n++;
-      let it=[]; try{ it=itemsPedido(p); }catch(_){}
+      let it=[]; try{ it=itemsPedido(p); }catch(_){ logErr("auto",_); }
       const prods=it.map(x=>'<div class="pl">&#9744; '+x.cant+'&times; '+esc(x.prodNombre)+'</div>').join("");
       const esCorreo=p.metodo==="correo";
       const via=esCorreo?"CORREO":"CADETE";
@@ -3852,7 +3932,7 @@ function bannerPreview(label){ const a=app();
   </div>`+a.innerHTML;
 }
 function copiarLinkApp(){ const u=location.origin+location.pathname;
-  try{ navigator.clipboard.writeText(u); }catch(e){}
+  try{ navigator.clipboard.writeText(u); }catch(e){ logErr("auto",e); }
   toast("Link de la app copiado"); }
 function vistaCargando(){ $("#roleBtn").style.display="none";
   app().innerHTML=`<div class="center" style="margin-top:120px">
@@ -3889,7 +3969,7 @@ function vistaSinAcceso(){
     <p class="muted" style="margin-top:10px">Tu cuenta (${esc(USER&&USER.email||"")}) todavía no tiene un rol asignado.<br>Pedile al administrador que te habilite.</p>
     <button class="btn ghost" style="margin-top:18px" onclick="salir()">Salir</button></div>`;
 }
-async function salir(){ try{ await firebase.auth().signOut(); }catch(e){} }
+async function salir(){ try{ await firebase.auth().signOut(); }catch(e){ logErr("auto",e); } }
 
 function vistaInicio(){
   $("#roleBtn").style.display="none";
@@ -3966,7 +4046,7 @@ async function reasignarCadete(viejo,nuevo){
   if(!peds.length){ toast("No hay pedidos con "+viejo); return; }
   if(!await askConfirm("¿Pasar los "+peds.length+" pedidos de \""+viejo+"\" a \""+nuevo+"\"?")) return;
   toast("Actualizando "+peds.length+" pedidos…");
-  for(const p of peds){ try{ await DB.update(p.id,{cadete:nuevo}); }catch(e){} }
+  for(const p of peds){ try{ await DB.update(p.id,{cadete:nuevo}); }catch(e){ logErr("auto",e); } }
   toast("Listo ✓"); render();
 }
 /* ===== LISTADOS: una pantalla, período rápido + calendario, 3 solapas en lista ===== */
@@ -4085,7 +4165,7 @@ function pedidosExport(){
 function actualizarPreviewExport(){
   const el=document.getElementById("expPreview"); if(!el) return;
   const arr=pedidosExport();
-  let uds=0; arr.forEach(p=>{ try{ uds+=itemsPedido(p).reduce((s,i)=>s+i.cant,0); }catch(e){} });
+  let uds=0; arr.forEach(p=>{ try{ uds+=itemsPedido(p).reduce((s,i)=>s+i.cant,0); }catch(e){ logErr("auto",e); } });
   el.innerHTML=`<div class="card"><div class="muted" style="text-align:center;font-size:13px">Se van a exportar <b>${arr.length}</b> envíos · <b>${uds}</b> unidades${EXP_EMP?(' de '+esc(nombreEmp(EXP_EMP))):''}</div></div>`;
 }
 function exportarExcel(tipo){
@@ -4098,7 +4178,7 @@ function exportarExcel(tipo){
   if(tipo==="resumen"){
     // resumen: producto → cantidad total
     const acc={};
-    arr.forEach(p=>{ try{ itemsPedido(p).forEach(i=>{ acc[i.prodNombre]=(acc[i.prodNombre]||0)+i.cant; }); }catch(e){} });
+    arr.forEach(p=>{ try{ itemsPedido(p).forEach(i=>{ acc[i.prodNombre]=(acc[i.prodNombre]||0)+i.cant; }); }catch(e){ logErr("auto",e); } });
     const rows=[["Producto","Cantidad despachada"]];
     Object.entries(acc).sort((a,b)=>b[1]-a[1]).forEach(([n,c])=>rows.push([n,c]));
     rows.push([]); rows.push(["TOTAL UNIDADES", Object.values(acc).reduce((s,n)=>s+n,0)]);
@@ -4110,7 +4190,7 @@ function exportarExcel(tipo){
     const rows=[["Fecha","Cliente","N° Orden","Empresa","Producto","Cantidad","Zona","Reparto","Envío $"]];
     arr.forEach(p=>{ const fecha=p.creado?new Date(p.creado).toLocaleDateString("es-AR"):"";
       const quien=p.metodo==="correo"?"Correo":(p.cadete||"—");
-      let its=[]; try{ its=itemsPedido(p); }catch(e){}
+      let its=[]; try{ its=itemsPedido(p); }catch(e){ logErr("auto",e); }
       if(!its.length) its=[{prodNombre:(p.items||"—"),cant:""}];
       its.forEach((it,idx)=>{ rows.push([ idx===0?fecha:"", idx===0?(p.cliente||""):"", idx===0?numOrden(p):"",
         idx===0?nombreEmp(p.empresa):"", it.prodNombre, it.cant, idx===0?anilloDe(p).label:"", idx===0?quien:"", idx===0?costoEnvio(p):"" ]); });
@@ -4149,7 +4229,7 @@ function pedidosConsolidadoRT(){
 function vistaConsolidado(){
   const arr=pedidosConsolidadoRT();
   const acc={};
-  arr.forEach(p=>{ try{ itemsPedido(p).forEach(i=>{ acc[i.prodNombre]=(acc[i.prodNombre]||0)+i.cant; }); }catch(e){} });
+  arr.forEach(p=>{ try{ itemsPedido(p).forEach(i=>{ acc[i.prodNombre]=(acc[i.prodNombre]||0)+i.cant; }); }catch(e){ logErr("auto",e); } });
   const prods=Object.entries(acc).sort((a,b)=>b[1]-a[1]);
   const totU=prods.reduce((s,[,c])=>s+c,0);
   app().innerHTML=`
@@ -4179,7 +4259,7 @@ function vistaConsolidado(){
 }
 function consolidadoRT(){
   const arr=pedidosConsolidadoRT();
-  const acc={}; arr.forEach(p=>{ try{ itemsPedido(p).forEach(i=>{ acc[i.prodNombre]=(acc[i.prodNombre]||0)+i.cant; }); }catch(e){} });
+  const acc={}; arr.forEach(p=>{ try{ itemsPedido(p).forEach(i=>{ acc[i.prodNombre]=(acc[i.prodNombre]||0)+i.cant; }); }catch(e){ logErr("auto",e); } });
   return {arr, prods:Object.entries(acc).sort((a,b)=>b[1]-a[1])};
 }
 function imprimirConsolidado(){
@@ -4361,7 +4441,7 @@ function imprimirListado(tab){
   if(tab==="envios"){
     const arr=soloPedidos().filter(p=>despachadoEnRango(p,ini,fin)).sort((a,b)=>(a.creado||0)-(b.creado||0));
     titulo="Envíos despachados"; cabeceras=["#","Cliente","Orden","Marca","Reparto","Productos","Envío"];
-    filas=arr.map((p,i)=>{ let it=[]; try{it=itemsPedido(p);}catch(e){} const q=p.metodo==="correo"?"Correo":(p.cadete||"—");
+    filas=arr.map((p,i)=>{ let it=[]; try{it=itemsPedido(p);}catch(e){ logErr("auto",e); } const q=p.metodo==="correo"?"Correo":(p.cadete||"—");
       return [i+1,p.cliente||"",numOrden(p),nombreEmp(p.empresa),anilloDe(p).label+" · "+q, it.map(x=>x.cant+"× "+x.prodNombre).join("<br>"), fmtAr(costoEnvio(p))]; });
   } else if(tab==="caja"){
     const movs=cajaMovs().filter(m=>(m.ts||0)>=ini && (m.ts||0)<fin).sort((a,b)=>(a.ts||0)-(b.ts||0));
@@ -4548,9 +4628,9 @@ function imprimirDespachadosHoy(){
     return primero>=hoyIni;
   }).sort((a,b)=>(a.creado||0)-(b.creado||0));
   if(!arr.length){ toast("No despachaste nada hoy todavía"); return; }
-  let uds=0; arr.forEach(p=>{ try{ uds+=itemsPedido(p).reduce((s,i)=>s+i.cant,0); }catch(e){} });
+  let uds=0; arr.forEach(p=>{ try{ uds+=itemsPedido(p).reduce((s,i)=>s+i.cant,0); }catch(e){ logErr("auto",e); } });
   const w=window.open("","_blank"); if(!w){ toast("Permití las ventanas emergentes"); return; }
-  const filas=arr.map((p,i)=>{ let it=[]; try{ it=itemsPedido(p); }catch(e){}
+  const filas=arr.map((p,i)=>{ let it=[]; try{ it=itemsPedido(p); }catch(e){ logErr("auto",e); }
     const quien=p.metodo==="correo"?"Correo":(p.cadete||"—");
     return `<tr><td>${i+1}</td><td>${esc(p.cliente||"")}</td><td>${esc(numOrden(p))}</td>
       <td>${esc(nombreEmp(p.empresa))}</td><td>${esc(anilloDe(p).label)} · ${esc(quien)}</td>
@@ -4581,7 +4661,7 @@ function imprimirTablaPedidos(lista, titulo){
     const quien=p.metodo==="correo"?"Correo":(p.cadete||"—");
     if(p.empresa!==ult){ ult=p.empresa; const cnt=arr.filter(x=>x.empresa===p.empresa).length;
       filas+=`<tr><td colspan="8" style="background:#eee;font-weight:700;text-transform:uppercase;font-size:11px;padding:7px 6px">${esc(p.empresa?empresaObj(p.empresa).nombre:'Sin marca')} · ${cnt} env${cnt===1?'ío':'íos'}</td></tr>`; }
-    let it=[]; try{ it=itemsPedido(p); }catch(err){}
+    let it=[]; try{ it=itemsPedido(p); }catch(err){ logErr("auto",err); }
     filas+=`<tr>
       <td>${p.creado?fmtFechaCorta(p.creado):'—'}</td>
       <td>${esc(numOrden(p))}</td>
@@ -4720,7 +4800,7 @@ function badgeDescuento(p){
   return '<span style="font-size:10.5px;font-weight:700;color:var(--amber)">⚠ sin descontar</span>';
 }
 function vistaOperador(){
-  try{ pintarSidebar(); }catch(e){}
+  try{ pintarSidebar(); }catch(e){ logErr("auto",e); }
   if(OPVIEW==="hoy") return vistaHoy();
   if(OPVIEW==="prepararhoy") return vistaPrepararHoy();
   if(OPVIEW==="despachar") return vistaDespachar();
@@ -4948,7 +5028,7 @@ async function kanSoltar(destino){
   toast("Movido a "+(estObj(destino).label||destino));
 }
 let PED_VISTA=(typeof localStorage!=="undefined"&&localStorage.getItem("ped_vista"))||"lista";
-function setPedVista(v){ PED_VISTA=v; try{localStorage.setItem("ped_vista",v);}catch(e){} vistaOperador(); }
+function setPedVista(v){ PED_VISTA=v; try{localStorage.setItem("ped_vista",v);}catch(e){ logErr("auto",e); } vistaOperador(); }
 function tablaPedidos(lista){
   const ordEmp={}; EMPRESAS.forEach((e,i)=>ordEmp[e.id]=i);
   const rk=x=>(ordEmp[x]!=null?ordEmp[x]:99);
@@ -4969,7 +5049,7 @@ function tablaPedidos(lista){
           return hdr+`<tr onclick="toggleExp('${p.id}')" style="cursor:pointer">
             <td class="muted" style="white-space:nowrap;font-size:11px">${p.creado?fmtFechaCorta(p.creado):'—'}<br><b style="color:var(--text);font-size:12.5px" title="${esc(n)}">${esc(n.length>11?("…"+n.slice(-8)):n)}</b></td>
             <td style="word-break:break-word">${esc(p.cliente||'—')}</td>
-            <td style="white-space:normal;font-size:11.5px;color:var(--text-2);line-height:1.5">${(()=>{ let it=[]; try{ it=itemsPedido(p); }catch(e){}
+            <td style="white-space:normal;font-size:11.5px;color:var(--text-2);line-height:1.5">${(()=>{ let it=[]; try{ it=itemsPedido(p); }catch(e){ logErr("auto",e); }
               if(!it.length) return esc(p.items||"—");
               return it.map(x=>esc((x.cant||1)+"× "+x.prodNombre)).join("<br>");
             })()}</td>
@@ -5025,7 +5105,7 @@ async function deshacerDescuento(id){
 }
 async function descontarAhora(id){
   const p=PEDIDOS.find(x=>x.id===id)||await DB.get(id); if(!p){ toast("No encontré el pedido"); return; }
-  let items=[]; try{ items=itemsPedido(p); }catch(e){}
+  let items=[]; try{ items=itemsPedido(p); }catch(e){ logErr("auto",e); }
   if(!items.length){ toast("Este pedido no tiene productos reconocidos"); return; }
   const det=items.map(i=>"· "+i.cant+"x "+i.prodNombre).join("\n");
   const yaBajo=p.stockBajado?"\n\n⚠️ Este pedido YA se descontó antes. Si seguís, se descuenta de nuevo (queda doble).":"";
@@ -5204,12 +5284,12 @@ if(!EMPRESAS.some(e=>e.id===IMP_EMPRESA)) IMP_EMPRESA=EMPRESAS[0].id;
 let IMP_CANAL=(typeof localStorage!=="undefined"&&localStorage.getItem("imp_canal"))||empresaObj(IMP_EMPRESA).canalDefault;
 if(!CANALES.some(c=>c.id===IMP_CANAL)) IMP_CANAL=CANALES[0].id;
 let IMP_DESDE=(typeof localStorage!=="undefined"&&localStorage.getItem("imp_desde"))||"";
-function setImpDesde(v){ IMP_DESDE=v||""; try{ localStorage.setItem("imp_desde",IMP_DESDE); }catch(e){} }
+function setImpDesde(v){ IMP_DESDE=v||""; try{ localStorage.setItem("imp_desde",IMP_DESDE); }catch(e){ logErr("auto",e); } }
 function pickEmpresa(b){ IMP_EMPRESA=b.dataset.e;
-  try{ localStorage.setItem("imp_empresa",IMP_EMPRESA); }catch(e){}
+  try{ localStorage.setItem("imp_empresa",IMP_EMPRESA); }catch(e){ logErr("auto",e); }
   formImportar(); }
 function pickCanal(b){ IMP_CANAL=b.dataset.c;
-  try{ localStorage.setItem("imp_canal",IMP_CANAL); }catch(e){}
+  try{ localStorage.setItem("imp_canal",IMP_CANAL); }catch(e){ logErr("auto",e); }
   formImportar(); }
 /* Trae los pedidos directo de Tienda Nube vía la función /api/tiendanube */
 async function traerTiendaNube(){
@@ -5482,6 +5562,28 @@ function toggleImp(i){ IMP_SEL[i]=!IMP_SEL[i]; mostrarPreviewImport(); }
 function selImp(v){ IMP_SEL={}; IMP_FILAS.forEach((f,i)=>IMP_SEL[i]=v); mostrarPreviewImport(); }
 function toggleRev(i){ IMP_REV[i]=!IMP_REV[i]; mostrarPreviewImport(); }
 /* ¿falta revisar algún pedido con varios productos, de los que están tildados para guardar? */
+/* Un pedido necesita que lo mires SOLO si algo no se reconocio: producto desconocido, sin productos,
+   o un SKU que todavia no enseñaste. El resto se da por revisado y no hay que abrirlo. */
+function necesitaRevision(f){
+  const pr=f.prods||[];
+  if(!pr.length) return true;
+  return pr.some(x=>!x || x.reconocido===false);
+}
+function autoRevisarImport(){
+  IMP_FILAS.forEach((f,i)=>{ if(IMP_REV[i]===undefined && !necesitaRevision(f)) IMP_REV[i]=true; });
+}
+function revisarTodosImport(){
+  IMP_FILAS.forEach((f,i)=>{ if(IMP_SEL[i] && !necesitaRevision(f)) IMP_REV[i]=true; });
+  mostrarPreviewImport();
+}
+function avisoRevisionHTML(){
+  const pend=IMP_FILAS.filter((f,i)=>IMP_SEL[i]&&!IMP_REV[i]);
+  const auto=IMP_FILAS.filter((f,i)=>IMP_SEL[i]&&IMP_REV[i]).length;
+  if(!pend.length) return '<div class="hint" style="margin-bottom:8px;padding:8px 10px;background:#d9f2e5;color:#0f6b40;border-radius:8px;font-weight:600">✓ Los '+auto+' pedidos se reconocieron por código. No hace falta abrir ninguno.</div>';
+  const nombres=esc(pend.slice(0,4).map(f=>f.cliente||"—").join(", "))+(pend.length>4?"…":"");
+  return '<div class="hint" style="margin-bottom:8px;padding:8px 10px;background:#fff3cd;color:#7a5a00;border-radius:8px;font-weight:600">👀 Solo '+pend.length+' de '+(pend.length+auto)+' necesita'+(pend.length===1?'':'n')+' que lo mires: '+nombres+
+    ' <button class="btn sm ghost" style="margin-left:6px" onclick="revisarTodosImport()">Dar por buenos los reconocidos</button></div>';
+}
 function faltaRevisarImport(){ return IMP_FILAS.some((f,i)=>IMP_SEL[i] && (f.prods||[]).length>=1 && !IMP_REV[i]); }
 function setImpMetodo(i,val){ const f=IMP_FILAS[i]; if(!f) return;
   if(val==="cadete"){ f.metodo="cadete"; f.correo=""; f.etiquetaPdf=""; f.etiquetaPdfNombre=""; }
@@ -5684,6 +5786,7 @@ function mostrarPreviewImport(){
   if(!$("#impPrev")) formImportar();          // si la vista se re-dibujó durante la búsqueda, la reconstruyo
   const cont=$("#impPrev"); if(!cont){ toast("Traje "+IMP_FILAS.length+" pedidos. Entrá a Importar pedidos para verlos."); return; }
   if(Object.keys(IMP_SEL).length===0) IMP_FILAS.forEach((f,i)=>IMP_SEL[i]=true);   // por defecto todos marcados
+  autoRevisarImport();                                                             // los reconocidos quedan revisados solos
   const sel=IMP_FILAS.filter((f,i)=>IMP_SEL[i]);
   const cadete=sel.filter(f=>f.metodo!=='correo').length;
   const correo=sel.length-cadete;
@@ -5698,7 +5801,7 @@ function mostrarPreviewImport(){
         <div class="c" style="margin-top:6px">${cadete} por cadete · ${correo} por correo</div>
       </div>
       <div class="hint" style="margin-bottom:8px">Destildá los que NO hagas. Con el selector elegís cómo va cada uno (cadete / correo / sucursal).</div>
-      ${faltaRevisarImport()?`<div class="hint" style="margin-bottom:8px;padding:8px 10px;background:#fff3cd;color:#7a5a00;border-radius:8px;font-weight:600">⚠ Hay pedidos con productos sin revisar — tildá "Revisé" en cada uno antes de guardar.</div>`:''}
+      ${avisoRevisionHTML()}
       <div class="row" style="gap:8px;margin-bottom:6px">
         <button class="btn sm ghost" onclick="selImp(true)">Marcar todos</button>
         <button class="btn sm ghost" onclick="selImp(false)">Ninguno</button>
@@ -5805,7 +5908,7 @@ async function confirmarImport(){
   try{
     for(const f of aCrear){ f.canal=f.canal||IMP_CANAL; await crearPedido(f); creados++; }
   }catch(e){ notify("⚠️ IMPORTÉ "+creados+" DE "+aCrear.length+" Y FALLÓ\n\nError: "+(e&&e.message||e)+"\nVersión: "+APP_VERSION+"\n\nSacale captura y pasásela a Claude."); }
-  try{ await agregarIgnorados(descartados); }catch(e){}   // que no vuelvan a aparecer
+  try{ await agregarIgnorados(descartados); }catch(e){ logErr("auto",e); }   // que no vuelvan a aparecer
   if(creados===aCrear.length) notify("✅ "+creados+" PEDIDOS IMPORTADOS Y GUARDADOS"+(duplicados.length?(" (se salteó "+duplicados.length+" duplicado"+(duplicados.length===1?"":"s")+")"):"")+"\nVersión: "+APP_VERSION);
   IMP_FILAS=[]; IMP_SEL={}; IMP_REV={}; OPVIEW="pedidos"; vistaOperador();
 }
@@ -6018,7 +6121,7 @@ async function guardarEdicion(id){
   // Si ya se había descontado, ofrezco rehacer el descuento con las cantidades nuevas
   const p=PEDIDOS.find(x=>x.id===id)||await DB.get(id);
   if(p && p.stockBajado && descuentoActivo()){
-    let det=""; try{ det=itemsPedido(p).map(i=>"· "+i.cant+"x "+i.prodNombre).join("\n"); }catch(e){}
+    let det=""; try{ det=itemsPedido(p).map(i=>"· "+i.cant+"x "+i.prodNombre).join("\n"); }catch(e){ logErr("auto",e); }
     if(await askConfirm("Este pedido ya estaba descontado del stock.\n\n¿Rehago el descuento con lo que quedó ahora?\n\n"+det+"\n\n(Devuelve lo anterior y descuenta esto. Si decís que no, el stock queda como estaba.)")){
       await devolverStockPedido(id);
       await DB.update(id,{stockBajado:false});
@@ -6031,9 +6134,8 @@ async function guardarEdicion(id){
 /* Devuelve al stock lo que se había descontado de un pedido (borra sus salidas) */
 async function devolverStockPedido(id){
   const p=await DB.get(id); if(!p) return;
-  const ref=p.ref||p.id; const st=stockState();
-  st.movs=(st.movs||[]).filter(m=>!(m.tipo==="salida" && m.ref===ref));
-  await persistStock(st);
+  const ref=p.ref||p.id;
+  await borrarMovs(m=>m.tipo==="salida" && m.ref===ref);
 }
 /* Eliminar DEFINITIVO (solo admin): borra el pedido de la base */
 async function eliminarPedido(id){
@@ -6192,7 +6294,7 @@ function movsProdHTML(prod,st){
 }
 /* Fusiona los productos dados de alta manualmente al catálogo en memoria */
 function cargarProdsExtra(){
-  try{ prodsExtra().forEach(x=>{ if(x&&x.nombre && !PRODUCTOS.some(p=>p.nombre===x.nombre)) PRODUCTOS.push({nombre:x.nombre, barcode:x.barcode||""}); }); }catch(e){}
+  try{ prodsExtra().forEach(x=>{ if(x&&x.nombre && !PRODUCTOS.some(p=>p.nombre===x.nombre)) PRODUCTOS.push({nombre:x.nombre, barcode:x.barcode||""}); }); }catch(e){ logErr("auto",e); }
 }
 /* Le pasa al bot de Telegram (api/telegram-sync) el listado de pedidos pendientes y qué debía
    llevar cada uno, para que /api/telegram-webhook pueda mostrarlos y verificar fotos de pickeo
@@ -6225,7 +6327,7 @@ async function sincronizarPedidosTelegram(){
   }catch(e){ /* sync en segundo plano: si falla, no afecta el resto de la app */ }
 }
 async function avisarNuevosPedidosTelegram(peds){
-  for(const p of peds){ try{ await DB.update(p.id,{telegramAvisoTs:Date.now()}); }catch(e){} }   // marco primero: si falla el envío, no lo reintento en loop
+  for(const p of peds){ try{ await DB.update(p.id,{telegramAvisoTs:Date.now()}); }catch(e){ logErr("auto",e); } }   // marco primero: si falla el envío, no lo reintento en loop
   const lista=peds.map(p=>{
     const its=(()=>{ try{ return itemsPedido(p); }catch(_){ return []; } })();
     return "• "+(p.cliente||"—")+" — "+(its.map(x=>x.cant+"x "+x.prodNombre).join(", ")||"(sin productos)");
@@ -6339,7 +6441,7 @@ async function borrarComprasPrueba(){
   const pruebas=PEDIDOS.filter(p=>p.esPrueba);
   if(!pruebas.length){ toast("No hay compras de prueba"); return; }
   if(!await askConfirm("Borrar las "+pruebas.length+" compras de prueba? (no afecta tus pedidos reales)",{yes:"Borrar"})) return;
-  for(const p of pruebas){ try{ await DB.delete(p.id); }catch(e){} }
+  for(const p of pruebas){ try{ await DB.delete(p.id); }catch(e){ logErr("auto",e); } }
   toast("✓ Compras de prueba borradas");
   OPVIEW="hoy"; vistaOperador();
 }
@@ -7118,14 +7220,10 @@ async function confirmarCarga(){
   const items=(window.__carga||[]).filter(i=>i.prod);
   if(!items.length){ toast("Nada para cargar"); return; }
   try{
-    const st=stockState(); const ts=Date.now();
-    items.forEach(it=>{ st.movs.push({ts,prod:it.prod,tipo:"entrada",cant:Math.abs(+it.cant||0),motivo:"Carga de stock"}); });
-    await persistStock(st);   // UNA sola escritura con todo
+    await agregarMovs(items.map(it=>({prod:it.prod,tipo:"entrada",cant:Math.abs(+it.cant||0),motivo:"Carga de stock"})));
     // VERIFICACIÓN REAL: releer del servidor y confirmar que quedaron
-    const main=stockRecord();
-    if(main && DB.get){
-      const srv=await DB.get(main.id);
-      const n=(srv && srv.movs && srv.movs.length)||0;
+    if(true){
+      const n=(stockState().movs||[]).length;
       if(n>=items.length){ notify("✅ CARGA CONFIRMADA POR EL SERVIDOR\n\nEl registro de stock tiene "+n+" movimientos guardados en Firebase.\nVersión de la app: "+APP_VERSION); }
       else { notify("⚠️ El servidor devolvió "+n+" movimientos (esperaba al menos "+items.length+").\nVersión: "+APP_VERSION+"\nSacá captura y pasásela a Claude."); return; }
     } else { toast(items.length+" productos cargados ✅"); }
@@ -7170,7 +7268,7 @@ function setInfPeriodo(p){ INF_PERIODO=p; vistaOperador(); }
 function vistaInformes(){
   const desde=infDesde();
   const peds=soloPedidos().filter(p=>p.estado!=="anulado" && (p.creado||0)>=desde && (p.cliente||"")!=="_PRUEBA_DIAGNOSTICO");
-  let unidades=0; peds.forEach(p=>{ try{ unidades+=itemsPedido(p).reduce((s,i)=>s+(i.cant||0),0); }catch(e){} });
+  let unidades=0; peds.forEach(p=>{ try{ unidades+=itemsPedido(p).reduce((s,i)=>s+(i.cant||0),0); }catch(e){ logErr("auto",e); } });
   const aCobrar=peds.reduce((s,p)=>s+costoEnvio(p),0);
   const zc=zonaCosto(); const esCadeteCat=c=>["caba","1","2","3"].includes(c);
   const aCardinal=peds.reduce((s,p)=>{ const c=catPedido(p); const q=p.metodo==="correo"?"Correo":(p.cadete||"");
@@ -7182,7 +7280,7 @@ function vistaInformes(){
     const ini=d.getTime(), fin=ini+86400000;
     dias.push({ lbl:d.toLocaleDateString("es-AR",{weekday:"short",day:"numeric"}), n:soloPedidos().filter(p=>(p.creado||0)>=ini&&(p.creado||0)<fin&&p.estado!=="anulado").length }); }
   const maxDia=Math.max(1,...dias.map(d=>d.n));
-  const acc={}; peds.forEach(p=>{ try{ itemsPedido(p).forEach(it=>{ const k=it.prodNombre||it.nombre; acc[k]=(acc[k]||0)+(it.cant||0); }); }catch(e){} });
+  const acc={}; peds.forEach(p=>{ try{ itemsPedido(p).forEach(it=>{ const k=it.prodNombre||it.nombre; acc[k]=(acc[k]||0)+(it.cant||0); }); }catch(e){ logErr("auto",e); } });
   const top=Object.entries(acc).sort((a,b)=>b[1]-a[1]).slice(0,10);
   const st=stockState(); const bajo=PRODUCTOS.map(pr=>({nombre:pr.nombre,falta:pedirDe(pr.nombre,st),nivel:nivel(pr.nombre,st)})).filter(x=>x.falta>0).sort((a,b)=>b.falta-a.falta).slice(0,12);
   const perBtn=(k,l)=>`<button class="${INF_PERIODO===k?'on':''}" ${INF_PERIODO===k?'':`onclick="setInfPeriodo('${k}')"`}>${l}</button>`;
@@ -7347,7 +7445,7 @@ async function repararProdsPedidos(){
   for(const p of sinProds){
     const r=prodsDesdeTexto(p.items||""); const prods=r.ok;
     r.dudosos.forEach(x=>dudosos.push(p.cliente+": "+x));
-    if(prods.length){ try{ await DB.update(p.id,{prods}); reparados++; }catch(e){} }
+    if(prods.length){ try{ await DB.update(p.id,{prods}); reparados++; }catch(e){ logErr("auto",e); } }
   }
   let msg="✅ "+reparados+" pedidos reparados (ahora descuentan bien).";
   if(dudosos.length) msg+="\n\n⚠ "+dudosos.length+" productos no se reconocieron y quedaron sin cargar:\n"+dudosos.slice(0,10).join("\n");
@@ -7522,7 +7620,7 @@ function escanearParaPedido(){ abrirEscaner(scanPrep,{continuo:true,hint:"Escane
 let PREP_ALERTAS=[];   // inconsistencias detectadas en esta preparación
 function alertaPrep(tipo, texto){
   PREP_ALERTAS.push({tipo, texto, ts:Date.now()});
-  try{ navigator.vibrate && navigator.vibrate([300,100,300]); }catch(e){}
+  try{ navigator.vibrate && navigator.vibrate([300,100,300]); }catch(e){ logErr("auto",e); }
 }
 async function scanPrep(code){
   const p=PEDIDOS.find(x=>x.id===PREP_ID); if(!p) return;
@@ -7555,7 +7653,7 @@ async function scanPrep(code){
   PREP_REAL[prod.nombre]=(PREP_REAL[prod.nombre]||0)+1;
   const its=itemsPedido(p);
   const completo=its.length && its.every(i=>(PREP_SCAN[i.prodNombre]||0)>=i.cant);
-  if(completo){ try{ navigator.vibrate && navigator.vibrate([180,80,180]); }catch(e){}
+  if(completo){ try{ navigator.vibrate && navigator.vibrate([180,80,180]); }catch(e){ logErr("auto",e); }
     toast("🎉 ¡PEDIDO COMPLETO! Tocá el botón verde e imprimí la etiqueta");
   } else { toast("✓ "+prod.nombre.split(" ").slice(0,2).join(" ")+" "+(cur+1)+"/"+it.cant); }
   pantallaPreparar(PREP_ID);
@@ -7572,7 +7670,7 @@ async function marcarListo(id, inconsistencias){
   }
   const nota=(inconsistencias&&inconsistencias.length)?("Preparado CON avisos autorizados: "+inconsistencias.join(" | ")):"Preparado (verificado con escáner)";
   // guardo las inconsistencias en el pedido para poder revisarlas después
-  if(inconsistencias&&inconsistencias.length){ try{ await DB.update(id,{prepAlertas:inconsistencias, prepConAviso:true}); }catch(e){} }
+  if(inconsistencias&&inconsistencias.length){ try{ await DB.update(id,{prepAlertas:inconsistencias, prepConAviso:true}); }catch(e){ logErr("auto",e); } }
   await avanzar(id,'preparado',nota);
   PREP_ID=null; PREP_SCAN={}; PREP_REAL={}; PREP_ALERTAS=[];
   toast(inconsistencias&&inconsistencias.length?"Pedido cerrado con avisos ⚠":"Pedido listo ✅");
@@ -7662,14 +7760,14 @@ async function abrirEscaner(onCode, opts){
   const vid=ov.querySelector("video");
   let reader=null, stop=false, ult="", ultTs=0;
   const cerrar=()=>{ if(stop)return; stop=true;
-    try{ reader && reader.reset && reader.reset(); }catch(e){}
-    try{ const s=vid.srcObject; if(s) s.getTracks().forEach(t=>t.stop()); }catch(e){}
+    try{ reader && reader.reset && reader.reset(); }catch(e){ logErr("auto",e); }
+    try{ const s=vid.srcObject; if(s) s.getTracks().forEach(t=>t.stop()); }catch(e){ logErr("auto",e); }
     ov.remove(); };
   ov.querySelector(".scan-x").onclick=cerrar;
   const manejar=raw=>{ if(!raw) return; const now=Date.now();
     if(raw===ult && now-ultTs<1400) return;      // no repetir la misma lectura al toque
     ult=raw; ultTs=now;
-    try{ navigator.vibrate && navigator.vibrate(60); }catch(e){}   // vibra al leer, así sabe que contó
+    try{ navigator.vibrate && navigator.vibrate(60); }catch(e){ logErr("auto",e); }   // vibra al leer, así sabe que contó
     if(opts.continuo){ onCode(raw); const el=document.getElementById("scanLast"); if(el){ el.textContent="✓ leído"; el.style.color="#1d9e75"; setTimeout(()=>{ if(el) el.style.color=""; },500); } }
     else { cerrar(); onCode(raw); } };
   try{
@@ -7682,7 +7780,7 @@ async function abrirEscaner(onCode, opts){
       vid.srcObject=stream;
       const det=new BarcodeDetector({formats:["code_128","qr_code","ean_13","code_39"]});
       const loop=async()=>{ if(stop)return;
-        try{ const codes=await det.detect(vid); if(codes&&codes.length) manejar(codes[0].rawValue||""); }catch(e){}
+        try{ const codes=await det.detect(vid); if(codes&&codes.length) manejar(codes[0].rawValue||""); }catch(e){ logErr("auto",e); }
         requestAnimationFrame(loop); };
       vid.onloadedmetadata=()=>loop();
     } else { cerrar(); const c=prompt("Ingresá el código a mano:"); if(c) onCode(c); }
