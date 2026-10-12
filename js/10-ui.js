@@ -217,31 +217,3 @@ function goHome(){ stopPlay();
   ROL=null; CADETE_ACTIVO=null; history.replaceState({},"",location.pathname); render(); }
 
 /* ---------- OPERADOR ---------- */
-function pintarSidebar(){
-  const sb=document.getElementById("sidebar"); if(!sb) return;
-  if(ROL!=="admin" || PREVIEW){ document.body.classList.remove("sys"); sb.innerHTML=""; return; }
-  document.body.classList.add("sys");
-  const ped=(typeof soloPedidos==="function")?soloPedidos():[];
-  const nActivos=ped.filter(p=>!p.cerradoEn && !["entregado","confirmado","anulado"].includes(p.estado)).length;
-  const nPrep=ped.filter(p=>p.estado==="pendiente").length;
-  const nPend=ped.filter(p=>p.estado==="pendiente" && !p.metodo).length + ped.filter(p=>p.estado==="pendiente" && p.metodo).length + ped.filter(p=>p.estado==="preparado").length;
-  const nAvisos=ped.filter(p=>p.despachoAviso && !p.despachoAvisoVisto).length;
-  const items=[["control","Control","🎯",nAvisos||null],["hoy","Hoy","📋",nPend||null],["pedidos","Pedidos","📦",nActivos||null],["despachar","Despacho","📷",nAvisos||null],
-    ["stock","Stock","🗃️",null],["listados","Listados","📊",null]];
-  sb.innerHTML=`<div class="logo-sys">
-      <div class="logo-mark">F</div>
-      <div class="logo-txt">Fullminet<small>Sistema de despacho</small></div>
-    </div>
-    ${items.map(([v,n,ic,b])=>`<button class="nav ${OPVIEW===v?'on':''}" onclick="OPVIEW='${v}';vistaOperador()">
-      <span style="width:20px;text-align:center;font-size:15px">${ic}</span>${n}${b?`<span class="b">${b}</span>`:''}</button>`).join("")}
-    <div class="sp"></div>
-    <button class="nav" onclick="formImportar()"><span style="width:20px;text-align:center;font-size:15px">⬇️</span>Importar</button>
-    <button class="nav" onclick="salir()"><span style="width:20px;text-align:center;font-size:15px">🚪</span>Salir</button>`;
-}
-function segOp(active){
-  if(ROL!=="admin" || PREVIEW) return "";   // operador (o admin previsualizando) no ve pestañas
-  const tabs=[["control","Control"],["hoy","Hoy"],["pedidos","Pedidos"],["stock","Stock"],["listados","Listados"]];
-  return `<div class="row" style="justify-content:space-between;margin-bottom:14px"><div class="seg">${
-    tabs.map(t=>`<button class="${active===t[0]?'on':''}" ${active===t[0]?'':`onclick="OPVIEW='${t[0]}';vistaOperador()"`}>${t[1]}</button>`).join("")
-  }</div></div>`;
-}

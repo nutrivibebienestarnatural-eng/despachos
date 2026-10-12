@@ -24,6 +24,7 @@ api/                Lo que corre en el servidor de Vercel (claves secretas, nunc
 | `07-stock.js` | Stock: niveles, movimientos, mínimos y cuánto sacó cada empresa |
 | `08-caja.js` | Cuenta corriente, caja, cobros y cierres de período |
 | `09-operacion.js` | Pantallas del día: zonas, cuenta, salidas, cobro, checkout, entregas |
+| `09b-navegacion.js` | **El menú del admin**: las 4 secciones, la barra de arriba y a qué pantalla va cada botón. Si agregás una pantalla, se declara acá |
 | `10-ui.js` | Piezas de interfaz, el `render()` principal y a qué pantalla va cada rol |
 | `11-vistas.js` | Vistas del admin: Hoy, Pedidos, Listados, exportaciones, kanban |
 | `12-importar.js` | Importar pedidos: Tienda Nube, Mercado Libre, CSV y PDF |
@@ -67,6 +68,20 @@ match /usuarios/{doc} { allow read:        if request.auth != null; }
 
 La empleada entra por link (`?rol=despacho`) sin usuario propio: la app la hace entrar como
 **anónima**, así que en Firebase → Authentication tiene que estar habilitado el acceso anónimo.
+
+## El menú del admin
+
+Todo el menú sale de una sola lista, `SECCIONES`, en `js/09b-navegacion.js`:
+
+| Sección | Pantallas |
+|---|---|
+| 🎯 Hoy | Tablero (inicio), Resumen del día, Preparar, Despacho, Checkout |
+| 📦 Pedidos | Todos, Entregas, Hoja de ruta, Zonas, Repickeo, Etiquetas |
+| 🗃️ Stock | Stock, Lo que salió, Mínimos, Cargar remito, Depósito |
+| 💰 Plata | Cuenta, Facturar, Corte de caja, Cierre |
+| ⋯ Más | Listados, Consolidado, Exportar, Informes, Cupones, Panel viejo |
+
+Para saltar a cualquier pantalla desde un botón: `onclick="irA('salidas')"`.
 
 ## Los roles
 

@@ -766,25 +766,8 @@ function badgeDescuento(p){
   if(p.stockBajado) return '<span style="font-size:10.5px;font-weight:700;color:var(--green)">✓ descontó</span>';
   return '<span style="font-size:10.5px;font-weight:700;color:var(--amber)">⚠ sin descontar</span>';
 }
-function vistaOperador(){
-  try{ pintarSidebar(); }catch(e){ logErr("auto",e); }
-  if(OPVIEW==="hoy") return vistaHoy();
-  if(OPVIEW==="prepararhoy") return vistaPrepararHoy();
-  if(OPVIEW==="despachar") return vistaDespachar();
-  if(OPVIEW==="control") return vistaControl();
-  if(OPVIEW==="preparar" && PREP_ID) return pantallaPreparar(PREP_ID);
-  if(OPVIEW==="listados") return vistaListados();
-  if(OPVIEW==="cortecaja") return vistaCorteCaja();
-  if(OPVIEW==="exportar") return vistaExportar();
-  if(OPVIEW==="consolidado") return vistaConsolidado();
-  if(OPVIEW==="panel") return vistaPanel();
-  if(OPVIEW==="deposito") return vistaDeposito();
-  if(OPVIEW==="ruta") return vistaRuta();
-  if(OPVIEW==="preparacion") return vistaPreparacion();
-  if(OPVIEW==="stock") return vistaStock();
-  if(OPVIEW==="cupones") return vistaCupones();
-  if(OPVIEW==="minimos") return vistaMinimos();
-  if(OPVIEW==="informes") return vistaInformes();
+/* La pantalla PEDIDOS (antes era la cola de vistaOperador) */
+function vistaPedidos(){
   const ped=soloPedidos();
   const hoy=new Date(); hoy.setHours(0,0,0,0);
   const entregadosHoy=ped.filter(p=>(p.eventos||[]).some(e=>e.estado==="entregado"&&e.ts>=hoy.getTime())).length;
