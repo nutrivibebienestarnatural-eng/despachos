@@ -455,11 +455,11 @@ function alertasQuiebre(){
     const diasRestantes=ritmo>0 ? Math.floor(stk/ritmo) : 999;
     const mn=minDe(prod,st);
     const disparo = recDia > promDia*1.8 && recDia>0.5;   // vende 80%+ más que su promedio
-    let motivo="", nivel=0;
-    if(diasRestantes<=3){ motivo="se acaba en "+diasRestantes+(diasRestantes===1?" día":" días"); nivel=3; }
-    else if(disparo){ motivo="se disparó la venta"; nivel=2; }
-    else if(mn>0 && stk<mn){ motivo="bajo el mínimo ("+stk+"/"+mn+")"; nivel=1; }
-    if(nivel>0) res.push({prod, stk, dias:diasRestantes, motivo, nivel, disparo});
+    let motivo="", urgencia=0;   // ojo: no llamarla "nivel", que es el nombre de la función de stock
+    if(diasRestantes<=3){ motivo="se acaba en "+diasRestantes+(diasRestantes===1?" día":" días"); urgencia=3; }
+    else if(disparo){ motivo="se disparó la venta"; urgencia=2; }
+    else if(mn>0 && stk<mn){ motivo="bajo el mínimo ("+stk+"/"+mn+")"; urgencia=1; }
+    if(urgencia>0) res.push({prod, stk, dias:diasRestantes, motivo, nivel:urgencia, disparo});
   });
   return res.sort((a,b)=>b.nivel-a.nivel || a.dias-b.dias);
 }

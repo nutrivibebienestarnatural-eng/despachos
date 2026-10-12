@@ -344,8 +344,8 @@ function vistaStock(){
   const impE=imputacionEmp(st,STOCK_DESDE,STOCK_HASTA);
   const q=(STOCK_Q||"").toLowerCase().trim();
   const rows=PRODUCTOS.map((p,i)=>{ const stk=nivel(p.nombre,st), mn=minDe(p.nombre,st), d=demandaDe(p,pick);
-    const tieneMov=(st.movs||[]).some(m=>m.prod===p.nombre);
-    return {p,i,stk,mn,d,rep:pedirDe(p.nombre,st),tieneMov, marca:marcaDeProducto(p.nombre)}; })
+    const tuvoMov=(st.movs||[]).some(m=>m.prod===p.nombre);   // no usar "tieneMov": es el nombre de una función
+    return {p,i,stk,mn,d,rep:pedirDe(p.nombre,st),tieneMov:tuvoMov, marca:marcaDeProducto(p.nombre)}; })
     .filter(r=> !DEPOSITO_ACTIVO || r.marca===DEPOSITO_ACTIVO )
     .filter(r=> (q ? r.p.nombre.toLowerCase().includes(q) : (STOCK_TODOS||r.tieneMov)) );   // por defecto solo los cargados; buscador o "ver todos" muestran el resto
   const reponer=rows.filter(r=>r.rep>0);
