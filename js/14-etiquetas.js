@@ -1042,7 +1042,7 @@ function avisoSinEtiquetaHTML(n,fn){
     </div></div>`;
 }
 let SEL_ETQ={};
-function etqImprimibles(){ return soloPedidos().filter(p=>!["entregado","confirmado","anulado"].includes(p.estado) && !(p.pasaManana && !p.etiquetaPdf)); }
+function etqImprimibles(){ return soloPedidos().filter(p=>!["entregado","confirmado","anulado"].includes(p.estado) && !esParaManana(p)); }
 function pantallaEtiquetas(){
   const arr=etqImprimibles();
   const n=arr.filter(p=>SEL_ETQ[p.id]).length;
@@ -1072,7 +1072,7 @@ function pantallaEtiquetas(){
           :`<label class="btn sm ghost" style="flex:0 0 auto;cursor:pointer">📎 Adjuntar<input type="file" accept="application/pdf" style="display:none" onchange="adjuntarEtiquetaCorreo('${p.id}',this.files[0])"></label>`)
           :`<button class="btn sm ghost" style="flex:0 0 auto" onclick="cambiarRuta('${p.id}')">Editar</button>`}
       </div>`; }).join(""):empty('box','No hay pedidos para etiquetar.')}
-    ${(()=>{ const m=soloPedidos().filter(p=>p.pasaManana && !p.etiquetaPdf && !["entregado","confirmado","anulado"].includes(p.estado)); if(!m.length) return "";
+    ${(()=>{ const m=soloPedidos().filter(p=>esParaManana(p)); if(!m.length) return "";
       return `<div class="title" style="margin-top:26px;font-size:18px">🌙 Pasan para mañana (${m.length}) · sin etiqueta de ML</div>`+m.map(p=>`
       <div class="card" style="margin:10px 0;padding:12px 16px;background:#fff3cd">
         <div style="font-weight:600">${esc(p.cliente||'—')} <span class="muted" style="font-weight:400">· ${esc(nombreEmp(p.empresa))} · N° ${esc(numOrden(p))}</span></div>

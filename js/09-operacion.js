@@ -809,7 +809,7 @@ function imprimirCheckout(){
    Se muestra DENTRO de la app (sin abrir ventana nueva) para que aparezca siempre, también en el celular. */
 function imprimirChecklistDia(empresaFiltro){
   const dia=chkDia();
-  const pedsAll=soloPedidos().filter(p=>p.estado!=="anulado" && (p.cliente||"")!=="_PRUEBA_DIAGNOSTICO"
+  const pedsAll=soloPedidos().filter(p=>p.estado!=="anulado" && !esParaManana(p) && (p.cliente||"")!=="_PRUEBA_DIAGNOSTICO"
     && !p.cerradoEn && ["pendiente","preparado"].includes(p.estado));
   if(!pedsAll.length){ toast("No hay pedidos para preparar"); return; }
   const peds = empresaFiltro ? pedsAll.filter(p=>p.empresa===empresaFiltro) : pedsAll;

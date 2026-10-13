@@ -15,7 +15,7 @@ function ctlRango(){
 function ctlPedidos(){
   const {ini,fin}=ctlRango();
   // lo del período + todo lo que sigue abierto (aunque sea de antes: es lo que hay que resolver)
-  return soloPedidos().filter(p=>p.estado!=="anulado" && (p.cliente||"")!=="_PRUEBA_DIAGNOSTICO"
+  return soloPedidos().filter(p=>p.estado!=="anulado" && !esParaManana(p) && (p.cliente||"")!=="_PRUEBA_DIAGNOSTICO"
     && (CTL_EMP==="todas"||(p.empresa||"")===CTL_EMP)
     && ((p.creado||0)>=ini && (p.creado||0)<fin || ["pendiente","preparado",...CTL_EN_CAMINO].includes(p.estado)));
 }

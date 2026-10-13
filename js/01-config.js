@@ -199,6 +199,9 @@ const nombreEmp = id => { const e=EMPRESAS.find(x=>x.id===id); return e?e.nombre
 const canalObj   = id => CANALES.find(c=>c.id===id) || CANALES[0];
 const canalDe    = p => (p&&p.canal) || empresaObj(p&&p.empresa).canalDefault;
 /* Formato de la etiqueta/pedido, para mostrar en el checklist además de Cadete/Correo */
+/* Pedido de ML pendiente SIN etiqueta: queda aparte ("pasa para mañana"), fuera de las listas de cadete/correo y de preparar.
+   Se lo vuelve a incluir si se lo saca de "mañana" a mano (pasaManana===false) o apenas aparece la etiqueta. */
+const esParaManana = p => !!p && p.pasaManana!==false && p.estado==="pendiente" && canalDe(p)==="ml_flex" && !p.etiquetaPdf;
 const formatoEnvio = p => (p&&p.pickit) ? "Pickit" : (canalDe(p)==="ml_flex" ? "Flex" : "Nube");
 /* Marcas que SIEMPRE salen de Bs As y por lo tanto SIEMPRE descuentan stock
    (no se eligen pedido por pedido, como sí pasa con Labs del interior). */
