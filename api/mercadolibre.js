@@ -169,12 +169,39 @@ async function traerPedidos(empresa, desde) {
   return out;
 }
 
+// Repara UN pedido ya importado: busca el N° de envío de sus ventas y trata de bajar la etiqueta de nuevo.
+async function repararPedido(empresa, ids) {
+  const t = await tokenValido(empresa);
+  let shipId = null;
+  for (const id of ids) {
+    const r = await fetch(`${API_BASE}/orders/${encodeURIComponent(id)}`, { headers: mlHeaders(t.access_token) });
+    if (!r.ok) continue;
+    const o = await r.json();
+    if (o.shipping && o.shipping.id) { shipId = o.shipping.id; break; }
+  }
+  if (!shipId) return { ok: true, motivo: "La venta no tiene envío de Mercado Envíos asociado" };
+  let ship = null;
+  try { const rs = await fetch(`${API_BASE}/shipments/${shipId}`, { headers: mlHeaders(t.access_token) }); if (rs.ok) ship = await rs.json(); } catch (e) { /* sigue */ }
+  const estado = ship ? (ship.status + (ship.substatus ? "/" + ship.substatus : "")) : "";
+  const out = { ok: true, envio: String(shipId), estadoEnvio: estado };
+  if (ship && ["shipped", "delivered", "cancelled"].includes(ship.status)) { out.yaSalio = true; return out; }
+  const et = await descargarEtiquetaML(shipId, t.access_token);
+  if (et.b64) { out.etiquetaPdf = et.b64; out.etiquetaPdfNombre = "etiqueta-ml-" + shipId + ".pdf"; }
+  else out.motivo = "Envío " + shipId + (estado ? " (" + estado + ")" : "") + " · " + et.motivo;
+  return out;
+}
+
 module.exports = async (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   try {
     const empresa = ((req.query && req.query.empresa) || "").trim();
     if (!empresa) return res.status(400).json({ ok: false, error: "Falta ?empresa=" });
 
+    if (req.method === "GET" && req.query && req.query.action === "reparar") {
+      const ids = String(req.query.ids || "").split(",").map(x => x.replace(/\D/g, "")).filter(Boolean);
+      if (!ids.length) return res.status(400).json({ ok: false, error: "Falta ?ids=" });
+      return res.status(200).json(await repararPedido(empresa, ids));
+    }
     if (req.method === "GET") {
       const pedidos = await traerPedidos(empresa, req.query && req.query.desde);
       return res.status(200).json({ ok: true, cantidad: pedidos.length, pedidos });

@@ -1007,6 +1007,30 @@ function reporteSinEtiqueta(arr,csv){
   w.document.close();
 }
 function reporteSinEtiquetaImport(csv){ reporteSinEtiqueta(IMP_FILAS.filter(f=>f.canal==="ml_flex" && !f.etiquetaPdf),csv); }
+/* Repara los pedidos de ML ya guardados: completa el N° de envío (para que la foto de la etiqueta los reconozca),
+   vuelve a pedir la etiqueta a ML y deja aparte, "para mañana", los que siguen sin etiqueta. */
+async function repararML(){
+  const arr=soloPedidos().filter(p=>canalDe(p)==="ml_flex" && ["pendiente","preparado","asignado"].includes(p.estado) && (!p.etiquetaPdf || !p.envio));
+  if(!arr.length){ toast("No hay pedidos de ML para reparar ✓"); return; }
+  if(!await askConfirm("Voy a consultar a Mercado Libre por "+arr.length+" pedido"+(arr.length===1?"":"s")+" (N° de envío y etiqueta).\n\nLos que sigan sin etiqueta quedan separados como 'Pasan para mañana'.\n\n¿Seguimos?")) return;
+  let conEt=0, manana=0, errores=0;
+  for(let i=0;i<arr.length;i++){ const p=arr[i];
+    toast("Reparando "+(i+1)+" de "+arr.length+"…");
+    try{
+      const ids=(p.mlOrderIds&&p.mlOrderIds.length?p.mlOrderIds:[String(p.ref||"").replace(/\D/g,"")]).join(",");
+      const r=await fetch("/api/mercadolibre?action=reparar&empresa="+encodeURIComponent(p.empresa)+"&ids="+encodeURIComponent(ids));
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok||!d.ok){ errores++; continue; }
+      const upd={};
+      if(d.envio && !p.envio) upd.envio=d.envio;
+      if(d.etiquetaPdf){ upd.etiquetaPdf=d.etiquetaPdf; upd.etiquetaPdfNombre=d.etiquetaPdfNombre; upd.etiquetaMotivo=""; upd.pasaManana=false; conEt++; }
+      else if(!p.etiquetaPdf){ upd.etiquetaMotivo=d.motivo||"Sin etiqueta en Mercado Libre"; upd.pasaManana=true; manana++; }
+      if(Object.keys(upd).length) await DB.update(p.id,upd);
+    }catch(e){ errores++; logErr("auto",e); }
+  }
+  notify("🔧 REPARACIÓN LISTA\n\n• Con etiqueta nueva: "+conEt+"\n• Pasan para mañana (sin etiqueta): "+manana+(errores?("\n• No pude consultar: "+errores):""));
+  pantallaEtiquetas();
+}
 function avisoSinEtiquetaHTML(n,fn){
   if(!n) return "";
   return `<div class="card" style="margin:14px 0;padding:14px 16px;border:1px solid #e5484d;background:#ffe8e8">
@@ -1014,10 +1038,11 @@ function avisoSinEtiquetaHTML(n,fn){
     <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">
       <button class="btn sm" onclick="${fn}(false)">📋 Ver / imprimir reporte</button>
       <button class="btn sm ghost" onclick="${fn}(true)">⬇ Descargar CSV</button>
+      ${fn==="reporteSinEtiqueta"?'<button class="btn sm ghost" onclick="repararML()">🔧 Reparar ahora</button>':''}
     </div></div>`;
 }
 let SEL_ETQ={};
-function etqImprimibles(){ return soloPedidos().filter(p=>!["entregado","confirmado","anulado"].includes(p.estado)); }
+function etqImprimibles(){ return soloPedidos().filter(p=>!["entregado","confirmado","anulado"].includes(p.estado) && !(p.pasaManana && !p.etiquetaPdf)); }
 function pantallaEtiquetas(){
   const arr=etqImprimibles();
   const n=arr.filter(p=>SEL_ETQ[p.id]).length;
@@ -1047,6 +1072,14 @@ function pantallaEtiquetas(){
           :`<label class="btn sm ghost" style="flex:0 0 auto;cursor:pointer">📎 Adjuntar<input type="file" accept="application/pdf" style="display:none" onchange="adjuntarEtiquetaCorreo('${p.id}',this.files[0])"></label>`)
           :`<button class="btn sm ghost" style="flex:0 0 auto" onclick="cambiarRuta('${p.id}')">Editar</button>`}
       </div>`; }).join(""):empty('box','No hay pedidos para etiquetar.')}
+    ${(()=>{ const m=soloPedidos().filter(p=>p.pasaManana && !p.etiquetaPdf && !["entregado","confirmado","anulado"].includes(p.estado)); if(!m.length) return "";
+      return `<div class="title" style="margin-top:26px;font-size:18px">🌙 Pasan para mañana (${m.length}) · sin etiqueta de ML</div>`+m.map(p=>`
+      <div class="card" style="margin:10px 0;padding:12px 16px;background:#fff3cd">
+        <div style="font-weight:600">${esc(p.cliente||'—')} <span class="muted" style="font-weight:400">· ${esc(nombreEmp(p.empresa))} · N° ${esc(numOrden(p))}</span></div>
+        <div class="muted" style="font-size:13px;margin-top:2px">${esc(p.items||'—')}</div>
+        <div style="font-size:12px;color:#7a5a00;margin-top:2px">${esc(p.etiquetaMotivo||'ML todavía no generó la etiqueta')}</div>
+        <button class="btn sm ghost" style="margin-top:8px" onclick="DB.update('${p.id}',{pasaManana:false}).then(pantallaEtiquetas)">Sacar de “mañana”</button>
+      </div>`).join(""); })()}
     ${arr.length?`<div style="position:sticky;bottom:16px;margin-top:18px">
       <button class="btn block" onclick="imprimirSeleccionadas()">${icon('printer')} Imprimir ${n} etiqueta${n===1?'':'s'}</button>
     </div>`:''}`;
