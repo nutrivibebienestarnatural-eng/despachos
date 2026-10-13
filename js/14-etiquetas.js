@@ -1073,12 +1073,12 @@ function pantallaEtiquetas(){
           :`<button class="btn sm ghost" style="flex:0 0 auto" onclick="cambiarRuta('${p.id}')">Editar</button>`}
       </div>`; }).join(""):empty('box','No hay pedidos para etiquetar.')}
     ${(()=>{ const m=soloPedidos().filter(p=>esParaManana(p)); if(!m.length) return "";
-      return `<div class="title" style="margin-top:26px;font-size:18px">🌙 Pasan para mañana (${m.length}) · sin etiqueta de ML</div>`+m.map(p=>`
+      return `<div class="title" style="margin-top:26px;font-size:18px">🌙 Pasan para mañana (${m.length}) · sin etiqueta</div>`+m.map(p=>`
       <div class="card" style="margin:10px 0;padding:12px 16px;background:#fff3cd">
         <div style="font-weight:600">${esc(p.cliente||'—')} <span class="muted" style="font-weight:400">· ${esc(nombreEmp(p.empresa))} · N° ${esc(numOrden(p))}</span></div>
         <div class="muted" style="font-size:13px;margin-top:2px">${esc(p.items||'—')}</div>
-        <div style="font-size:12px;color:#7a5a00;margin-top:2px">${esc(p.etiquetaMotivo||'ML todavía no generó la etiqueta')}</div>
-        <button class="btn sm ghost" style="margin-top:8px" onclick="DB.update('${p.id}',{pasaManana:false}).then(pantallaEtiquetas)">Sacar de “mañana”</button>
+        <div style="font-size:12px;color:#7a5a00;margin-top:2px">${esc(p.etiquetaMotivo||(canalDe(p)==='ml_flex'?'ML todavía no generó la etiqueta':'Falta el PDF de la etiqueta del correo'))}</div>
+        ${canalDe(p)!=='ml_flex'?`<label class="btn sm ghost" style="margin-top:8px;margin-right:6px;cursor:pointer">📎 Adjuntar PDF<input type="file" accept="application/pdf" style="display:none" onchange="adjuntarEtiquetaCorreo('${p.id}',this.files[0])"></label>`:''}<button class="btn sm ghost" style="margin-top:8px" onclick="DB.update('${p.id}',{pasaManana:false}).then(pantallaEtiquetas)">Sacar de “mañana”</button>
       </div>`).join(""); })()}
     ${arr.length?`<div style="position:sticky;bottom:16px;margin-top:18px">
       <button class="btn block" onclick="imprimirSeleccionadas()">${icon('printer')} Imprimir ${n} etiqueta${n===1?'':'s'}</button>
