@@ -3,7 +3,7 @@
    Parte de la app de despacho. Los archivos se cargan en orden
    desde index.html; todas las funciones comparten el mismo ámbito.
    ============================================================ */
-let PEDIDOS=[], ROL=null, CADETE_ACTIVO=null, FILTRO="todos", OPVIEW="hoy", EMPLEADO=false, PED_Q="", SOLO_FOTO=false;
+let PEDIDOS=[], ROL=null, CADETE_ACTIVO=null, FILTRO="todos", OPVIEW="control", EMPLEADO=false, PED_Q="", SOLO_FOTO=false;
 let USER=null, USERROL=null, AUTH_READY=false, SUBSCRITO=false, PREVIEW=null;
 let STOCK_DESDE="", STOCK_HASTA="", STOCK_Q="", STOCK_TODOS=false, DEPOSITO_ACTIVO="";
 let ENT_DESDE="", ENT_HASTA="";
