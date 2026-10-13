@@ -525,6 +525,7 @@ function mostrarPreviewImport(){
         <div class="c" style="margin-top:6px">${cadete} por cadete · ${correo} por correo</div>
       </div>
       <div class="hint" style="margin-bottom:8px">Destildá los que NO hagas. Con el selector elegís cómo va cada uno (cadete / correo / sucursal).</div>
+      ${avisoSinEtiquetaHTML(IMP_FILAS.filter(f=>f.canal==="ml_flex"&&!f.etiquetaPdf).length,"reporteSinEtiquetaImport")}
       ${avisoRevisionHTML()}
       <div class="row" style="gap:8px;margin-bottom:6px">
         <button class="btn sm ghost" onclick="selImp(true)">Marcar todos</button>

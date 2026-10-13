@@ -203,12 +203,12 @@ const formatoEnvio = p => (p&&p.pickit) ? "Pickit" : (canalDe(p)==="ml_flex" ? "
 /* Marcas que SIEMPRE salen de Bs As y por lo tanto SIEMPRE descuentan stock
    (no se eligen pedido por pedido, como sí pasa con Labs del interior). */
 function saleSiempreBsAs(empresa){ return empresa==="nutrivibe" || empresa==="suplemundo"; }
-/* Descuento de 500 en los envíos de cadete (Cardinal): vale para pedidos creados desde el lunes 28/9/2026 */
+/* Descuento de 500 en lo que se le paga al cadete (Cardinal) desde el lunes 28/9/2026. NO se descuenta del precio que se cobra a la marca. */
 const DESC_CADETE = 500, DESC_CADETE_DESDE = new Date(2026,8,28).getTime();
 const descCad = p => ((p&&p.creado)||0)>=DESC_CADETE_DESDE ? DESC_CADETE : 0;
 const esCatCadete = c => ["caba","1","2","3"].includes(c);
 const costoCard = (p,c,zc) => { const b=(zc||zonaCosto())[c]||0; return b?Math.max(0,b-descCad(p)):0; };   // lo que se le paga al cadete por ese pedido
-const costoEnvio = p => { const c=catPedido(p); return Math.max(0, precioCat(c)-(esCatCadete(c)?descCad(p):0)); };   // precio por zona (costo Flex + margen; correo = gestión), con descuento
+const costoEnvio = p => Math.max(0, precioCat(catPedido(p)));   // lo que se le cobra a la marca: precio por zona completo (el descuento de 500 es solo del costo del cadete, no del precio)
 const STOCK_DUENO = "labs";   // Labs pone el stock compartido; las demás empresas le pagan lo que sacan
 /* Zonas de reparto reales (precio editable). Buenos Aires → cadete por zona; otra provincia → correo */
 let ZONAS = {

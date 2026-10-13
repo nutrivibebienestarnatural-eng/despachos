@@ -56,10 +56,15 @@ async function descargarEtiquetaML(shipId, token) {
     const r = await fetch(`${API_BASE}/shipment_labels?shipment_ids=${shipId}&response_type=pdf`, {
       headers: { "Authorization": "Bearer " + token },
     });
-    if (!r.ok || (r.headers.get("content-type") || "").indexOf("pdf") === -1) return null;
+    const tipo = r.headers.get("content-type") || "";
+    if (!r.ok || tipo.indexOf("pdf") === -1) {
+      let det = "";
+      try { det = (await r.text()).replace(/\s+/g, " ").slice(0, 160); } catch (e) { /* sin detalle */ }
+      return { motivo: "ML respondió " + r.status + (det ? ": " + det : "") };
+    }
     const buf = Buffer.from(await r.arrayBuffer());
-    return buf.toString("base64");
-  } catch (e) { return null; }
+    return { b64: buf.toString("base64") };
+  } catch (e) { return { motivo: "No se pudo pedir la etiqueta: " + String((e && e.message) || e) }; }
 }
 
 // Convierte un grupo de órdenes (una o varias — ver nota de "pack" en traerPedidos) + su envío
@@ -149,9 +154,15 @@ async function traerPedidos(empresa, desde) {
     if (ship && ["shipped", "delivered", "cancelled"].includes(ship.status)) continue;   // ya salió: no lo traigo de nuevo
     if (ship && ship.logistic_type === "fulfillment") continue;   // Full: lo despacha el depósito de ML, no la marca
     const pedido = mapearPedido(grupo, ship, empresa);
+    // N° de envío: es lo que trae el QR de la etiqueta, y con lo que la app encuentra el pedido al
+    // escanear la foto. Sin esto, si la etiqueta PDF no se pudo bajar, el pedido nunca se reconoce.
+    if (shipId) pedido.envio = String(shipId);
     if (shipId) {
-      const etiquetaPdf = await descargarEtiquetaML(shipId, t.access_token);
-      if (etiquetaPdf) { pedido.etiquetaPdf = etiquetaPdf; pedido.etiquetaPdfNombre = "etiqueta-ml-" + shipId + ".pdf"; }
+      const et = await descargarEtiquetaML(shipId, t.access_token);
+      if (et.b64) { pedido.etiquetaPdf = et.b64; pedido.etiquetaPdfNombre = "etiqueta-ml-" + shipId + ".pdf"; }
+      else pedido.etiquetaMotivo = "Envío " + shipId + (ship && ship.status ? " (" + ship.status + (ship.substatus ? "/" + ship.substatus : "") + ")" : "") + " · " + et.motivo;
+    } else {
+      pedido.etiquetaMotivo = "La venta no tiene envío de Mercado Envíos asociado";
     }
     out.push(pedido);
   }

@@ -978,6 +978,44 @@ function printPickeo(arr){
 }
 function imprimirPickeo(id){ const p=PEDIDOS.find(x=>x.id===id)||((SIM&&SIM.id===id)?SIM:null); if(!p){ toast("No encontré el pedido"); return; } printPickeo([p]); }
 function pickeoPend(){ printPickeo(soloPedidos().filter(p=>p.estado==="pendiente")); }
+/* ---- REPORTE: pedidos de Mercado Libre que quedaron SIN etiqueta (ya guardados o recién traídos) ---- */
+function sinEtiquetaML(){ return soloPedidos().filter(p=>canalDe(p)==="ml_flex" && !p.etiquetaPdf && ["pendiente","preparado","asignado"].includes(p.estado)); }
+function filasSinEtiqueta(arr){
+  return arr.map(p=>({ref:String(p.ref||"").replace(/^#?/,"#"), marca:empresaObj(p.empresa).nombre, cliente:p.cliente||"",
+    tel:p.tel||"", dir:[p.dir,p.ciudad,p.provincia].filter(Boolean).join(", "), items:p.items||"",
+    motivo:p.etiquetaMotivo||"No se pudo bajar la etiqueta de ML (sin detalle: pedido importado antes de este reporte)"}));
+}
+function reporteSinEtiqueta(arr,csv){
+  if(arr===false||arr===true){ csv=arr; arr=null; }
+  const filas=filasSinEtiqueta(arr||sinEtiquetaML());
+  if(!filas.length){ toast("Todos los pedidos de ML tienen etiqueta ✓"); return; }
+  const hoy=new Date().toLocaleString("es-AR");
+  if(csv){
+    const head=["N Venta","Marca","Cliente","Telefono","Direccion","Items","Motivo"];
+    descargarArchivo("pedidos-sin-etiqueta.csv","\uFEFF"+[head.join(","),...filas.map(f=>[f.ref,f.marca,f.cliente,f.tel,f.dir,f.items,f.motivo].map(csvCampo).join(","))].join("\r\n")+"\r\n");
+    return;
+  }
+  const w=window.open("","_blank","width=900,height=900");
+  if(!w){ toast("Permití las ventanas emergentes para ver el reporte"); return; }
+  w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Pedidos sin etiqueta</title>'+
+    '<style>body{font-family:Arial,sans-serif;margin:24px;color:#111}h1{font-size:20px;margin:0 0 4px}.m{color:#666;font-size:12px;margin-bottom:14px}'+
+    'table{border-collapse:collapse;width:100%;font-size:12px}th,td{border:1px solid #bbb;padding:5px 7px;text-align:left;vertical-align:top}th{background:#eee}.mo{color:#b00020}</style></head><body>'+
+    '<h1>Pedidos importados SIN etiqueta ('+filas.length+')</h1><div class="m">Mercado Libre · '+esc(hoy)+'</div>'+
+    '<table><tr><th>Venta</th><th>Marca</th><th>Cliente</th><th>Dirección</th><th>Items</th><th>Por qué falta</th></tr>'+
+    filas.map(f=>'<tr><td>'+esc(f.ref)+'</td><td>'+esc(f.marca)+'</td><td>'+esc(f.cliente)+(f.tel?'<br>'+esc(f.tel):'')+'</td><td>'+esc(f.dir)+'</td><td>'+esc(f.items)+'</td><td class="mo">'+esc(f.motivo)+'</td></tr>').join("")+
+    '</table><scr'+'ipt>window.onload=function(){setTimeout(function(){window.print()},400)}<\/scr'+'ipt></body></html>');
+  w.document.close();
+}
+function reporteSinEtiquetaImport(csv){ reporteSinEtiqueta(IMP_FILAS.filter(f=>f.canal==="ml_flex" && !f.etiquetaPdf),csv); }
+function avisoSinEtiquetaHTML(n,fn){
+  if(!n) return "";
+  return `<div class="card" style="margin:14px 0;padding:14px 16px;border:1px solid #e5484d;background:#ffe8e8">
+    <div style="font-weight:700;color:#c62828">⚠ ${n} pedido${n===1?'':'s'} de Mercado Libre sin etiqueta</div>
+    <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">
+      <button class="btn sm" onclick="${fn}(false)">📋 Ver / imprimir reporte</button>
+      <button class="btn sm ghost" onclick="${fn}(true)">⬇ Descargar CSV</button>
+    </div></div>`;
+}
 let SEL_ETQ={};
 function etqImprimibles(){ return soloPedidos().filter(p=>!["entregado","confirmado","anulado"].includes(p.estado)); }
 function pantallaEtiquetas(){
@@ -987,6 +1025,7 @@ function pantallaEtiquetas(){
     <button class="btn sm ghost" onclick="vistaOperador()">← Volver</button>
     <div class="title" style="margin-top:14px">Imprimir etiquetas</div>
     <div class="subtitle">Marcá las que querés imprimir. Podés corregir cada una con “Editar”.</div>
+    ${avisoSinEtiquetaHTML(sinEtiquetaML().length,"reporteSinEtiqueta")}
     <div class="row" style="gap:8px;margin:14px 0">
       <button class="btn sm ghost" onclick="selEtq(true)">Marcar todas</button>
       <button class="btn sm ghost" onclick="selEtq(false)">Ninguna</button>

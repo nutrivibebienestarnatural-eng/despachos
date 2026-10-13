@@ -68,7 +68,7 @@ async function crearPedido(d){
   const emp=empresaObj(d.empresa);
   const id=await DB.create({tipo:"pedido",empresa:emp.id,canal:d.canal||emp.canalDefault,ref:d.ref||"",
     cliente:d.cliente,tel:d.tel||"",dir:d.dir||"",ciudad:d.ciudad||"",provincia:d.provincia||"",cp:d.cp||"",
-    etiquetaPdf:d.etiquetaPdf||"",etiquetaPdfNombre:d.etiquetaPdfNombre||"",nota:d.nota||"",zonaFija:(d.zonaFija!=null?d.zonaFija:""),
+    etiquetaPdf:d.etiquetaPdf||"",etiquetaPdfNombre:d.etiquetaPdfNombre||"",etiquetaMotivo:d.etiquetaPdf?"":(d.etiquetaMotivo||""),nota:d.nota||"",zonaFija:(d.zonaFija!=null?d.zonaFija:""),
     items:d.items||"",prods:(d.prods&&d.prods.length)?d.prods:prodsDesdeTexto(d.items||"").ok,origen:d.origen||r.origen,metodo:d.metodo||r.metodo,pickit:!!d.pickit,envio:d.envio||"",
     correo:d.correo||"",tracking:d.tracking||"",tnId:d.tnId||"",mlId:d.mlId||"",mlOrderIds:d.mlOrderIds||[],cadete:"",estado:"pendiente",creado:Date.now(),
     eventos:[{estado:"pendiente",ts:Date.now(),nota:"Pedido creado"}]});
