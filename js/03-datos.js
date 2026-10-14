@@ -22,7 +22,7 @@ function initDB(){
          Son tres consultas chicas en vez de una gigante; se juntan acá y se avisa una sola vez. */
       subscribe(cb){
         const corte=Date.now()-DIAS_VENTANA*86400000;
-        const abiertos=["pendiente","preparado","asignado","en_reparto","despachado","en_camino","entregado"];
+        const abiertos=["pendiente","preparado","asignado","en_reparto","despachado","en_camino"]   // "entregado" no: esos ya vienen por la ventana de fecha;
         const config=["stock","packs","caja","cierres","barcodes","prodsExtra","ignorados","marcasProd","checkouts","cupones"];
         const partes={recientes:[], abiertos:[], config:[]};
         let listo=false;
