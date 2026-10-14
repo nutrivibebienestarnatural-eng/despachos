@@ -716,9 +716,11 @@ function parseEtiquetaML(texto){
   if(!cli && !venta && !prods.length) return null;
   // etiqueta a un punto Pickit (locker): el PDF de ML imprime "PICKIT" o "Comprador retira en Centro de Envío: <punto>"
   const esPickit=/\bPICKIT\b/i.test(texto) || /Comprador\s*retira\s*en\s*Centro\s*de\s*Env[ií]o/i.test(texto);
+  // FULL: el envío sale del depósito de Mercado Libre (código FBA… y remitente de ML), no lo preparamos nosotros
+  const esFull=/\bFBA\d/.test(texto) || /\bFULL\b/i.test(texto) || /Ramon\s+Carrillo/i.test(texto);
   return { ref: venta?("#"+venta):(envio?("#"+envio):""), cliente:cli.trim(), tel:"", dir:dir.trim(),
     ciudad:loc, provincia:prov, cp, items:items.join(" · "), prods, nota:nota.trim(), etiquetaML:true,
-    pickit:esPickit, envio:envio.replace(/\D/g,""), empresaML: empresaPorVendedorML(texto) };
+    pickit:esPickit, full:esFull, envio:envio.replace(/\D/g,""), empresaML: empresaPorVendedorML(texto) };
 }
 /* Procesa UN archivo de etiqueta ML y devuelve sus filas listas para IMP_FILAS (sin tocar el estado global).
    Se usa tanto para una sola etiqueta como para varias juntas (leerEtiquetaML hace el loop). */
@@ -821,7 +823,7 @@ async function leerEtiquetaML(archivos){
   if(typeof pdfjsLib==="undefined"){ toast("El lector de PDF no cargó, probá de nuevo"); return; }
   pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
   toast(lista.length>1?("Leyendo "+lista.length+" etiquetas…"):"Leyendo la etiqueta…");
-  let leidas=0, sinReconocer=0, yaCargadas=0, repetidasEnPantalla=0;
+  let leidas=0, sinReconocer=0, yaCargadas=0, repetidasEnPantalla=0, fulls=0;
   // ref → índice en IMP_FILAS. Arranca con lo que YA está en pantalla (de una tanda anterior de este
   // mismo import), así subir la misma etiqueta en dos tandas separadas (antes de guardar) no duplica la fila.
   const refsDeEsteLote=new Map();
@@ -830,6 +832,7 @@ async function leerEtiquetaML(archivos){
     try{
       const r=await procesarEtiquetaMLArchivo(file);
       if(r.sinReconocer){ sinReconocer++; continue; }
+      if(r.filas && r.filas.length && r.filas.every(f=>f.full)){ fulls+=r.filas.length; continue; }   // FULL: lo despacha ML
       if(r.yaCargada){ yaCargadas++; continue; }
       r.filas.forEach(f=>{
         if(f.ref && refsDeEsteLote.has(f.ref)){
@@ -854,6 +857,7 @@ async function leerEtiquetaML(archivos){
   let msg=leidas+" etiqueta"+(leidas===1?"":"s")+" leída"+(leidas===1?"":"s");
   if(sinReconocer) msg+=" · "+sinReconocer+" no reconocida"+(sinReconocer===1?"":"s");
   if(yaCargadas) msg+=" · "+yaCargadas+" ya cargada"+(yaCargadas===1?"":"s");
+  if(fulls) msg+=" · "+fulls+" FULL ignorada"+(fulls===1?"":"s")+" (las despacha ML)";
   if(repetidasEnPantalla) msg+=" · "+repetidasEnPantalla+" repetida"+(repetidasEnPantalla===1?"":"s")+" (no duplicada)";
   toast(msg);
 }

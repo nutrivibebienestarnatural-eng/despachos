@@ -4,6 +4,8 @@
    desde index.html; todas las funciones comparten el mismo ámbito.
    ============================================================ */
 let DB;
+/* Cuántos días de historia bajamos al abrir la app. Lo más viejo se consulta cuando hace falta. */
+const DIAS_VENTANA=75;
 function initDB(){
   const ok = FIREBASE_CONFIG && FIREBASE_CONFIG.projectId && typeof firebase!=="undefined";
   if(ok) setTimeout(()=>{ try{ suscribirMovs(); }catch(e){ logErr("initDB movs", e); } }, 300);
@@ -15,15 +17,36 @@ function initDB(){
     try{ fs.settings({ignoreUndefinedProperties:true, merge:true}); }catch(e){ console.warn(e); }
     const col=fs.collection("pedidos");
     DB={ modo:"firebase",
-      subscribe(cb){ col.onSnapshot(s=>{ const a=s.docs.map(d=>({id:d.id,...d.data()}));
-        a.sort((x,y)=>(y.creado||0)-(x.creado||0)); cb(a); },
-        e=>{ console.error("pedidos:", e);   // sin esto, si Firestore rechaza la lectura la lista queda vacía sin aviso
+      /* No bajamos TODA la historia: solo lo de los últimos DIAS_VENTANA días, lo que sigue
+         abierto (aunque sea viejo) y los documentos de configuración (stock, packs, caja…).
+         Son tres consultas chicas en vez de una gigante; se juntan acá y se avisa una sola vez. */
+      subscribe(cb){
+        const corte=Date.now()-DIAS_VENTANA*86400000;
+        const abiertos=["pendiente","preparado","asignado","en_reparto","despachado","en_camino","entregado"];
+        const config=["stock","packs","caja","cierres","barcodes","prodsExtra","ignorados","marcasProd","checkouts","cupones"];
+        const partes={recientes:[], abiertos:[], config:[]};
+        let listo=false;
+        const emitir=()=>{
+          const map=new Map();
+          [...partes.config, ...partes.abiertos, ...partes.recientes].forEach(p=>map.set(p.id,p));
+          const a=[...map.values()].sort((x,y)=>(y.creado||0)-(x.creado||0));
+          cb(a);
+        };
+        const avisar=e=>{
+          console.error("pedidos:", e);
+          logErr("leer pedidos", e);
+          if(listo) return; listo=true;
           const permiso=e&&e.code==="permission-denied";
           const msg=permiso?"⚠️ No tengo permiso para leer los pedidos. Avisale al admin: hay que habilitar este acceso en las reglas de Firebase."
                            :"⚠️ No pude cargar los pedidos ("+((e&&e.code)||"error")+"). Revisá la conexión y recargá.";
           const b=document.createElement("div");
           b.style.cssText="position:fixed;top:0;left:0;right:0;z-index:9999;background:#b00020;color:#fff;padding:12px 16px;font-weight:600;text-align:center";
-          b.textContent=msg; document.body.appendChild(b); }); },   // sin orderBy: los docs sin fecha (stock) también llegan
+          b.textContent=msg; document.body.appendChild(b);
+        };
+        col.where("creado",">=",corte).onSnapshot(s=>{ partes.recientes=s.docs.map(x=>({id:x.id,...x.data()})); emitir(); }, avisar);
+        col.where("estado","in",abiertos).onSnapshot(s=>{ partes.abiertos=s.docs.map(x=>({id:x.id,...x.data()})); emitir(); }, avisar);
+        col.where("tipo","in",config).onSnapshot(s=>{ partes.config=s.docs.map(x=>({id:x.id,...x.data()})); emitir(); }, avisar);
+      },
       async create(o){ if(o.creado==null) o.creado=Date.now();
         try{ return (await col.add(o)).id; }catch(e){ logErr("guardar en la base", e, true); throw e; } },
       async update(id,patch){
