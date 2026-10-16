@@ -87,7 +87,7 @@ function setRangoCta(k){
 }
 function setRangoSal(k){
   SAL_MIN=0;   // rango manual: ignora el corte del cierre
-  const r = k==="sem"?rangoSemana(0) : k==="ant"?rangoSemana(-1) : k==="mes"?rangoMes() : ["",""];
+  const r = k==="sem"?rangoSemana(0) : k==="ant"?rangoSemana(-1) : k==="mes"?rangoMes() : k==="mesant"?rangoMes(-1) : ["",""];
   SAL_DESDE=r[0]; SAL_HASTA=r[1]; pantallaSalidas();
 }
 /* ---- CIERRE DE PERÍODO: congela el resumen de la semana y arranca el conteo de cero ---- */

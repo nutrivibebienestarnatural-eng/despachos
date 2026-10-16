@@ -458,7 +458,7 @@ function textoSalidas(){
   const {lista,total,totEmp}=salidasResumen(SAL_DESDE,SAL_HASTA);
   const hoy=new Date().toLocaleDateString("es-AR");
   let t="Salidas de stock "+hoy+" ("+total+" unidades)\n";
-  const empTxt=Object.entries(totEmp).map(([e,n])=>empresaObj(e).nombre+": "+n).join(" · ");
+  const empTxt=Object.entries(totEmp).map(([e,n])=>nombreEmp(e)+": "+n).join(" · ");
   if(empTxt) t+=empTxt+"\n";
   t+="\n";
   lista.forEach(r=>{ t+="- "+r.prod+": "+r.total+"\n"; });
@@ -475,13 +475,13 @@ function imprimirSalidas(){
   const w=window.open("","_blank","width=820,height=920"); if(!w){ toast("Permití las ventanas emergentes"); return; }
   const hoy=new Date().toLocaleDateString("es-AR");
   const emps=Object.keys(totEmp);
-  const th=emps.map(e=>`<th class="c">${esc(empresaObj(e).nombre)}</th>`).join("");
+  const th=emps.map(e=>`<th class="c">${esc(nombreEmp(e))}</th>`).join("");
   const filas=lista.map((r,i)=>`<tr><td class="c">${i+1}</td><td>${esc(r.prod)}</td>${emps.map(e=>`<td class="c">${r.porEmp[e]||0}</td>`).join("")}<td class="c b">${r.total}</td></tr>`).join("");
   w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Salidas de stock</title>'+
     '<style>body{font-family:Arial,sans-serif;padding:22px;color:#000}h1{font-size:20px;margin:0 0 4px}'+
     'p{font-size:12px;color:#333;margin:0 0 14px}table{width:100%;border-collapse:collapse;font-size:12px}'+
     'th,td{border:1px solid #999;padding:7px 9px;text-align:left}th{background:#2c3e50;color:#fff}.c{text-align:center}.b{font-weight:bold}@page{size:A4;margin:14mm}</style></head><body>'+
-    '<h1>Salidas de stock</h1><p>Fecha: '+hoy+' · '+total+' unidades en total</p>'+
+    '<h1>Salidas de stock</h1><p>Período: '+((SAL_DESDE||SAL_HASTA)?((SAL_DESDE||"inicio")+" a "+(SAL_HASTA||"hoy")):"todo lo registrado")+' · emitido '+hoy+' · '+total+' unidades en total</p>'+
     '<table><thead><tr><th class="c">#</th><th>Producto</th>'+th+'<th class="c">Total</th></tr></thead><tbody>'+filas+'</tbody></table>'+
     '<scr'+'ipt>window.onload=function(){setTimeout(function(){window.print()},300)}<\/scr'+'ipt></body></html>');
   w.document.close();
