@@ -540,7 +540,7 @@ function vistaHoy(){
     <span class="label" style="display:block;margin-bottom:8px">Acciones rápidas</span>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
       <button class="btn ghost" onclick="formImportar()">↓ Importar etiquetas</button>
-      <button class="btn ghost" onclick="bajarEtiquetasDelDia()">🏷️ Bajar etiquetas 10×15</button>
+      <button class="btn ghost" onclick="pdfEtiquetasDelDia()">🏷️ PDF etiquetas 10×15 (todas)</button>
       <button class="btn ghost" onclick="imprimirChecklistDia()">🖨️ Checklist preparación</button>
       <button class="btn ghost" onclick="OPVIEW='pedidos';vistaOperador()">▤ Ver todos los pedidos</button>
     </div>
@@ -836,7 +836,7 @@ function vistaPedidos(){
       <div class="row" style="margin-bottom:14px">
         <button class="btn ghost sm" onclick="imprimirLote()">Etiquetas de envío</button>
         <button class="btn ghost sm" onclick="pickeoPend()">Etiquetas de pickeo</button>
-        <button class="btn ghost sm" onclick="bajarEtiquetasDelDia()">🏷️ Bajar etiquetas del día (10×15)</button>
+        <button class="btn ghost sm" onclick="pdfEtiquetasDelDia()">🏷️ PDF con todas las etiquetas (10×15)</button>
         <button class="btn ghost sm" onclick="hojaEnvios()">Hoja de envíos</button>
         <button class="btn ghost sm" onclick="imprimirComprobante()">Comprobante cadete</button>
       </div>

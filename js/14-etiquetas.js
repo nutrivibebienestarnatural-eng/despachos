@@ -844,15 +844,99 @@ function descargarBytesPDF(bytes, nombre){
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(()=>URL.revokeObjectURL(url), 4000);
 }
+/* ===== Etiquetas 10×15 "tal cual las genera Mercado Libre" =====
+   La etiqueta de ML ya viene armada para 10×15: Suplemundo la trae en una hoja de 10×15 y
+   Nutrivibe en una hoja A4 apaisada con la etiqueta en un rincón. En los dos casos la etiqueta
+   en sí mide lo mismo (~90 × 149 mm). Acá se copia esa etiqueta SIN pasarla a imagen: se recorta
+   al área con contenido y se pone en una hoja exacta de 100×150 mm a tamaño real (escala 1:1),
+   centrada. El QR queda vectorial (nítido a cualquier resolución de impresora), el archivo pesa
+   poco y se arma en un segundo. Si una etiqueta no entra en 10×15, se achica lo justo. */
+const ETQ_PT = { w: 100 * 2.83465, h: 150 * 2.83465 };
+/* Rectángulo con contenido de la hoja 1, en puntos PDF (origen abajo a la izquierda), sin margen */
+async function cajaContenidoPDF(bytes){
+  pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+  const pdf=await pdfjsLib.getDocument({data:bytes.slice(0)}).promise;
+  const page=await pdf.getPage(1);
+  const H=page.getViewport({scale:1}).height;
+  const S=2, vp=page.getViewport({scale:S});
+  const cv=document.createElement("canvas"); cv.width=Math.ceil(vp.width); cv.height=Math.ceil(vp.height);
+  const cx=cv.getContext("2d"); cx.fillStyle="#fff"; cx.fillRect(0,0,cv.width,cv.height);
+  await page.render({canvasContext:cx, viewport:vp}).promise;
+  const d=cx.getImageData(0,0,cv.width,cv.height).data;
+  let x0=cv.width,y0=cv.height,x1=-1,y1=-1;
+  for(let y=0;y<cv.height;y++){ for(let x=0;x<cv.width;x++){ const i=(y*cv.width+x)*4;
+    if(d[i]<235||d[i+1]<235||d[i+2]<235){ if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y; } } }
+  cv.width=cv.height=0;   // libera la memoria del canvas
+  if(x1<x0||y1<y0) return null;
+  return { left:x0/S, right:(x1+1)/S, bottom:H-(y1+1)/S, top:H-y0/S };
+}
+/* Arma UN PDF con una hoja de 10×15 por pedido. opciones.numerar: escribe "3/33 · Apellido"
+   en el margen derecho (afuera de la etiqueta de ML, no tapa nada) para que coincida con la caja. */
+async function etiquetasVectorPDF(pedidos, opciones){
+  if(typeof PDFLib==="undefined") throw new Error("pdf-lib no cargó");
+  const { PDFDocument, StandardFonts, degrees, rgb }=PDFLib;
+  const numerar=!!(opciones&&opciones.numerar);
+  const out=await PDFDocument.create();
+  const font=numerar ? await out.embedFont(StandardFonts.Helvetica) : null;
+  const latin=s=>String(s||"").normalize("NFC").replace(/[^\x20-\x7E -ÿ]/g,"");
+  const con=pedidos.filter(p=>p&&p.etiquetaPdf);
+  const fallidas=[];
+  for(let i=0;i<con.length;i++){
+    const p=con[i];
+    try{
+      const bytes=Uint8Array.from(atob(p.etiquetaPdf), c=>c.charCodeAt(0));
+      const src=await PDFDocument.load(bytes);
+      const pg0=src.getPage(0);
+      // siempre recorto al contenido (venga en A4 o en 10×15): así todas quedan centradas igual
+      // y queda el mismo margen libre al costado para el número
+      const caja=await cajaContenidoPDF(bytes); if(!caja) throw new Error("hoja en blanco");
+      const emb=await out.embedPage(pg0, caja);
+      const s=Math.min(1, ETQ_PT.w/emb.width, ETQ_PT.h/emb.height);
+      const w=emb.width*s, h=emb.height*s;
+      const hoja=out.addPage([ETQ_PT.w, ETQ_PT.h]);
+      hoja.drawPage(emb, { x:(ETQ_PT.w-w)/2, y:(ETQ_PT.h-h)/2, width:w, height:h });
+      const margenDer=(ETQ_PT.w-w)/2;
+      if(numerar && margenDer>=9){   // ≥ ~3 mm libres al costado
+        const ape=latin(String(p.cliente||"").trim().split(/\s+/).slice(-1)[0]).slice(0,18);
+        const txt=(i+1)+"/"+con.length+(ape?(" · "+ape):"");
+        const size=7, largo=font.widthOfTextAtSize(txt,size);
+        hoja.drawText(txt, { x:ETQ_PT.w-margenDer/2+size*0.35, y:(ETQ_PT.h-largo)/2, size, font, color:rgb(0,0,0), rotate:degrees(90) });
+      }
+    }catch(e){ console.warn("etiqueta vectorial:", p.ref, e); fallidas.push(p); }
+  }
+  return { bytes: out.getPageCount() ? await out.save() : null, paginas: out.getPageCount(), fallidas, total: con.length };
+}
+/* Etiqueta 10×15 de UN pedido (la que se manda por WhatsApp). Si la copia vectorial falla, usa la de imagen. */
 async function bajarEtiqueta1015(id){
   const p=PEDIDOS.find(x=>x.id===id)||await DB.get(id);
   if(!p||!p.etiquetaPdf){ toast("Este pedido no tiene etiqueta de ML guardada"); return; }
   toast("Preparando etiqueta 10×15…");
+  const nombre="etiqueta-"+(p.cliente||"ml").replace(/[^a-zA-Z0-9]+/g,"-").toLowerCase()+".pdf";
   try{
-    const bytes=await etiqueta10x15Bytes([p]);
-    descargarBytesPDF(bytes, "etiqueta-"+(p.cliente||"ml").replace(/[^a-zA-Z0-9]+/g,"-").toLowerCase()+".pdf");
-    toast("Listo ✓ QR intacto, lista para WhatsApp");
-  }catch(e){ console.error(e); toast("No pude preparar la etiqueta"); }
+    const r=await etiquetasVectorPDF([p]);
+    if(r.bytes && !r.fallidas.length){ descargarBytesPDF(r.bytes, nombre); toast("Listo ✓ 10×15 a tamaño real, QR nítido"); return; }
+  }catch(e){ console.warn("vectorial falló, uso la de imagen", e); }
+  try{ descargarBytesPDF(await etiqueta10x15Bytes([p]), nombre); toast("Listo ✓ (versión imagen)"); }
+  catch(e){ console.error(e); toast("No pude preparar la etiqueta"); }
+}
+/* TODAS las etiquetas de ML del día en UN SOLO PDF de 10×15, numeradas, para mandarle a quien imprime.
+   Un solo archivo = no se puede imprimir una de más, una de menos ni la de otro día. */
+function pedidosConEtiquetaHoy(){
+  return soloPedidos().filter(p=>p.etiquetaPdf && ["pendiente","preparado","asignado"].includes(p.estado))
+    .sort((a,b)=>(a.creado||0)-(b.creado||0));
+}
+async function pdfEtiquetasDelDia(){
+  const arr=pedidosConEtiquetaHoy();
+  if(!arr.length){ toast("No hay etiquetas de ML pendientes"); return; }
+  toast("Armando el PDF con "+arr.length+" etiquetas…");
+  try{
+    const r=await etiquetasVectorPDF(arr, {numerar:true});
+    if(!r.bytes){ toast("No pude armar ninguna etiqueta"); return; }
+    const hoy=new Date(); const f=String(hoy.getDate()).padStart(2,"0")+"-"+String(hoy.getMonth()+1).padStart(2,"0");
+    descargarBytesPDF(r.bytes, "etiquetas-"+f+"-"+r.paginas+"u.pdf");
+    if(r.fallidas.length) notify("📄 PDF listo con "+r.paginas+" de "+r.total+" etiquetas.\n\nNo pude copiar estas (bajalas sueltas desde el pedido):\n"+r.fallidas.map(p=>"• "+(p.cliente||"")+" ("+numOrden(p)+")").join("\n"));
+    else toast("PDF listo ✓ "+r.paginas+" etiquetas 10×15, numeradas");
+  }catch(e){ console.error(e); toast("No pude armar el PDF de etiquetas"); }
 }
 /* Etiquetas 10x15 del día: UN PDF POR PEDIDO, numerado y con el nombre del cliente
    ej: "01 - Andres Manchado - 2000018489188852.pdf" (mismo orden que la lista de preparar) */
