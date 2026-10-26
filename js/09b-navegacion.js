@@ -8,6 +8,7 @@
 const SECCIONES=[
   {id:"hoy", nombre:"Hoy", icono:"🎯", subs:[
     {id:"control",      nombre:"Tablero",        fn:"vistaControl"},
+    {id:"controldia",   nombre:"Control del día",fn:"vistaControlDia"},
     {id:"hoy",          nombre:"Resumen del día",fn:"vistaHoy"},
     {id:"prepararhoy",  nombre:"Preparar",       fn:"vistaPrepararHoy"},
     {id:"despachar",    nombre:"📷 Despacho",    fn:"vistaDespachar"},
