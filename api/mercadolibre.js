@@ -108,6 +108,16 @@ function mapearPedido(ordenes, ship, empresa) {
   };
 }
 
+// Fecha límite de despacho que informa Mercado Libre para el envío (ISO), o "" si no la trae.
+function fechaDeEnvio(ship){
+  if(!ship) return "";
+  const lt = ship.lead_time || {};
+  const so = ship.shipping_option || {};
+  const f = (lt.estimated_handling_limit && lt.estimated_handling_limit.date)
+    || (so.estimated_handling_limit && so.estimated_handling_limit.date) || "";
+  return String(f || "");
+}
+
 async function traerPedidos(empresa, desde) {
   const t = await tokenValido(empresa);
   const sellerId = SELLER_ID[empresa];
@@ -160,7 +170,10 @@ async function traerPedidos(empresa, desde) {
     if (shipId) {
       const et = await descargarEtiquetaML(shipId, t.access_token);
       if (et.b64) { pedido.etiquetaPdf = et.b64; pedido.etiquetaPdfNombre = "etiqueta-ml-" + shipId + ".pdf"; }
-      else pedido.etiquetaMotivo = "Envío " + shipId + (ship && ship.status ? " (" + ship.status + (ship.substatus ? "/" + ship.substatus : "") + ")" : "") + " · " + et.motivo;
+      else {
+        pedido.fechaDespacho = fechaDeEnvio(ship);
+        pedido.etiquetaMotivo = "Envío " + shipId + (ship && ship.status ? " (" + ship.status + (ship.substatus ? "/" + ship.substatus : "") + ")" : "") + " · " + et.motivo;
+      }
     } else {
       pedido.etiquetaMotivo = "La venta no tiene envío de Mercado Envíos asociado";
     }
@@ -185,6 +198,7 @@ async function repararPedido(empresa, ids) {
   const estado = ship ? (ship.status + (ship.substatus ? "/" + ship.substatus : "")) : "";
   const out = { ok: true, envio: String(shipId), estadoEnvio: estado };
   if (ship && ["shipped", "delivered", "cancelled"].includes(ship.status)) { out.yaSalio = true; return out; }
+  out.fechaDespacho = fechaDeEnvio(ship);
   const et = await descargarEtiquetaML(shipId, t.access_token);
   if (et.b64) { out.etiquetaPdf = et.b64; out.etiquetaPdfNombre = "etiqueta-ml-" + shipId + ".pdf"; }
   else out.motivo = "Envío " + shipId + (estado ? " (" + estado + ")" : "") + " · " + et.motivo;

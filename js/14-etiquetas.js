@@ -1024,7 +1024,7 @@ async function repararML(){
       const upd={};
       if(d.envio && !p.envio) upd.envio=d.envio;
       if(d.etiquetaPdf){ upd.etiquetaPdf=d.etiquetaPdf; upd.etiquetaPdfNombre=d.etiquetaPdfNombre; upd.etiquetaMotivo=""; upd.pasaManana=false; conEt++; }
-      else if(!p.etiquetaPdf){ upd.etiquetaMotivo=d.motivo||"Sin etiqueta en Mercado Libre"; upd.pasaManana=true; manana++; }
+      else if(!p.etiquetaPdf){ upd.etiquetaMotivo=d.motivo||"Sin etiqueta en Mercado Libre"; upd.pasaManana=true; upd.fechaDespacho=d.fechaDespacho||""; manana++; }
       if(Object.keys(upd).length) await DB.update(p.id,upd);
     }catch(e){ errores++; logErr("auto",e); }
   }
@@ -1077,7 +1077,7 @@ function pantallaEtiquetas(){
       <div class="card" style="margin:10px 0;padding:12px 16px;background:#fff3cd">
         <div style="font-weight:600">${esc(p.cliente||'—')} <span class="muted" style="font-weight:400">· ${esc(nombreEmp(p.empresa))} · N° ${esc(numOrden(p))}</span></div>
         <div class="muted" style="font-size:13px;margin-top:2px">${esc(p.items||'—')}</div>
-        <div style="font-size:12px;color:#7a5a00;margin-top:2px">${esc(p.etiquetaMotivo||(canalDe(p)==='ml_flex'?'ML todavía no generó la etiqueta':'Falta el PDF de la etiqueta del correo'))}</div>
+        <div style="font-size:12px;color:#7a5a00;margin-top:2px">${p.fechaDespacho?("Mercado Libre la despacha el "+esc(fechaML(p.fechaDespacho))+" · "):""}${esc(p.etiquetaMotivo||(canalDe(p)==='ml_flex'?'ML todavía no generó la etiqueta':'Falta el PDF de la etiqueta del correo'))}</div>
         ${canalDe(p)!=='ml_flex'?`<label class="btn sm ghost" style="margin-top:8px;margin-right:6px;cursor:pointer">📎 Adjuntar PDF<input type="file" accept="application/pdf" style="display:none" onchange="adjuntarEtiquetaCorreo('${p.id}',this.files[0])"></label>`:''}<button class="btn sm ghost" style="margin-top:8px" onclick="DB.update('${p.id}',{pasaManana:false}).then(pantallaEtiquetas)">Sacar de “mañana”</button>
       </div>`).join(""); })()}
     ${arr.length?`<div style="position:sticky;bottom:16px;margin-top:18px">
@@ -1086,15 +1086,92 @@ function pantallaEtiquetas(){
 }
 function toggleEtq(id){ SEL_ETQ[id]=!SEL_ETQ[id]; pantallaEtiquetas(); }
 function selEtq(v){ SEL_ETQ={}; if(v) etqImprimibles().forEach(p=>SEL_ETQ[p.id]=true); pantallaEtiquetas(); }
-function imprimirSeleccionadas(){ const arr=soloPedidos().filter(p=>SEL_ETQ[p.id]);
+/* Fecha de despacho que informa ML, en formato corto (ej: "mar 27/10") */
+function fechaML(s){
+  if(!s) return "";
+  const d=new Date(s); if(isNaN(d)) return "";
+  return d.toLocaleDateString("es-AR",{weekday:"short",day:"2-digit",month:"2-digit"});
+}
+/* Etiqueta de ML (hoja 1 del PDF) recortada y pasada a PNG en alta resolución para imprimir */
+async function pngEtiquetaML(p){
+  if(typeof pdfjsLib==="undefined") throw new Error("pdf.js no cargó");
+  pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+  const bin=atob(p.etiquetaPdf); const arr=new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
+  const pdf=await pdfjsLib.getDocument({data:arr}).promise;
+  const page=await pdf.getPage(1);
+  const vp=page.getViewport({scale:3});
+  const cv=document.createElement("canvas"); cv.width=vp.width; cv.height=vp.height;
+  const cx=cv.getContext("2d"); cx.fillStyle="#fff"; cx.fillRect(0,0,cv.width,cv.height);
+  await page.render({canvasContext:cx, viewport:vp}).promise;
+  const d=cx.getImageData(0,0,cv.width,cv.height).data;
+  let x0=cv.width,y0=cv.height,x1=0,y1=0;
+  for(let y=0;y<cv.height;y+=2){ for(let x=0;x<cv.width;x+=2){
+    const i=(y*cv.width+x)*4;
+    if(d[i]<235||d[i+1]<235||d[i+2]<235){ if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y; } } }
+  if(x1<=x0||y1<=y0){ x0=0;y0=0;x1=cv.width;y1=cv.height; }
+  const m=18;
+  x0=Math.max(0,x0-m); y0=Math.max(0,y0-m); x1=Math.min(cv.width,x1+m); y1=Math.min(cv.height,y1+m);
+  const c2=document.createElement("canvas"); c2.width=x1-x0; c2.height=y1-y0;
+  c2.getContext("2d").drawImage(cv,x0,y0,c2.width,c2.height,0,0,c2.width,c2.height);
+  return c2.toDataURL("image/png");
+}
+/* Imprime TODAS las etiquetas seleccionadas en una sola hoja de impresión, numeradas en orden de preparación.
+   - Etiqueta de ML (PDF) → se imprime como imagen recortada.
+   - Correo sin PDF → nuestra etiqueta.
+   - ML sin etiqueta todavía, o correo a sucursal sin PDF → NO se imprimen: quedan para mañana y se avisa la fecha que informa ML. */
+async function imprimirLoteUnico(seleccion){
+  const arr=seleccion.slice().sort((a,b)=>(a.creado||0)-(b.creado||0));
+  const omitidos=[];
+  const imprimibles=[];
+  for(const p of arr){
+    if(p.etiquetaPdf){ imprimibles.push({p, tipo:"ml"}); continue; }
+    if((p.correo||"")==="Punto de retiro"){ omitidos.push({p, motivo:"correo a sucursal: falta adjuntar el PDF"}); continue; }
+    if(canalDe(p)==="ml_flex"){ omitidos.push({p, motivo:"Mercado Libre todavía no generó la etiqueta"}); continue; }
+    imprimibles.push({p, tipo:"propia"});
+  }
+  if(!imprimibles.length){
+    toast("No hay etiquetas imprimibles en la selección");
+    if(omitidos.length) avisoOmitidasLote(omitidos, []);
+    return;
+  }
+  toast("Armando "+imprimibles.length+" etiquetas…");
+  const piezas=[];
+  for(const it of imprimibles){
+    try{
+      if(it.tipo==="ml") piezas.push({p:it.p, html:'<img class="mlimg" src="'+(await pngEtiquetaML(it.p))+'">'});
+      else piezas.push({p:it.p, html:etiquetaBody(it.p)});
+    }catch(e){ console.warn("etiqueta no armada:", it.p.ref, e); omitidos.push({p:it.p, motivo:"no pude leer la etiqueta de ML"}); }
+  }
+  if(!piezas.length){ toast("No pude armar ninguna etiqueta"); return; }
+  const w=window.open("","_blank","width=460,height=760");
+  if(!w){ toast("Permití las ventanas emergentes para imprimir"); return; }
+  const total=piezas.length;
+  const body=piezas.map((pc,i)=>'<div class="page"><div class="num">'+(i+1)+'/'+total+'</div>'+pc.html+'</div>').join("");
+  w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Etiquetas ('+total+')</title>'+
+    '<link href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700;800&display=swap" rel="stylesheet">'+
+    '<style>@page{size:'+LABEL_MM.w+'mm '+LABEL_MM.h+'mm;margin:0}html,body{margin:0;padding:0}'+
+    '.page{position:relative;break-after:page;page-break-after:always}.page:last-child{break-after:auto;page-break-after:auto}'+
+    '.num{position:absolute;top:1mm;right:1mm;z-index:9;background:#fff;border:1px solid #000;font:700 11px/1 sans-serif;padding:2px 4px}'+
+    '.mlimg{width:'+LABEL_MM.w+'mm;height:'+LABEL_MM.h+'mm;object-fit:contain;display:block}'+
+    ETQ_CSS+'</style></head><body>'+body+
+    '<scr'+'ipt>window.onload=function(){setTimeout(function(){window.print()},400)}<\/scr'+'ipt></body></html>');
+  w.document.close();
+  toast(total+" etiquetas en una sola hoja (numeradas 1 a "+total+")");
+  if(omitidos.length) avisoOmitidasLote(omitidos, piezas);
+}
+/* Aviso de lo que NO salió hoy, con la fecha que informa ML cuando la hay */
+function avisoOmitidasLote(omitidos){
+  notify("🌙 Quedan para mañana ("+omitidos.length+"):\n\n"+omitidos.map(o=>{
+    const f=o.p.fechaDespacho?(" · ML la despacha el "+fechaML(o.p.fechaDespacho)):"";
+    return "• "+(o.p.cliente||"—")+" ("+numOrden(o.p)+") — "+o.motivo+f;
+  }).join("\n"));
+}
+function imprimirSeleccionadas(){
+  const arr=soloPedidos().filter(p=>SEL_ETQ[p.id]);
   if(!arr.length){ toast("Marcá al menos una etiqueta"); return; }
-  const conPdf=arr.filter(p=>p.etiquetaPdf);
-  const sucSinPdf=arr.filter(p=>!p.etiquetaPdf && (p.correo||"")==="Punto de retiro");
-  const sinPdf=arr.filter(p=>!p.etiquetaPdf && (p.correo||"")!=="Punto de retiro");
-  if(sinPdf.length) printLabels(sinPdf);                       // nuestras etiquetas
-  conPdf.forEach(p=>abrirEtiquetaPDF(p));                      // las del correo (PDF de Tienda Nube)
-  if(conPdf.length) toast(conPdf.length+" con etiqueta del correo (se abren aparte)");
-  if(sucSinPdf.length) notify(sucSinPdf.length+" pedido(s) de CORREO A SUCURSAL sin PDF adjunto:\n\n"+sucSinPdf.map(p=>"• "+(p.cliente||"")+" ("+numOrden(p)+")").join("\n")+"\n\nA esos no les imprimo nuestra etiqueta: adjuntales el PDF del correo (📎) y volvé a imprimir."); }
+  imprimirLoteUnico(arr);
+}
 
 /* =========================================================================
    9) SIMULACIÓN DEL CICLO COMPLETO (modo demostración, no toca tus datos)
