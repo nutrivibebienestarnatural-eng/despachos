@@ -358,12 +358,17 @@ function pantallaRepickeo(){
 }
 function peds_todos(v){ const peds=soloPedidos().filter(p=>p.estado!=="anulado"&&enRango(p.creado,REP_DESDE,REP_HASTA)); peds.forEach(p=>REP_SEL[p.id]=!!v); pantallaRepickeo(); }
 async function ejecutarRepickeo(){
-  const peds=soloPedidos().filter(p=>p.estado!=="anulado"&&enRango(p.creado,REP_DESDE,REP_HASTA)&&REP_SEL[p.id]);
-  if(!peds.length){ toast("Marcá al menos una orden"); return; }
-  if(!await askConfirm("¿Descontar el stock de "+peds.length+" órdenes?\n\nSe registra cada salida con su cliente, zona y marca.\nHacelo DESPUÉS de cargar el remito.")) return;
+  const seleccion=soloPedidos().filter(p=>p.estado!=="anulado"&&enRango(p.creado,REP_DESDE,REP_HASTA)&&REP_SEL[p.id]);
+  // Nunca descuento dos veces: las órdenes que ya tienen stockBajado se saltean (se avisa cuántas)
+  const peds=seleccion.filter(p=>!p.stockBajado);
+  const yaBajaron=seleccion.length-peds.length;
+  if(!seleccion.length){ toast("Marcá al menos una orden"); return; }
+  if(!peds.length){ toast("Todas las órdenes marcadas ya estaban descontadas"); return; }
+  if(!await askConfirm("¿Descontar el stock de "+peds.length+" órdenes?"+(yaBajaron?("\n\n"+yaBajaron+" ya estaban descontadas y se saltean."):"")+"\n\nSe registra cada salida con su cliente, zona y marca.\nHacelo DESPUÉS de cargar el remito.")) return;
   let ok=0;
   toast("Descontando… no cierres la página");
-  for(const p of peds){ try{ await descontarStockPedido(p.id,null,true); ok++; }catch(e){ console.warn("Falló",p.ref,e); } }
+  // sin forzar: descontarStockPedido vuelve a verificar stockBajado antes de escribir
+  for(const p of peds){ try{ await descontarStockPedido(p.id,null,false); ok++; }catch(e){ console.warn("Falló",p.ref,e); } }
   notify("✅ LISTO\n\nSe descontaron "+ok+" de "+peds.length+" órdenes.\nMirá el stock y 'Lo que salió' para verificar.");
   REP_SEL={}; OPVIEW='stock'; vistaOperador();
 }
