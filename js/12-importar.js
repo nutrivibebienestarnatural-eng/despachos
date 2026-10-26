@@ -495,7 +495,7 @@ function stockChipImport(nombreProd){
     IMP_FILAS.forEach(f=>{ (f.prods||[]).forEach(x=>{
       const comps=x.noPack?null:packComponentes(x.nombre,x.sku);
       if(comps && comps.length>=2){ comps.forEach(c=>{ if(c.nombre===nombreProd) pedidoTotal+=c.cant*(x.cant||1); }); }
-      else if(comps && comps.length===1){ if(comps[0].nombre===nombreProd) pedidoTotal+=(x.cant||1); }
+      else if(comps && comps.length===1){ if(comps[0].nombre===nombreProd) pedidoTotal+=(x.cant||1)*multPackNombre(x); }   // "Pack X3" de un producto = 3
       else if(x.nombre===nombreProd) pedidoTotal+=(x.cant||1);
     }); });
     const queda=actual-pedidoTotal;
@@ -577,7 +577,8 @@ function mostrarPreviewImport(){
                 // cosa en otro pedido — pasó con "CURC") en vez de pisarlo con el vínculo aprendido
                 const yaResuelto = esAliasSimple && x.nombre!==comps[0].nombre && PRODUCTOS.some(pp=>pp.nombre===x.nombre);
                 const nombreFinal = (esAliasSimple && !yaResuelto) ? comps[0].nombre : x.nombre;
-                return `<div style="font-size:13.5px;margin-top:2px">${x.cant}× ${esc(nombreFinal)}${stockChipImport(nombreFinal)} ${corregir}</div>`;
+                const cantFinal = esAliasSimple ? (x.cant||1)*multPackNombre(x) : x.cant;   // "1x Pack X3 Adrelax" se muestra como 3× Adrelax, que es lo que descuenta
+                return `<div style="font-size:13.5px;margin-top:2px">${cantFinal}× ${esc(nombreFinal)}${cantFinal!==x.cant?` <span class="muted">(${x.cant} pack x${cantFinal/(x.cant||1)})</span>`:""}${stockChipImport(nombreFinal)} ${corregir}</div>`;
               }).join("")+`</div>`+agregar; })()}
             ${(f.prods&&f.prods.length>=1)?`<label style="display:flex;gap:8px;align-items:center;margin-top:10px;padding:8px 10px;border-radius:8px;cursor:pointer;background:${IMP_REV[i]?'#d9f2e5':'#ffe8e8'}">
               <input type="checkbox" ${IMP_REV[i]?'checked':''} onchange="toggleRev(${i})" style="width:19px;height:19px;flex:0 0 auto">

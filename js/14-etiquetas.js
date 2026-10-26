@@ -179,6 +179,15 @@ function procesarScan(code){
 
 /* ===== Preparar un pedido escaneando sus productos ===== */
 let PREP_ID=null, PREP_SCAN={}, PREP_REAL={};   // PREP_SCAN: progreso por renglón del pedido · PREP_REAL: producto real escaneado (para descontar lo que salió)
+/* Multiplicador de un pack de UN solo producto, sacado del nombre de la venta ("Pack X3 ..." → 3).
+   Solo aplica si el nombre guardado es el de la publicación: si es un nombre del catálogo, o si la
+   cantidad ya se multiplicó al importar (quedó nomML), devuelve 1 para no multiplicar dos veces. */
+function multPackNombre(x){
+  if(!x || x.nomML) return 1;
+  if(PRODUCTOS.some(pp=>pp.nombre===x.nombre)) return 1;
+  const n=packDeNombre(x.nombre).n;
+  return n>1 ? n : 1;
+}
 function itemsPedido(p){
   const out=[];
   // Si la orden tiene productos elegidos del catálogo, esos mandan — pero expandimos packs conocidos
@@ -201,7 +210,10 @@ function itemsPedido(p){
         // al del alias, confío en lo que ya quedó resuelto acá — no lo piso con un vínculo viejo/ajeno.
         const yaResuelto = x.nombre!==comps[0].nombre && PRODUCTOS.some(pp=>pp.nombre===x.nombre);
         const nombreFinal = yaResuelto ? x.nombre : comps[0].nombre;
-        out.push({nombre:nombreFinal, cant:+x.cant||1, prodNombre:nombreFinal});   // cant SIEMPRE la real del pedido, nunca comps[0].cant
+        // cant: la real del pedido, nunca comps[0].cant. Si ESTA venta es un pack de un solo producto
+        // ("1x Pack X3 Adrelax ...") el multiplicador sale del nombre de esta venta: 1 pack = 3 frascos.
+        // Así el mismo SKU vendido suelto sigue descontando 1. Ver multPackNombre.
+        out.push({nombre:nombreFinal, cant:(+x.cant||1)*multPackNombre(x), prodNombre:nombreFinal});
       }
       else out.push({nombre:x.nombre, cant:+x.cant||1, prodNombre:x.nombre});
     });
