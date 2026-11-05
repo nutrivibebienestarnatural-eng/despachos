@@ -76,7 +76,7 @@ async function traerPedidos(desde) {
   return out;
 }
 
-// Pedidos ya enviados en Tienda Nube, con su código de seguimiento (solo los que lo tienen).
+// Pedidos de Tienda Nube que YA tienen código de seguimiento (aunque figuren "Por enviar": el correo asigna el código al generar la etiqueta).
 // "desde" filtra por última modificación (el envío se carga al despachar, así que sirve para "lo de hoy").
 async function traerEnviados(desde) {
   const store = process.env.TN_STORE_ID;
@@ -84,7 +84,7 @@ async function traerEnviados(desde) {
   const filtro = desde ? `&updated_at_min=${encodeURIComponent(desde + "T00:00:00-03:00")}` : "";
   const out = [];
   for (let page = 1; page <= 10; page++) {
-    const url = `${base}?shipping_status=shipped&per_page=50&page=${page}&aggregates=fulfillment_orders${filtro}`;
+    const url = `${base}?status=open&payment_status=paid&per_page=50&page=${page}&aggregates=fulfillment_orders${filtro}`;
     const r = await fetch(url, { headers: tnHeaders() });
     if (r.status === 404) break;
     if (!r.ok) {
@@ -101,7 +101,7 @@ async function traerEnviados(desde) {
       const p = mapearPedido(o);
       out.push({
         tnId: p.tnId, ref: p.ref, cliente: p.cliente, tel: p.tel, tracking: code,
-        trackingUrl: String((fo && fo.tracking_info.url) || o.shipping_tracking_url || ""),
+        envio: String(o.shipping_status || ""), trackingUrl: String((fo && fo.tracking_info.url) || o.shipping_tracking_url || ""),
         correo: String(o.shipping_option || o.shipping_carrier_name || ""),
       });
     });

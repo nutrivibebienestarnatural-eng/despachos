@@ -205,9 +205,9 @@ async function avTraerTN(){
   const ov=document.createElement("div"); ov.id="avCfgOv";
   ov.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1000;display:flex;align-items:center;justify-content:center;padding:16px;overflow:auto";
   const filas=AV_TN.map((x,i)=>`<label class="row" style="gap:10px;padding:8px 0;border-bottom:1px solid var(--border);align-items:center"><input type="checkbox" class="avTnCk" data-i="${i}">
-    <span style="min-width:0"><b>${esc(x.cliente||'—')}</b> <span class="muted">· ${esc(x.ref)} · ${esc(x.correo||'Correo')}</span><br><span class="muted" style="font-size:12.5px">${esc(x.tracking)}${x.tel?(' · '+esc(x.tel)):' · sin teléfono'}</span></span></label>`).join("");
+    <span style="min-width:0"><b>${esc(x.cliente||'—')}</b> <span class="muted">· ${esc(x.ref)} · ${esc(x.correo||'Correo')}</span><br><span class="muted" style="font-size:12.5px">${esc(x.tracking)}${x.envio&&x.envio!=='shipped'?' · <b>sin marcar enviado en TN</b>':''}${x.tel?(' · '+esc(x.tel)):' · sin teléfono'}</span></span></label>`).join("");
   ov.innerHTML=`<div class="card" style="max-width:600px;width:100%;padding:18px">
-    <b>Envíos de Tienda Nube con código</b>
+    <b>Pedidos de Tienda Nube con código de seguimiento</b>
     <div class="muted" style="font-size:12.5px;margin:4px 0 10px">Desde ${esc(AV_DESDE)}. No aparecen los que ya están en la app. Elegí cuáles agregar a Avisos.</div>
     <div style="max-height:50vh;overflow:auto">${filas||'<div class="muted" style="padding:20px;text-align:center">No hay envíos nuevos con código.</div>'}</div>
     <div class="row" style="gap:8px;justify-content:space-between;margin-top:12px;flex-wrap:wrap">
