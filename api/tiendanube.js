@@ -76,6 +76,40 @@ async function traerPedidos(desde) {
   return out;
 }
 
+// Pedidos ya enviados en Tienda Nube, con su código de seguimiento (solo los que lo tienen).
+// "desde" filtra por última modificación (el envío se carga al despachar, así que sirve para "lo de hoy").
+async function traerEnviados(desde) {
+  const store = process.env.TN_STORE_ID;
+  const base = `${API_BASE}/${store}/orders`;
+  const filtro = desde ? `&updated_at_min=${encodeURIComponent(desde + "T00:00:00-03:00")}` : "";
+  const out = [];
+  for (let page = 1; page <= 10; page++) {
+    const url = `${base}?shipping_status=shipped&per_page=50&page=${page}&aggregates=fulfillment_orders${filtro}`;
+    const r = await fetch(url, { headers: tnHeaders() });
+    if (r.status === 404) break;
+    if (!r.ok) {
+      const txt = await r.text();
+      throw new Error("Tienda Nube respondió " + r.status + ": " + txt.slice(0, 200));
+    }
+    const arr = await r.json();
+    if (!Array.isArray(arr) || arr.length === 0) break;
+    arr.forEach(o => {
+      const fos = o.fulfillments || o.fulfillment_orders || [];
+      const fo = fos.find(x => x && x.tracking_info && x.tracking_info.code);
+      const code = String((fo && fo.tracking_info.code) || o.shipping_tracking_number || "").trim();
+      if (!code) return;                                   // sin código no sirve para avisar
+      const p = mapearPedido(o);
+      out.push({
+        tnId: p.tnId, ref: p.ref, cliente: p.cliente, tel: p.tel, tracking: code,
+        trackingUrl: String((fo && fo.tracking_info.url) || o.shipping_tracking_url || ""),
+        correo: String(o.shipping_option || o.shipping_carrier_name || ""),
+      });
+    });
+    if (arr.length < 50) break;
+  }
+  return out;
+}
+
 // Devuelve el estado/tracking a Tienda Nube marcando el/los fulfillment orders como enviados.
 async function devolverTracking({ tnId, code, url }) {
   const store = process.env.TN_STORE_ID;
@@ -113,6 +147,10 @@ module.exports = async (req, res) => {
     const action = (req.query && req.query.action) || (req.body && req.body.action);
 
     // GET => devolver pedidos (la app lo llama con /api/tiendanube?empresa=...&desde=YYYY-MM-DD)
+    if (req.method === "GET" && action === "enviados") {
+      const enviados = await traerEnviados(req.query && req.query.desde);
+      return res.status(200).json({ ok: true, cantidad: enviados.length, pedidos: enviados });
+    }
     if (req.method === "GET") {
       const pedidos = await traerPedidos(req.query && req.query.desde);
       return res.status(200).json({ ok: true, cantidad: pedidos.length, pedidos });

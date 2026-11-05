@@ -14,6 +14,10 @@ const AV_CFG0={
   ot:""
 };
 const AV_ESTADOS=["despachado","en_camino","entregado","confirmado"];
+const AV_DESDE_KEY="avisosEnvioDesde";
+const avHoy=()=>{ const d=new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); };
+/* Solo se avisa lo despachado desde esta fecha (por defecto, hoy). Se guarda en este navegador. */
+let AV_DESDE=(()=>{ try{ return localStorage.getItem(AV_DESDE_KEY)||avHoy(); }catch(e){ return avHoy(); } })();
 let AV_TAB="por", AV_Q="", AV_OTROS=false, AV_CFG=null, AV_P=null;   // AV_P = pedido abierto en el mensaje
 
 function avCfg(){
@@ -46,10 +50,14 @@ function avMensaje(p){
     .replace(/\{correo\}/g,p.correo||"el correo")
     .replace(/\{link\}/g,l);
 }
+/* Cuándo se despachó: la fecha del evento "despachado"; si no hay, cuando se creó */
+function avDespachoTs(p){ const e=(p.eventos||[]).find(x=>x.estado==="despachado"); return (e&&e.ts)||p.creado||0; }
+function avSetDesde(v){ AV_DESDE=v||avHoy(); try{ localStorage.setItem(AV_DESDE_KEY,AV_DESDE); }catch(e){} vistaAvisos(); }
 /* Pedidos de correo ya despachados (con o sin código) */
 function avBase(){
-  return soloPedidos().filter(p=>p.metodo==="correo" && AV_ESTADOS.includes(p.estado)
-    && (AV_OTROS || canalDe(p)==="tiendanube"));
+  return PEDIDOS.filter(p=>(!p.tipo||p.tipo==="pedido"||p.tipo==="aviso_envio") && p.metodo==="correo" && AV_ESTADOS.includes(p.estado)
+    && (AV_OTROS || canalDe(p)==="tiendanube")
+    && avDespachoTs(p)>=new Date(AV_DESDE+"T00:00:00").getTime());
 }
 function avLista(){
   const base=avBase(), q=avNorm(AV_Q);
@@ -104,8 +112,12 @@ function vistaAvisos(){
     <div class="row" style="gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
       <input id="avQ" value="${esc(AV_Q)}" placeholder="Buscar cliente, N° de pedido o código" oninput="AV_Q=this.value;avPintarLista()" style="flex:1;min-width:200px;padding:8px;border:1px solid var(--border);border-radius:9px;font:inherit;background:var(--bg)">
       <button class="btn sm green" onclick="avSiguiente()">Avisar al siguiente</button>
+      <button class="btn sm ghost" onclick="avTraerTN()">⬇️ Traer de Tienda Nube</button>
       <button class="btn sm ghost" onclick="avConfig()">Mensaje y links</button>
     </div>
+    <div class="row" style="gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap"><span class="muted" style="font-size:13px">Despachados desde</span>
+      <input type="date" value="${AV_DESDE}" onchange="avSetDesde(this.value)" style="padding:6px;border:1px solid var(--border);border-radius:9px;font:inherit;background:var(--bg)">
+      ${AV_DESDE!==avHoy()?`<button class="btn sm ghost" onclick="avSetDesde('')">Hoy</button>`:''}</div>
     <label class="muted" style="font-size:13px;display:block;margin-bottom:12px"><input type="checkbox" ${AV_OTROS?'checked':''} onchange="AV_OTROS=this.checked;vistaAvisos()"> Incluir otros canales y empresas (por defecto solo Tienda Nube)</label>
     <div id="avLista"></div>`;
   avPintarLista();
@@ -174,3 +186,46 @@ function avGuardarCfg(){
   avCerrar(); toast("Guardado");
 }
 function avRestaurar(){ AV_CFG={...AV_CFG0}; try{ localStorage.removeItem(AV_KEY); }catch(e){} avCerrar(); toast("Restaurado"); }
+
+/* ---- Traer envíos de Tienda Nube (solo los que ya tienen código) ----
+   Sirve para lo que se despacha desde otro lado (ej. Buenos Aires) y no pasó por la app.
+   Cada envío elegido se guarda como "aviso_envio": NO es un pedido, no toca stock ni listas de preparación. */
+let AV_TN=[];
+async function avTraerTN(){
+  toast("Buscando envíos en Tienda Nube…");
+  let data;
+  try{
+    const r=await fetch("/api/tiendanube?action=enviados&desde="+encodeURIComponent(AV_DESDE));
+    data=await r.json().catch(()=>({}));
+    if(!r.ok){ toast(data.error||("Error "+r.status)); return; }
+  }catch(e){ toast("No me pude conectar con Tienda Nube"); return; }
+  const ya=new Set(PEDIDOS.filter(p=>!p.tipo||p.tipo==="pedido"||p.tipo==="aviso_envio").map(p=>p.ref).filter(Boolean));
+  AV_TN=(data.pedidos||[]).filter(x=>x.tracking && !ya.has(x.ref));
+  avCerrar();
+  const ov=document.createElement("div"); ov.id="avCfgOv";
+  ov.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1000;display:flex;align-items:center;justify-content:center;padding:16px;overflow:auto";
+  const filas=AV_TN.map((x,i)=>`<label class="row" style="gap:10px;padding:8px 0;border-bottom:1px solid var(--border);align-items:center"><input type="checkbox" class="avTnCk" data-i="${i}">
+    <span style="min-width:0"><b>${esc(x.cliente||'—')}</b> <span class="muted">· ${esc(x.ref)} · ${esc(x.correo||'Correo')}</span><br><span class="muted" style="font-size:12.5px">${esc(x.tracking)}${x.tel?(' · '+esc(x.tel)):' · sin teléfono'}</span></span></label>`).join("");
+  ov.innerHTML=`<div class="card" style="max-width:600px;width:100%;padding:18px">
+    <b>Envíos de Tienda Nube con código</b>
+    <div class="muted" style="font-size:12.5px;margin:4px 0 10px">Desde ${esc(AV_DESDE)}. No aparecen los que ya están en la app. Elegí cuáles agregar a Avisos.</div>
+    <div style="max-height:50vh;overflow:auto">${filas||'<div class="muted" style="padding:20px;text-align:center">No hay envíos nuevos con código.</div>'}</div>
+    <div class="row" style="gap:8px;justify-content:space-between;margin-top:12px;flex-wrap:wrap">
+      <button class="btn sm ghost" onclick="document.querySelectorAll('.avTnCk').forEach(c=>c.checked=true)">Elegir todos</button>
+      <span class="row" style="gap:8px"><button class="btn sm ghost" onclick="avCerrar()">Cancelar</button>
+      <button class="btn sm green" onclick="avImportarTN()">Agregar elegidos</button></span>
+    </div></div>`;
+  document.body.appendChild(ov);
+}
+async function avImportarTN(){
+  const sel=[...document.querySelectorAll(".avTnCk:checked")].map(c=>AV_TN[+c.dataset.i]);
+  if(!sel.length){ toast("No elegiste ninguno"); return; }
+  const emp=(typeof IMP_EMPRESA!=="undefined"&&IMP_EMPRESA)||EMPRESAS[0].id; let ok=0;
+  for(const x of sel){
+    try{ await DB.create({tipo:"aviso_envio",empresa:emp,canal:"tiendanube",metodo:"correo",estado:"despachado",
+      ref:x.ref,tnId:x.tnId||"",cliente:x.cliente||"",tel:x.tel||"",correo:x.correo||"Correo Argentino",tracking:x.tracking,
+      creado:Date.now(),eventos:[{estado:"despachado",ts:Date.now(),nota:"Traído de Tienda Nube para avisar"}]}); ok++; }
+    catch(e){ logErr("avisos",e); }
+  }
+  avCerrar(); toast(ok+" agregado"+(ok===1?"":"s")+" a Avisos"); vistaAvisos();
+}
