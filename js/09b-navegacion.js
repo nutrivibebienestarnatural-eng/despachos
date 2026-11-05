@@ -60,9 +60,11 @@ function irA(id){
 function segOp(activo){
   if(ROL!=="admin" || PREVIEW) return "";
   const r=subPorId(activo||OPVIEW); if(!r) return "";
-  return `<div class="row navsec" style="justify-content:space-between;margin-bottom:14px"><div class="seg" style="flex-wrap:wrap">${
+  /* En el celu no hay menú lateral: arriba van las secciones (Hoy, Pedidos, Stock…) y abajo las pantallas de la sección actual */
+  const secs=SECCIONES.map(s=>`<button class="${s.id===r.sec.id?'on':''}" onclick="irA('${s.subs[0].id}')">${s.icono} ${esc(s.nombre)}</button>`).join("");
+  return `<div class="navsec" style="margin-bottom:14px"><style>@media(min-width:1000px){.secmov{display:none}}</style><div class="seg secmov" style="margin-bottom:8px">${secs}</div><div class="row" style="justify-content:space-between"><div class="seg" style="flex-wrap:wrap">${
     r.sec.subs.map(s=>`<button class="${s.id===(activo||OPVIEW)?'on':''}" onclick="irA('${s.id}')">${esc(s.nombre)}</button>`).join("")
-  }</div></div>`;
+  }</div></div></div>`;
 }
 /* Menú lateral: 4 secciones + Importar y Salir */
 function pintarSidebar(){
