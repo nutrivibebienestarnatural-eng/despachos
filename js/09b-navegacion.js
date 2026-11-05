@@ -21,6 +21,7 @@ const SECCIONES=[
     {id:"zonas",        nombre:"Zonas",          fn:"pantallaZonas"},
     {id:"repickeo",     nombre:"Repickeo",       fn:"pantallaRepickeo"},
     {id:"etiquetas",    nombre:"Etiquetas",      fn:"pantallaEtiquetas"},
+    {id:"avisos",       nombre:"💬 Avisos de envío", fn:"vistaAvisos"},
   ]},
   {id:"stock", nombre:"Stock", icono:"🗃️", subs:[
     {id:"stock",        nombre:"Stock",          fn:"vistaStock"},
