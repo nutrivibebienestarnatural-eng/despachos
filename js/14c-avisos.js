@@ -14,7 +14,10 @@ const AV_CFG0={
   ot:""
 };
 const AV_ESTADOS=["despachado","en_camino","entregado","confirmado"];
-const AV_DESDE_KEY="avisosEnvioDesde";
+const AV_DESDE_KEY="avisosEnvioDesde", AV_ORDEN_KEY="avisosEnvioOrden";
+/* Al traer de Tienda Nube, solo órdenes con este número o más (no avisar compras viejas) */
+let AV_ORDEN=(()=>{ try{ return parseInt(localStorage.getItem(AV_ORDEN_KEY),10)||5063; }catch(e){ return 5063; } })();
+function avSetOrden(v){ AV_ORDEN=parseInt(v,10)||5063; try{ localStorage.setItem(AV_ORDEN_KEY,AV_ORDEN); }catch(e){} }
 const avHoy=()=>{ const d=new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); };
 /* Solo se avisa lo despachado desde esta fecha (por defecto, hoy). Se guarda en este navegador. */
 let AV_DESDE=(()=>{ try{ return localStorage.getItem(AV_DESDE_KEY)||avHoy(); }catch(e){ return avHoy(); } })();
@@ -112,6 +115,7 @@ function vistaAvisos(){
     <div class="row" style="gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
       <input id="avQ" value="${esc(AV_Q)}" placeholder="Buscar cliente, N° de pedido o código" oninput="AV_Q=this.value;avPintarLista()" style="flex:1;min-width:200px;padding:8px;border:1px solid var(--border);border-radius:9px;font:inherit;background:var(--bg)">
       <button class="btn sm green" onclick="avSiguiente()">Avisar al siguiente</button>
+      <span class="muted" style="font-size:13px">desde la orden #</span><input type="number" value="${AV_ORDEN}" onchange="avSetOrden(this.value)" style="width:90px;padding:8px;border:1px solid var(--border);border-radius:9px;font:inherit;background:var(--bg)">
       <button class="btn sm ghost" onclick="avTraerTN()">⬇️ Traer de Tienda Nube</button>
       <button class="btn sm ghost" onclick="avConfig()">Mensaje y links</button>
     </div>
@@ -195,7 +199,7 @@ async function avTraerTN(){
   toast("Buscando envíos en Tienda Nube…");
   let data;
   try{
-    const r=await fetch("/api/tiendanube?action=enviados&desde="+encodeURIComponent(AV_DESDE));
+    const r=await fetch("/api/tiendanube?action=enviados&desdeOrden="+AV_ORDEN);
     data=await r.json().catch(()=>({}));
     if(!r.ok){ toast(data.error||("Error "+r.status)); return; }
   }catch(e){ toast("No me pude conectar con Tienda Nube"); return; }
@@ -208,7 +212,7 @@ async function avTraerTN(){
     <span style="min-width:0"><b>${esc(x.cliente||'—')}</b> <span class="muted">· ${esc(x.ref)} · ${esc(x.correo||'Correo')}</span><br><span class="muted" style="font-size:12.5px">${esc(x.tracking)}${x.envio&&x.envio!=='shipped'?' · <b>sin marcar enviado en TN</b>':''}${x.tel?(' · '+esc(x.tel)):' · sin teléfono'}</span></span></label>`).join("");
   ov.innerHTML=`<div class="card" style="max-width:600px;width:100%;padding:18px">
     <b>Pedidos de Tienda Nube con código de seguimiento</b>
-    <div class="muted" style="font-size:12.5px;margin:4px 0 10px">Desde ${esc(AV_DESDE)}. No aparecen los que ya están en la app. Elegí cuáles agregar a Avisos.</div>
+    <div class="muted" style="font-size:12.5px;margin:4px 0 10px">Órdenes desde la #${AV_ORDEN}. No aparecen los que ya están en la app. Elegí cuáles agregar a Avisos.</div>
     <div style="max-height:50vh;overflow:auto">${filas||'<div class="muted" style="padding:20px;text-align:center">No hay envíos nuevos con código.</div>'}</div>
     <div class="row" style="gap:8px;justify-content:space-between;margin-top:12px;flex-wrap:wrap">
       <button class="btn sm ghost" onclick="document.querySelectorAll('.avTnCk').forEach(c=>c.checked=true)">Elegir todos</button>

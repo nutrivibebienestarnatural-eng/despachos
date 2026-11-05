@@ -78,10 +78,11 @@ async function traerPedidos(desde) {
 
 // Pedidos de Tienda Nube que YA tienen código de seguimiento (aunque figuren "Por enviar": el correo asigna el código al generar la etiqueta).
 // "desde" filtra por última modificación (el envío se carga al despachar, así que sirve para "lo de hoy").
-async function traerEnviados(desde) {
+async function traerEnviados(desde, desdeOrden) {
   const store = process.env.TN_STORE_ID;
   const base = `${API_BASE}/${store}/orders`;
   const filtro = desde ? `&updated_at_min=${encodeURIComponent(desde + "T00:00:00-03:00")}` : "";
+  const minOrden = parseInt(desdeOrden, 10) || 0;          // solo órdenes con número >= este
   const out = [];
   for (let page = 1; page <= 10; page++) {
     const url = `${base}?status=open&payment_status=paid&per_page=50&page=${page}&aggregates=fulfillment_orders${filtro}`;
@@ -94,6 +95,7 @@ async function traerEnviados(desde) {
     const arr = await r.json();
     if (!Array.isArray(arr) || arr.length === 0) break;
     arr.forEach(o => {
+      if (minOrden && !(parseInt(o.number, 10) >= minOrden)) return;
       const fos = o.fulfillments || o.fulfillment_orders || [];
       const fo = fos.find(x => x && x.tracking_info && x.tracking_info.code);
       const code = String((fo && fo.tracking_info.code) || o.shipping_tracking_number || "").trim();
@@ -148,7 +150,7 @@ module.exports = async (req, res) => {
 
     // GET => devolver pedidos (la app lo llama con /api/tiendanube?empresa=...&desde=YYYY-MM-DD)
     if (req.method === "GET" && action === "enviados") {
-      const enviados = await traerEnviados(req.query && req.query.desde);
+      const enviados = await traerEnviados(req.query && req.query.desde, req.query && req.query.desdeOrden);
       return res.status(200).json({ ok: true, cantidad: enviados.length, pedidos: enviados });
     }
     if (req.method === "GET") {
