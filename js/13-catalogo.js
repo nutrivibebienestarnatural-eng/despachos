@@ -824,6 +824,7 @@ async function leerEtiquetaML(archivos){
   pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
   toast(lista.length>1?("Leyendo "+lista.length+" etiquetas…"):"Leyendo la etiqueta…");
   let leidas=0, sinReconocer=0, yaCargadas=0, repetidasEnPantalla=0, fulls=0;
+  const pendientesFull=[];
   // ref → índice en IMP_FILAS. Arranca con lo que YA está en pantalla (de una tanda anterior de este
   // mismo import), así subir la misma etiqueta en dos tandas separadas (antes de guardar) no duplica la fila.
   const refsDeEsteLote=new Map();
@@ -832,7 +833,8 @@ async function leerEtiquetaML(archivos){
     try{
       const r=await procesarEtiquetaMLArchivo(file);
       if(r.sinReconocer){ sinReconocer++; continue; }
-      if(r.filas && r.filas.length && r.filas.every(f=>f.full)){ fulls+=r.filas.length; continue; }   // FULL: lo despacha ML
+      // FULL (FBA / remitente de ML): las aparto y al final pregunto si igual las quiere importar
+      if(r.filas && r.filas.length && r.filas.every(f=>f.full)){ pendientesFull.push(...r.filas); continue; }
       if(r.yaCargada){ yaCargadas++; continue; }
       r.filas.forEach(f=>{
         if(f.ref && refsDeEsteLote.has(f.ref)){
@@ -847,7 +849,22 @@ async function leerEtiquetaML(archivos){
       });
     }catch(e){ console.error(e); sinReconocer++; }
   }
+  // Etiquetas que parecen FULL: antes se descartaban sin avisar. Ahora pregunto, porque hay etiquetas
+  // con código FBA y remitente Ramón Carrillo que igual hay que despachar nosotros (pasó 2026-11-19).
+  if(pendientesFull.length){
+    const resumen=pendientesFull.map(f=>"• "+(f.cliente||"—")+" · "+(f.ref||"")+(f.prods&&f.prods[0]?(" · "+(f.prods[0].nomML||f.prods[0].nombre)):"")).join("\n");
+    const n=pendientesFull.length;
+    if(await askConfirm((n===1?"Esta etiqueta parece":"Estas "+n+" etiquetas parecen")+" FULL (código FBA, las despacha Mercado Libre):\n\n"+resumen+"\n\n¿Importarla"+(n===1?"":"s")+" igual?",{yes:"Importar"})){
+      pendientesFull.forEach(f=>{
+        if(f.ref && refsDeEsteLote.has(f.ref)){ repetidasEnPantalla++; return; }
+        f.full=false; f.eraFull=true;
+        if(f.ref) refsDeEsteLote.set(f.ref, IMP_FILAS.length);
+        IMP_FILAS.push(f); leidas++;
+      });
+    } else fulls=n;
+  }
   if(!leidas){
+    if(fulls && !sinReconocer && !yaCargadas){ toast(fulls===1?"Etiqueta FULL no importada":"Etiquetas FULL no importadas"); return; }
     if(repetidasEnPantalla && !sinReconocer) toast("Esa"+(repetidasEnPantalla===1?"":"s")+" venta"+(repetidasEnPantalla===1?"":"s")+" ya la"+(repetidasEnPantalla===1?"":"s")+" tenías en pantalla, no se duplicó");
     else if(yaCargadas && !sinReconocer) toast(lista.length>1?"Esas ventas ya estaban cargadas":"Esa venta ya está cargada");
     else toast("No reconocí "+(lista.length>1?"ninguna etiqueta":"la etiqueta")+". ¿Es el PDF de Mercado Libre?");
