@@ -717,7 +717,11 @@ function parseEtiquetaML(texto){
   // etiqueta a un punto Pickit (locker): el PDF de ML imprime "PICKIT" o "Comprador retira en Centro de Envío: <punto>"
   const esPickit=/\bPICKIT\b/i.test(texto) || /Comprador\s*retira\s*en\s*Centro\s*de\s*Env[ií]o/i.test(texto);
   // FULL: el envío sale del depósito de Mercado Libre (código FBA… y remitente de ML), no lo preparamos nosotros
-  const esFull=/\bFBA\d/.test(texto) || /\bFULL\b/i.test(texto) || /Ramon\s+Carrillo/i.test(texto);
+  // OJO: las etiquetas de Punto de Despacho TAMBIÉN traen "FBA02" y remitente Ramón Carrillo (es el centro de ML
+  // al que van), pero tienen fecha límite "Despachar: … antes de HH hs" / "Despacha tu producto": esas las
+  // despachamos nosotros, no son FULL (el usuario lo aclaró 2026-11-19).
+  const esPuntoDespacho=/Despachar:\s*\S+/i.test(texto) || /Despacha\s+tus?\s+productos?/i.test(texto);
+  const esFull=!esPuntoDespacho && (/\bFBA\d/.test(texto) || /\bFULL\b/i.test(texto) || /Ramon\s+Carrillo/i.test(texto));
   return { ref: venta?("#"+venta):(envio?("#"+envio):""), cliente:cli.trim(), tel:"", dir:dir.trim(),
     ciudad:loc, provincia:prov, cp, items:items.join(" · "), prods, nota:nota.trim(), etiquetaML:true,
     pickit:esPickit, full:esFull, envio:envio.replace(/\D/g,""), empresaML: empresaPorVendedorML(texto) };
